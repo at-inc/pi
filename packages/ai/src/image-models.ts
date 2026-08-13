@@ -1,5 +1,7 @@
 import { IMAGE_MODELS } from "./image-models.generated.ts";
-import type { ImagesApi, ImagesModel, KnownImagesProvider } from "./types.ts";
+import type { ImagesApi, ImagesModel } from "./types.ts";
+
+export type BuiltinImagesProvider = keyof typeof IMAGE_MODELS;
 
 const imageModelRegistry: Map<string, Map<string, ImagesModel<ImagesApi>>> = new Map();
 
@@ -12,7 +14,7 @@ for (const [provider, models] of Object.entries(IMAGE_MODELS)) {
 }
 
 type ImageModelApi<
-	TProvider extends KnownImagesProvider,
+	TProvider extends BuiltinImagesProvider,
 	TModelId extends keyof (typeof IMAGE_MODELS)[TProvider],
 > = (typeof IMAGE_MODELS)[TProvider][TModelId] extends { api: infer TApi }
 	? TApi extends ImagesApi
@@ -21,18 +23,18 @@ type ImageModelApi<
 	: never;
 
 export function getImageModel<
-	TProvider extends KnownImagesProvider,
+	TProvider extends BuiltinImagesProvider,
 	TModelId extends keyof (typeof IMAGE_MODELS)[TProvider],
 >(provider: TProvider, modelId: TModelId): ImagesModel<ImageModelApi<TProvider, TModelId>> {
 	const providerModels = imageModelRegistry.get(provider);
 	return providerModels?.get(modelId as string) as ImagesModel<ImageModelApi<TProvider, TModelId>>;
 }
 
-export function getImageProviders(): KnownImagesProvider[] {
-	return Array.from(imageModelRegistry.keys()) as KnownImagesProvider[];
+export function getImageProviders(): BuiltinImagesProvider[] {
+	return Array.from(imageModelRegistry.keys()) as BuiltinImagesProvider[];
 }
 
-export function getImageModels<TProvider extends KnownImagesProvider>(
+export function getImageModels<TProvider extends BuiltinImagesProvider>(
 	provider: TProvider,
 ): ImagesModel<ImageModelApi<TProvider, keyof (typeof IMAGE_MODELS)[TProvider]>>[] {
 	const models = imageModelRegistry.get(provider);

@@ -4,11 +4,13 @@ import { loadOpenAICodexOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { OPENAI_CODEX_MODELS } from "./openai-codex.models.ts";
 
+export const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
+
 export function openaiCodexProvider(): Provider<"openai-codex-responses"> {
 	return createProvider({
 		id: "openai-codex",
 		name: "OpenAI Codex",
-		baseUrl: "https://chatgpt.com/backend-api",
+		baseUrl: OPENAI_CODEX_BASE_URL,
 		auth: {
 			oauth: lazyOAuth({
 				name: "OpenAI (ChatGPT Plus/Pro)",
