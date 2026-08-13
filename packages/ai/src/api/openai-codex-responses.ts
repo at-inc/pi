@@ -3,6 +3,7 @@ import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
 	ResponseInput,
+	ResponseOutputItem,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
 
@@ -75,6 +76,8 @@ export interface OpenAICodexResponsesOptions extends StreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	textVerbosity?: "low" | "medium" | "high";
 	toolChoice?: "auto" | "none" | "required";
+	/** Internal native-tool output hook used by the dedicated image transport. */
+	onImageGenerationCall?: (outputIndex: number, item: ResponseOutputItem.ImageGenerationCall) => void;
 }
 
 type CodexResponseStatus = "completed" | "incomplete" | "failed" | "cancelled" | "queued" | "in_progress";
@@ -657,6 +660,7 @@ async function processStream(
 	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
 		serviceTier: options?.serviceTier,
 		grammarToolInputProperties,
+		onImageGenerationCall: options?.onImageGenerationCall,
 		resolveServiceTier: resolveCodexServiceTier,
 		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 	});
@@ -1511,6 +1515,7 @@ async function processWebSocketStream(
 			{
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
+				onImageGenerationCall: options?.onImageGenerationCall,
 				resolveServiceTier: resolveCodexServiceTier,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			},
