@@ -88,6 +88,31 @@ describe("OpenAI Codex images", () => {
 				completedResponse([{ type: "image_generation_call", id: "ig_1", status: "completed", result: IMAGE_DATA }]),
 			],
 		},
+		{
+			name: "Codex partial-only output",
+			action: "generate",
+			context: { input: [{ type: "text" as const, text: "Draw a circle" }] },
+			events: [
+				{
+					type: "response.output_item.added",
+					output_index: 0,
+					item: { type: "image_generation_call", id: "ig_1", status: "in_progress", result: null },
+				},
+				{
+					type: "response.image_generation_call.partial_image",
+					item_id: "ig_1",
+					output_index: 0,
+					partial_image_index: 0,
+					partial_image_b64: IMAGE_DATA,
+				},
+				{
+					type: "response.output_item.done",
+					output_index: 0,
+					item: { type: "image_generation_call", id: "ig_1", status: "generating", result: null },
+				},
+				completedResponse([{ type: "image_generation_call", id: "ig_1", status: "completed", result: null }]),
+			],
+		},
 	])("handles $name", async ({ action, context, events }) => {
 		let requestBody: Record<string, unknown> | undefined;
 		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
@@ -115,7 +140,7 @@ describe("OpenAI Codex images", () => {
 			store: false,
 			stream: true,
 			tools: [{ type: "image_generation", action }],
-			tool_choice: "required",
+			tool_choice: { type: "image_generation" },
 			parallel_tool_calls: false,
 		});
 		expect(requestBody).not.toHaveProperty("previous_response_id");
@@ -138,7 +163,7 @@ describe("OpenAI Codex images", () => {
 		expect(fetch).toHaveBeenCalledOnce();
 	});
 
-	it("rejects malformed or oversized output and honors cancellation", async () => {
+	it("handles provider failures without retries and honors in-flight cancellation", async () => {
 		const malformed = await generateImages(
 			MODEL,
 			{ input: [{ type: "text", text: "Draw" }] },
@@ -153,6 +178,38 @@ describe("OpenAI Codex images", () => {
 			},
 		);
 		expect(malformed).toMatchObject({ stopReason: "error", errorMessage: "ChatGPT returned malformed image data" });
+
+		const failed = await generateImages(
+			MODEL,
+			{ input: [{ type: "text", text: "Draw" }] },
+			{
+				apiKey: mockToken(),
+				fetch: async () =>
+					sse([
+						completedResponse([{ type: "image_generation_call", id: "ig_1", status: "failed", result: null }]),
+					]),
+			},
+		);
+		expect(failed).toMatchObject({ stopReason: "error", errorMessage: "ChatGPT image generation failed" });
+
+		const retryableFetch = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ error: { message: "unavailable" } }), {
+					status: 503,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+		const unavailable = await generateImages(
+			MODEL,
+			{ input: [{ type: "text", text: "Draw" }] },
+			{
+				apiKey: mockToken(),
+				fetch: retryableFetch,
+				maxRetries: 9,
+			},
+		);
+		expect(unavailable.stopReason).toBe("error");
+		expect(retryableFetch).toHaveBeenCalledOnce();
 
 		const oversized = await generateImages(
 			MODEL,
@@ -178,17 +235,26 @@ describe("OpenAI Codex images", () => {
 		});
 
 		const controller = new AbortController();
-		controller.abort();
+		const inFlightFetch = vi.fn(
+			(_input: string | URL | Request, init?: RequestInit) =>
+				new Promise<Response>((_resolve, reject) => {
+					const signal = init?.signal;
+					if (!signal) throw new Error("Expected a request signal");
+					signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+					queueMicrotask(() => controller.abort());
+				}),
+		);
 		const aborted = await generateImages(
 			MODEL,
 			{ input: [{ type: "text", text: "Draw" }] },
 			{
 				apiKey: mockToken(),
-				fetch: vi.fn(),
+				fetch: inFlightFetch,
 				signal: controller.signal,
 			},
 		);
 		expect(aborted.stopReason).toBe("aborted");
+		expect(inFlightFetch).toHaveBeenCalledOnce();
 	});
 
 	it("registers ChatGPT before OpenRouter in the built-in image inventory", () => {

@@ -78,6 +78,7 @@ export interface OpenAICodexResponsesOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required";
 	/** Internal native-tool output hook used by the dedicated image transport. */
 	onImageGenerationCall?: (outputIndex: number, item: ResponseOutputItem.ImageGenerationCall) => void;
+	onImageGenerationPartialImage?: (outputIndex: number, image: string) => void;
 }
 
 type CodexResponseStatus = "completed" | "incomplete" | "failed" | "cancelled" | "queued" | "in_progress";
@@ -664,6 +665,7 @@ async function processStream(
 		serviceTier: options?.serviceTier,
 		grammarToolInputProperties,
 		onImageGenerationCall: options?.onImageGenerationCall,
+		onImageGenerationPartialImage: options?.onImageGenerationPartialImage,
 		resolveServiceTier: resolveCodexServiceTier,
 		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 	});
@@ -1519,6 +1521,7 @@ async function processWebSocketStream(
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
 				onImageGenerationCall: options?.onImageGenerationCall,
+				onImageGenerationPartialImage: options?.onImageGenerationPartialImage,
 				resolveServiceTier: resolveCodexServiceTier,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			},

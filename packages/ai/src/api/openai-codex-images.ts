@@ -1,4 +1,4 @@
-import type { Tool as OpenAITool } from "openai/resources/responses/responses.js";
+import type { Tool as OpenAITool, ToolChoiceTypes } from "openai/resources/responses/responses.js";
 import type {
 	AssistantImages,
 	AssistantMessage,
@@ -32,6 +32,15 @@ export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions
 	};
 
 	const images = new Map<number, ImageContent>();
+	let imageGenerationFailed = false;
+	const collectImage = (outputIndex: number, data: string): void => {
+		if (!isValidBase64(data)) throw new Error("ChatGPT returned malformed image data");
+		images.set(outputIndex, { type: "image", data, mimeType: "image/png" });
+		if ([...images.values()].reduce((total, image) => total + image.data.length, 0) > MAX_IMAGE_BASE64_CHARS) {
+			images.clear();
+			throw new Error("ChatGPT image generation output exceeds the 24 MiB base64 limit");
+		}
+	};
 	const driver: Model<"openai-codex-responses"> = {
 		id: OPENAI_CODEX_IMAGE_DRIVER_MODEL_ID,
 		name: "GPT-5.4 mini",
@@ -41,7 +50,7 @@ export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions
 		reasoning: true,
 		input: ["text", "image"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 272_000,
+		contextWindow: 400_000,
 		maxTokens: 128_000,
 	};
 	const responsesContext: Context = {
@@ -83,22 +92,22 @@ export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions
 					store: false,
 					stream: true,
 					tools: [{ type: "image_generation", action }] satisfies OpenAITool[],
-					tool_choice: "required",
+					tool_choice: { type: "image_generation" } satisfies ToolChoiceTypes,
 					parallel_tool_calls: false,
 				};
 			},
+			onImageGenerationPartialImage: (outputIndex, image) => {
+				// Codex can emit the only image bytes as a partial-image event and leave terminal output empty.
+				collectImage(outputIndex, image);
+			},
 			onImageGenerationCall: (outputIndex, item) => {
+				if (item.status === "failed") {
+					images.delete(outputIndex);
+					imageGenerationFailed = true;
+					return;
+				}
 				if (item.status !== "completed") return;
-				if (typeof item.result !== "string" || !isValidBase64(item.result)) {
-					throw new Error("ChatGPT returned malformed image data");
-				}
-				images.set(outputIndex, { type: "image", data: item.result, mimeType: "image/png" });
-				// Senpi found that native results can be repeated across item-done and terminal events; cap the
-				// deduplicated aggregate so a provider response cannot retain unbounded base64 payloads.
-				if ([...images.values()].reduce((total, image) => total + image.data.length, 0) > MAX_IMAGE_BASE64_CHARS) {
-					images.clear();
-					throw new Error("ChatGPT image generation output exceeds the 24 MiB base64 limit");
-				}
+				if (item.result) collectImage(outputIndex, item.result);
 			},
 		}).result();
 	} finally {
@@ -115,7 +124,9 @@ export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions
 	}
 	if (images.size === 0) {
 		output.stopReason = "error";
-		output.errorMessage = "ChatGPT image generation completed without an image";
+		output.errorMessage = imageGenerationFailed
+			? "ChatGPT image generation failed"
+			: "ChatGPT image generation completed without an image";
 		return output;
 	}
 
