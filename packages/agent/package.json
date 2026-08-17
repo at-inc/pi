@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-agent-core",
+	"name": "@at-inc/pi-agent-core",
 	"version": "0.84.2",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
@@ -24,6 +24,9 @@
 		"dist",
 		"README.md"
 	],
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"generate-telemetry-docs": "node scripts/generate-telemetry-docs.ts",
@@ -53,7 +56,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/at-inc/pi.git",
 		"directory": "packages/agent"
 	},
 	"engines": {

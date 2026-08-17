@@ -23,7 +23,7 @@ import type {
 	AgentTool,
 	PrepareNextTurnContext,
 	ThinkingLevel,
-} from "@earendil-works/pi-agent-core";
+} from "@at-inc/pi-agent-core";
 import { contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,

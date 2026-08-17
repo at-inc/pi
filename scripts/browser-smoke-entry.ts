@@ -17,7 +17,7 @@ import {
 	streamProxy,
 	toError,
 	truncateHead,
-} from "@earendil-works/pi-agent-core";
+} from "@at-inc/pi-agent-core";
 import { decodeCbor, encodeCbor, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 
 // Keep this entry browser-safe. It is bundled by scripts/check-browser-smoke.mjs

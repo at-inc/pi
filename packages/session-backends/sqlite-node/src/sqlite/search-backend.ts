@@ -1,11 +1,5 @@
-import type {
-	FileError,
-	Result,
-	SessionSearch,
-	SessionSearchHit,
-	SessionSearchOptions,
-} from "@earendil-works/pi-agent-core";
-import { SessionError } from "@earendil-works/pi-agent-core";
+import type { FileError, Result, SessionSearch, SessionSearchHit, SessionSearchOptions } from "@at-inc/pi-agent-core";
+import { SessionError } from "@at-inc/pi-agent-core";
 import { applyMigrations } from "./migrations.ts";
 import { sql } from "./sql.ts";
 import { decodeSessionMetadata, type SessionRow } from "./storage/sessions.ts";

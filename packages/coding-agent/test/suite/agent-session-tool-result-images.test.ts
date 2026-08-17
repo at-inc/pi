@@ -1,5 +1,5 @@
 import { crc32, deflateSync } from "node:zlib";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@at-inc/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";

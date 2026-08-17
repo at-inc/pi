@@ -7,8 +7,8 @@ import {
 	type Result,
 	Session,
 	type ShellExecOptions,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+} from "@at-inc/pi-agent-core";
+import { NodeExecutionEnv } from "@at-inc/pi-agent-core/node";
 import { createModels } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";

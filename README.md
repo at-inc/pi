@@ -5,7 +5,7 @@
 </p>
 <p align="center">
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
+  <a href="https://github.com/at-inc/pi/packages"><img alt="GitHub Packages" src="https://img.shields.io/badge/GitHub%20Packages-%40at--inc-181717?style=flat-square&logo=github" /></a>
 </p>
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -14,8 +14,8 @@
 
 This is the home of the Pi agent harness project including our self extensible coding agent.
 
-* **[@earendil-works/pi-coding-agent](packages/coding-agent)**: Interactive coding agent CLI
-* **[@earendil-works/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
+* **[@at-inc/pi](packages/coding-agent)**: Interactive coding agent CLI
+* **[@at-inc/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
 * **[@earendil-works/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
 
 To learn more about Pi:
@@ -23,14 +23,23 @@ To learn more about Pi:
 * [Visit pi.dev](https://pi.dev), the project website with demos
 * [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
 
+## GitHub Packages
+
+`@at-inc/pi` and `@at-inc/pi-agent-core` are published to GitHub Packages. Configure npm once, then authenticate with a GitHub token that has package read access:
+
+```bash
+npm config set @at-inc:registry https://npm.pkg.github.com
+npm login --scope=@at-inc --registry=https://npm.pkg.github.com
+```
+
 ## All Packages
 
 | Package | Description |
 |---------|-------------|
 | **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
+| **[@at-inc/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
+| **[@at-inc/pi](packages/coding-agent)** | Interactive coding agent CLI |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).

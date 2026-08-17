@@ -2,7 +2,7 @@
  * Model resolution, scoping, and initial selection
  */
 
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "@at-inc/pi-agent-core";
 import {
 	type Api,
 	type AuthOperationOptions,
