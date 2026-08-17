@@ -226,6 +226,7 @@ jobs:
       - stage-github-release
     permissions:
       contents: write
+      actions: write
     env:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -247,6 +248,10 @@ jobs:
           fi
 
           gh release edit "${RELEASE_TAG}" --draft=false
+
+          gh workflow run publish-github-packages.yml \
+            --repo "${GH_REPO}" \
+            --ref "${RELEASE_TAG}"
 
   cleanup-draft-github-release:
     runs-on: ubuntu-latest
