@@ -6,8 +6,8 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import { Agent } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@at-inc/pi-agent-core";
+import { Agent } from "@at-inc/pi-agent-core";
 import type {
 	FauxModelDefinition,
 	FauxProviderRegistration,

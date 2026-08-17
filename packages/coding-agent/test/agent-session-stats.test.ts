@@ -1,4 +1,4 @@
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent } from "@at-inc/pi-agent-core";
 import {
 	type AssistantMessage,
 	getModel,

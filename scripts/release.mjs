@@ -8,7 +8,7 @@
  *
  * Steps:
  * 1. Check for uncommitted changes
- * 2. Verify every public workspace package is registered on npm
+ * 2. Verify every npm-published workspace package is registered on npm
  * 3. Bump version via npm run version:xxx or set an explicit version
  * 4. Update CHANGELOG.md files: [Unreleased] -> [version] - date
  * 5. Regenerate release artifacts
@@ -23,7 +23,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
-import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { getNpmWorkspacePackages, getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const RELEASE_TARGET = process.argv[2];
 const BUMP_TYPES = new Set(["major", "minor", "patch"]);
@@ -53,7 +53,7 @@ function getVersion() {
 }
 
 function assertPackagesAreRegisteredWithNpm() {
-	const packageNames = getPublicWorkspacePackages().map((pkg) => pkg.name);
+	const packageNames = getNpmWorkspacePackages().map((pkg) => pkg.name);
 	const unregisteredPackages = [];
 
 	console.log("Checking npm package registration...");
