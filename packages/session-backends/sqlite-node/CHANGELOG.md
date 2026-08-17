@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Switched the agent-core dependency to `@at-inc/pi-agent-core`.
+
 ## [0.84.4] - 2026-08-28
 
 ## [0.84.3] - 2026-08-24
