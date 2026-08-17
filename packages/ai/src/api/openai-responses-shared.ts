@@ -106,6 +106,8 @@ function convertToolResultOutput<TApi extends Api>(
 export interface OpenAIResponsesStreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
+	onImageGenerationCall?: (outputIndex: number, item: ResponseOutputItem.ImageGenerationCall) => void;
+	onImageGenerationPartialImage?: (outputIndex: number, image: string) => void;
 	resolveServiceTier?: (
 		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
 		requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
@@ -553,6 +555,12 @@ export async function processResponsesStream<TApi extends Api>(
 	): void => {
 		sawTerminalResponseEvent = true;
 		backfillReasoningSignatures(response.output ?? []);
+		// Some Responses transports omit output_item.done. Surface terminal image items as a final backfill,
+		// following Senpi's native-tool reconciliation strategy:
+		// https://github.com/code-yeongyu/senpi/blob/main/packages/ai/src/api/openai-responses-shared.ts
+		for (const [outputIndex, item] of (response.output ?? []).entries()) {
+			if (item.type === "image_generation_call") options?.onImageGenerationCall?.(outputIndex, item);
+		}
 		if (response?.id) {
 			output.responseId = response.id;
 		}
@@ -598,7 +606,12 @@ export async function processResponsesStream<TApi extends Api>(
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
+			if (event.item.type === "image_generation_call") {
+				options?.onImageGenerationCall?.(event.output_index, event.item);
+			}
 			createSlot(event.output_index, event.item);
+		} else if (event.type === "response.image_generation_call.partial_image") {
+			options?.onImageGenerationPartialImage?.(event.output_index, event.partial_image_b64);
 		} else if (event.type === "response.reasoning_summary_text.delta") {
 			const slot = getSlot(event.output_index, "thinking");
 			if (!slot) continue;
@@ -679,6 +692,9 @@ export async function processResponsesStream<TApi extends Api>(
 			pushToolCallDelta(slot, appendCustomToolCallInput(slot.block, event.input, true));
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
+			if (item.type === "image_generation_call") {
+				options?.onImageGenerationCall?.(event.output_index, item);
+			}
 			applyMessagePhaseStopReason(item);
 			const slot = getOrCreateSlot(event.output_index, item);
 
