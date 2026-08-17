@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Renamed the package to `@at-inc/pi-agent-core` and moved publication to GitHub Packages.
+
 ## [0.84.2] - 2026-08-14
 
 ### Fixed
