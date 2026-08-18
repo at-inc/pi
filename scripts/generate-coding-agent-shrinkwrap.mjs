@@ -9,7 +9,7 @@ const repoRoot = resolve(scriptDir, "..");
 const codingAgentDir = join(repoRoot, "packages/coding-agent");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
-const internalPackagePrefixes = ["@earendil-works/pi-", "@at-inc/pi-"];
+const internalPackagePrefixes = ["@at-inc/pi-"];
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
@@ -207,22 +207,36 @@ function addInternalWorkspace(shrinkwrapPackages, addedPaths, queue, name, works
 	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(packageJson))) {
-		queue.push({ name: dependencyName, from: outputPath });
+		queue.push({
+			name: dependencyName,
+			from: workspace.lockPath,
+			sourceRoot: workspace.lockPath,
+			outputRoot: outputPath,
+		});
 	}
 }
 
-function addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, name, from) {
-	const lockPath = resolveExternalDependency(lockPackages, name, from);
-	if (addedPaths.has(lockPath)) {
+function addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item) {
+	const lockPath = resolveExternalDependency(lockPackages, item.name, item.from);
+	const relativePath = lockPath.startsWith(`${item.sourceRoot}/node_modules/`)
+		? lockPath.slice(item.sourceRoot.length + 1)
+		: undefined;
+	const outputPath = relativePath ? [item.outputRoot, relativePath].filter(Boolean).join("/") : lockPath;
+	if (addedPaths.has(outputPath)) {
 		return;
 	}
 
 	const entry = lockPackages[lockPath];
-	shrinkwrapPackages[lockPath] = copyLockEntry(entry);
-	addedPaths.add(lockPath);
+	shrinkwrapPackages[outputPath] = copyLockEntry(entry);
+	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(entry))) {
-		queue.push({ name: dependencyName, from: lockPath });
+		queue.push({
+			name: dependencyName,
+			from: lockPath,
+			sourceRoot: item.sourceRoot,
+			outputRoot: item.outputRoot,
+		});
 	}
 }
 
@@ -306,7 +320,13 @@ function generateShrinkwrap() {
 	};
 	const addedPaths = new Set([""]);
 	const internalNames = new Set();
-	const queue = Object.keys(packageDependencies(codingAgentPackage)).map((name) => ({ name, from: "" }));
+	const sourceRoot = "packages/coding-agent";
+	const queue = Object.keys(packageDependencies(codingAgentPackage)).map((name) => ({
+		name,
+		from: sourceRoot,
+		sourceRoot,
+		outputRoot: "",
+	}));
 
 	while (queue.length > 0) {
 		const item = queue.shift();
@@ -324,7 +344,7 @@ function generateShrinkwrap() {
 			continue;
 		}
 
-		addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item.name, item.from);
+		addExternalPackage(lockPackages, shrinkwrapPackages, addedPaths, queue, item);
 	}
 
 	const shrinkwrap = {

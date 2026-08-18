@@ -11,7 +11,7 @@ const outputDir = join(codingAgentDir, "install-lock");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
-const internalPackagePrefixes = ["@earendil-works/pi-", "@at-inc/pi-"];
+const internalPackagePrefixes = ["@at-inc/pi-"];
 const installPackageName = "@at-inc/pi-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
@@ -214,22 +214,36 @@ function addInternalWorkspace(installLockPackages, addedPaths, queue, name, work
 	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(packageJson))) {
-		queue.push({ name: dependencyName, from: outputPath });
+		queue.push({
+			name: dependencyName,
+			from: workspace.lockPath,
+			sourceRoot: workspace.lockPath,
+			outputRoot: outputPath,
+		});
 	}
 }
 
-function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, name, from) {
-	const lockPath = resolveExternalDependency(lockPackages, name, from);
-	if (addedPaths.has(lockPath)) {
+function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item) {
+	const lockPath = resolveExternalDependency(lockPackages, item.name, item.from);
+	const relativePath = lockPath.startsWith(`${item.sourceRoot}/node_modules/`)
+		? lockPath.slice(item.sourceRoot.length + 1)
+		: undefined;
+	const outputPath = relativePath ? [item.outputRoot, relativePath].filter(Boolean).join("/") : lockPath;
+	if (addedPaths.has(outputPath)) {
 		return;
 	}
 
 	const entry = lockPackages[lockPath];
-	installLockPackages[lockPath] = copyLockEntry(entry);
-	addedPaths.add(lockPath);
+	installLockPackages[outputPath] = copyLockEntry(entry);
+	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(entry))) {
-		queue.push({ name: dependencyName, from: lockPath });
+		queue.push({
+			name: dependencyName,
+			from: lockPath,
+			sourceRoot: item.sourceRoot,
+			outputRoot: item.outputRoot,
+		});
 	}
 }
 
@@ -375,7 +389,12 @@ function generateInstallLock() {
 	};
 	const addedPaths = new Set([""]);
 	const internalNames = new Set();
-	const queue = Object.keys(packageDependencies(installerPackageJson)).map((name) => ({ name, from: "" }));
+	const queue = Object.keys(packageDependencies(installerPackageJson)).map((name) => ({
+		name,
+		from: "",
+		sourceRoot: "",
+		outputRoot: "",
+	}));
 
 	while (queue.length > 0) {
 		const item = queue.shift();
@@ -393,7 +412,7 @@ function generateInstallLock() {
 			continue;
 		}
 
-		addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item.name, item.from);
+		addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item);
 	}
 
 	const installLock = {
