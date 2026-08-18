@@ -22,7 +22,7 @@ import {
 	openAIResponsesApi,
 	type SimpleStreamOptions,
 	type ThinkingLevelMap,
-} from "@earendil-works/pi-ai/compat";
+} from "@at-inc/pi-ai/compat";
 
 // =============================================================================
 // Constants

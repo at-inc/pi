@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI } from "@at-inc/pi";
 import { convertToLlm, serializeConversation } from "@at-inc/pi";
-import { uuidv7 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@at-inc/pi-ai";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {

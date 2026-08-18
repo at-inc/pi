@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Renamed the package to `@at-inc/pi-ai` and moved publication to GitHub Packages.
+
 ## [0.84.3] - 2026-08-17
 
 ### Fixed

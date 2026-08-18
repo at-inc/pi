@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@at-inc/pi-agent-core";
-import type { Transport } from "@earendil-works/pi-ai";
+import type { Transport } from "@at-inc/pi-ai";
 import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";

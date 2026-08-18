@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-ai",
+	"name": "@at-inc/pi-ai",
 	"version": "0.84.3",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
@@ -47,6 +47,9 @@
 		"dist",
 		"README.md"
 	],
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"generate-models": "node scripts/generate-models.ts --strict",
@@ -86,7 +89,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/at-inc/pi.git",
 		"directory": "packages/ai"
 	},
 	"engines": {

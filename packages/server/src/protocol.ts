@@ -10,7 +10,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 	type UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
 import type {
 	AssistantTranscriptItem,
 	JsonValue,

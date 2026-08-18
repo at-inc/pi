@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 const registry = "https://npm.pkg.github.com";
 const packages = [
+	{ directory: "packages/ai", name: "@at-inc/pi-ai" },
 	{ directory: "packages/agent", name: "@at-inc/pi-agent-core" },
 	{ directory: "packages/coding-agent", name: "@at-inc/pi" },
 ];

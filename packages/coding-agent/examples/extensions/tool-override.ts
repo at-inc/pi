@@ -21,7 +21,7 @@
  */
 
 import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@at-inc/pi";
-import type { TextContent } from "@earendil-works/pi-ai";
+import type { TextContent } from "@at-inc/pi-ai";
 import { constants, readFileSync } from "fs";
 import { access, appendFile, readFile } from "fs/promises";
 import { join, resolve } from "path";

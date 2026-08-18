@@ -9,7 +9,7 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^0.84.3",
+		"@at-inc/pi-ai": "^0.84.3",
 		"@at-inc/pi": "^0.84.3",
 		"@types/node": "24.12.4",
 		"shx": "0.4.0",

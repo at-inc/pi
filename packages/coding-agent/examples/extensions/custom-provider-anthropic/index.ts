@@ -43,7 +43,7 @@ import {
 	type Tool,
 	type ToolCall,
 	type ToolResultMessage,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
 
 // =============================================================================
 // OAuth implementation adapted for the legacy extension compatibility interface.

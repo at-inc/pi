@@ -367,7 +367,7 @@ When you pass a custom `ResourceLoader`, `cwd` and `agentDir` no longer control 
 ### Model
 
 ```typescript
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@at-inc/pi-ai";
 import { ModelRuntime } from "@at-inc/pi";
 
 const modelRuntime = await ModelRuntime.create();
@@ -448,7 +448,7 @@ Authentication resolution priority (handled by `ModelRuntime`):
 4. Fallback resolver (for custom provider keys from `models.json`)
 
 ```typescript
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore } from "@at-inc/pi-ai";
 import { createAgentSession, ModelRuntime } from "@at-inc/pi";
 
 // Default: uses ~/.pi/agent/auth.json and ~/.pi/agent/models.json
@@ -949,7 +949,7 @@ interface LoadExtensionsResult {
 ## Complete Example
 
 ```typescript
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@at-inc/pi-ai";
 import { Type } from "typebox";
 import {
   createAgentSession,

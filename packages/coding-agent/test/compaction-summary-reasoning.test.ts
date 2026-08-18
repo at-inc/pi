@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@at-inc/pi-agent-core";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model } from "@at-inc/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
@@ -13,8 +13,8 @@ const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
 }));
 
-vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
+vi.mock("@at-inc/pi-ai/compat", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@at-inc/pi-ai/compat")>();
 	return {
 		...actual,
 		completeSimple: completeSimpleMock,

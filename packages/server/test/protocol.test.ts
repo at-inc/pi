@@ -1,4 +1,4 @@
-import type { Api, AssistantMessage, Model, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, ToolCall, ToolResultMessage, UserMessage } from "@at-inc/pi-ai";
 import { encodeServerMessage, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
 import {

@@ -1,4 +1,4 @@
-import { uuidv7 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@at-inc/pi-ai";
 import { Session } from "./session.ts";
 import { SessionState } from "./state.ts";
 import {

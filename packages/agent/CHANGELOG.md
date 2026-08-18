@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Switched the AI dependency to the available `@at-inc/pi-ai` GitHub package.
+
 ## [0.84.3] - 2026-08-17
 
 ### Breaking Changes

@@ -1,6 +1,6 @@
 // Core Agent
 
-export { uuidv7 } from "@earendil-works/pi-ai";
+export { uuidv7 } from "@at-inc/pi-ai";
 export type {
 	AttributeValue,
 	ExactTelemetryAttributes,

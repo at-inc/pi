@@ -34,7 +34,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.84.3",
+		"@at-inc/pi-ai": "^0.84.3",
 		"@at-inc/pi-agent-core": "^0.84.3"
 	},
 	"devDependencies": {
