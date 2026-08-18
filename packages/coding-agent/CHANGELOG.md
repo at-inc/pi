@@ -5,6 +5,7 @@
 ### Fixed
 
 - Switched the AI dependency to the available `@at-inc/pi-ai` GitHub package.
+- Updated the Cerebras default to `gpt-oss-120b` after the previous model was removed from its catalog.
 
 ## [0.84.3] - 2026-08-17
 
