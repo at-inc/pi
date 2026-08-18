@@ -17,7 +17,7 @@ import {
 	type SessionStats,
 	type SessionStorage,
 } from "@at-inc/pi-agent-core";
-import { uuidv7 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@at-inc/pi-ai";
 import { appendEntryToBranchCache, buildCachedBranch, deleteBranchCache, rebuildBranchCache } from "./branch-cache.ts";
 import { applyMigrations } from "./migrations.ts";
 import { sql } from "./sql.ts";

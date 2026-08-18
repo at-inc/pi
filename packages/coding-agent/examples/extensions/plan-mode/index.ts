@@ -14,7 +14,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@at-inc/pi";
 import type { AgentMessage } from "@at-inc/pi-agent-core";
-import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, TextContent } from "@at-inc/pi-ai";
 import { Key } from "@earendil-works/pi-tui";
 import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
 

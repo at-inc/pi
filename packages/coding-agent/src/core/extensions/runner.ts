@@ -3,7 +3,7 @@
  */
 
 import type { AgentMessage } from "@at-inc/pi-agent-core";
-import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, Provider, ProviderHeaders } from "@at-inc/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";

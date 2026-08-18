@@ -12,7 +12,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@at-inc/pi";
-import { contentText } from "@earendil-works/pi-ai";
+import { contentText } from "@at-inc/pi-ai";
 import {
 	createHarness,
 	type Harness,

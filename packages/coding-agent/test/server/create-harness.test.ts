@@ -9,8 +9,8 @@ import {
 	type ShellExecOptions,
 } from "@at-inc/pi-agent-core";
 import { NodeExecutionEnv } from "@at-inc/pi-agent-core/node";
-import { createModels } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { createModels } from "@at-inc/pi-ai";
+import { getModel } from "@at-inc/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test, vi } from "vitest";
 import {

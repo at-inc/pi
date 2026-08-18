@@ -9,7 +9,7 @@ import type {
 	Entry,
 	MessageEntry,
 } from "@at-inc/pi-agent-core";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { Usage } from "@at-inc/pi-ai";
 import { afterEach, vi } from "vitest";
 import type { SqliteDatabaseFactory, SqliteSessionMetadata } from "../src/index.ts";
 

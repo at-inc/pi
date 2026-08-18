@@ -6,9 +6,9 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@at-inc/pi-agent-core";
-import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
-import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
-import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@at-inc/pi-ai";
+import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@at-inc/pi-ai/compat";
+import { completeSimple } from "@at-inc/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
 import {
 	buildSessionContext,

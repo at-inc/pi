@@ -29,7 +29,7 @@ test("synchronizes private dependencies without touching registry aliases, gener
 	const root = await mkdtemp(join(tmpdir(), "pi-sync-versions-"));
 	try {
 		await writeManifest(root, "packages/ai", {
-			name: "@earendil-works/pi-ai",
+			name: "@at-inc/pi-ai",
 			version: "2.0.0",
 		});
 		await writeManifest(root, "packages/coding-agent", {
@@ -42,7 +42,7 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			private: true,
 			dependencies: {
 				"@at-inc/pi": "^1.0.0",
-				"@mariozechner/pi-ai": "npm:@earendil-works/pi-ai@1.0.0",
+				"@mariozechner/pi-ai": "npm:@at-inc/pi-ai@1.0.0",
 			},
 		});
 		await writeManifest(root, "packages/coding-agent/install-lock", {
@@ -59,12 +59,12 @@ test("synchronizes private dependencies without touching registry aliases, gener
 
 		const evalsManifest = await readManifest(root, "packages/evals");
 		assert.equal(evalsManifest.dependencies["@at-inc/pi"], "^2.0.0");
-		assert.equal(evalsManifest.dependencies["@mariozechner/pi-ai"], "npm:@earendil-works/pi-ai@1.0.0");
+		assert.equal(evalsManifest.dependencies["@mariozechner/pi-ai"], "npm:@at-inc/pi-ai@1.0.0");
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
 		assert.equal(generatedManifest.dependencies["@at-inc/pi"], "^1.0.0");
 
 		await writeManifest(root, "packages/ai", {
-			name: "@earendil-works/pi-ai",
+			name: "@at-inc/pi-ai",
 			version: "3.0.0",
 		});
 		const lockstepFailure = runSyncVersions(root);

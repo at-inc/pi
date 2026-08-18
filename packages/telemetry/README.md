@@ -367,7 +367,7 @@ Adapters do not need to understand schema objects. Instrumentation helpers and t
 Package ownership is intentionally split:
 
 - `@earendil-works/pi-telemetry` owns the vendor-neutral contract, no-op and in-memory reference contexts, schema utilities, and adapter conformance suite;
-- `@earendil-works/pi-ai` accepts and propagates `telemetryContext` in provider request options but owns no telemetry schema;
+- `@at-inc/pi-ai` accepts and propagates `telemetryContext` in provider request options but owns no telemetry schema;
 - `@at-inc/pi-agent-core` owns and exports the pi AI-request and harness schemas, their combined readonly schema tuple, and typed span helpers.
 
 ```typescript

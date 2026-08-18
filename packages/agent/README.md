@@ -1,6 +1,6 @@
 # @at-inc/pi-agent-core
 
-Stateful agent with tool execution and event streaming. Built on `@earendil-works/pi-ai`.
+Stateful agent with tool execution and event streaming. Built on `@at-inc/pi-ai`.
 
 ## Installation
 
@@ -16,8 +16,8 @@ The SQLite session backend and the `node:sqlite` adapter live in a separate pack
 
 ```typescript
 import { Agent } from "@at-inc/pi-agent-core";
-import { createModels } from "@earendil-works/pi-ai";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { createModels } from "@at-inc/pi-ai";
+import { anthropicProvider } from "@at-inc/pi-ai/providers/anthropic";
 
 const models = createModels();
 models.setProvider(anthropicProvider());

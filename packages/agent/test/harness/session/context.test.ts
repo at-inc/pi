@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@at-inc/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@at-inc/pi-ai";
 import { describe, expect, it } from "vitest";
 import { buildSessionContext } from "../../../src/harness/session/context.ts";
 import type { Entry } from "../../../src/harness/session/types.ts";

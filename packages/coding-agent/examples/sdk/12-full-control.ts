@@ -12,7 +12,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@at-inc/pi";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getModel } from "@at-inc/pi-ai/compat";
 
 const modelRuntime = await ModelRuntime.create({
 	authPath: "/tmp/my-agent/auth.json",

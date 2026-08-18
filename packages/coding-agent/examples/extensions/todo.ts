@@ -11,7 +11,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, Theme } from "@at-inc/pi";
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum } from "@at-inc/pi-ai";
 import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 

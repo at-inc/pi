@@ -5,7 +5,7 @@ import {
 	streamSimple,
 	type ToolResultMessage,
 	type Usage,
-} from "@earendil-works/pi-ai/compat";
+} from "@at-inc/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";

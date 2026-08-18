@@ -9,7 +9,7 @@
 
 import type { ExtensionAPI } from "@at-inc/pi";
 import { BorderedLoader } from "@at-inc/pi";
-import type { UserMessage } from "@earendil-works/pi-ai";
+import type { UserMessage } from "@at-inc/pi-ai";
 
 const SYSTEM_PROMPT = `You are a question extractor. Given text from a conversation, extract any questions that need answering and format them for the user to fill in.
 

@@ -16,7 +16,7 @@ This is the home of the Pi agent harness project including our self extensible c
 
 * **[@at-inc/pi](packages/coding-agent)**: Interactive coding agent CLI
 * **[@at-inc/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
-* **[@earendil-works/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
+* **[@at-inc/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
 
 To learn more about Pi:
 
@@ -37,7 +37,7 @@ npm login --scope=@at-inc --registry=https://npm.pkg.github.com
 | Package | Description |
 |---------|-------------|
 | **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
-| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
+| **[@at-inc/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@at-inc/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[@at-inc/pi](packages/coding-agent)** | Interactive coding agent CLI |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
