@@ -1,12 +1,12 @@
 {
 	"name": "@at-inc/pi",
-	"version": "0.85.1",
+	"version": "0.85.3",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@at-inc/pi",
-			"version": "0.85.1",
+			"version": "0.85.3",
 			"license": "MIT",
 			"dependencies": {
 				"@at-inc/pi-agent-core": "^0.85.1",
