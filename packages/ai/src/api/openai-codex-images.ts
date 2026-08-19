@@ -123,9 +123,14 @@ export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions
 		return output;
 	}
 	if (images.size === 0) {
+		const assistantText = result.content
+			.filter((part) => part.type === "text")
+			.map((part) => part.text)
+			.join("\n")
+			.trim();
 		output.stopReason = "error";
 		output.errorMessage = imageGenerationFailed
-			? "ChatGPT image generation failed"
+			? assistantText || "ChatGPT image generation failed"
 			: "ChatGPT image generation completed without an image";
 		return output;
 	}

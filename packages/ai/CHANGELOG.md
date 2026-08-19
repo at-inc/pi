@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Surface ChatGPT assistant text as the image generation error message when Codex fails without producing an image.
+
 ## [0.85.0] - 2026-08-18
 
 ### Breaking Changes

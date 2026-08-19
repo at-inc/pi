@@ -192,6 +192,40 @@ describe("OpenAI Codex images", () => {
 		);
 		expect(failed).toMatchObject({ stopReason: "error", errorMessage: "ChatGPT image generation failed" });
 
+		const failedWithAssistantText = await generateImages(
+			MODEL,
+			{ input: [{ type: "text", text: "Draw" }] },
+			{
+				apiKey: mockToken(),
+				fetch: async () =>
+					sse([
+						{
+							type: "response.output_item.added",
+							output_index: 0,
+							item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+						},
+						{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
+						{ type: "response.output_text.delta", output_index: 0, delta: "Policy violation: cannot generate this image." },
+						{
+							type: "response.output_item.done",
+							output_index: 0,
+							item: {
+								type: "message",
+								id: "msg_1",
+								role: "assistant",
+								status: "completed",
+								content: [{ type: "output_text", text: "Policy violation: cannot generate this image." }],
+							},
+						},
+						completedResponse([{ type: "image_generation_call", id: "ig_1", status: "failed", result: null }]),
+					]),
+			},
+		);
+		expect(failedWithAssistantText).toMatchObject({
+			stopReason: "error",
+			errorMessage: "Policy violation: cannot generate this image.",
+		});
+
 		const retryableFetch = vi.fn(
 			async () =>
 				new Response(JSON.stringify({ error: { message: "unavailable" } }), {
