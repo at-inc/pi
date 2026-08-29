@@ -253,6 +253,8 @@ async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAu
 			code_challenge: challenge,
 			code_challenge_method: "S256",
 			state: verifier,
+			// Existing claude.ai sessions otherwise auto-complete and skip account selection.
+			prompt: "login",
 		});
 		interaction.notify({
 			type: "auth_url",
