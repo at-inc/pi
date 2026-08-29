@@ -128,7 +128,7 @@ Attribution:
 
 **Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = breaking changes. No major releases.
 
-1. **Update CHANGELOGs**: ask the user whether they ran the `/cl` prompt on the latest commit on `main`. If not, they must run `/cl` first to audit and update each package's `[Unreleased]` section before releasing.
+1. **Audit CHANGELOGs automatically**: before releasing, inspect all commits and diffs since the previous release and audit every affected package's `[Unreleased]` section. Add or correct missing entries, run `npm run check`, commit the changelog updates, and push `main`. Do not ask the user to run `/cl`; the releasing agent owns this audit.
 
 2. **Local smoke test**: build an unpublished release and smoke test from outside the repo (so it can't resolve workspace files):
    ```bash
