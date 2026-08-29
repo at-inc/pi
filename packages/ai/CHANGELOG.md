@@ -2,11 +2,19 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Renamed the package to `@at-inc/pi-ai` and moved publication to GitHub Packages.
+
+### Added
+
+- Added ChatGPT OAuth image generation through the OpenAI Codex provider.
+
 ### Fixed
 
 - Forced Anthropic OAuth to re-authenticate (`prompt=login`) so an existing claude.ai browser session cannot silently complete login as the wrong account.
-
-- Surface ChatGPT assistant text as the image generation error message when Codex fails without producing an image.
+- Hardened ChatGPT image stream handling for incomplete, malformed, and failed responses.
+- Surfaced ChatGPT assistant text as the image generation error message when Codex fails without producing an image.
 
 ## [0.84.4] - 2026-08-28
 
