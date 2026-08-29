@@ -205,7 +205,11 @@ describe("OpenAI Codex images", () => {
 							item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
 						},
 						{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
-						{ type: "response.output_text.delta", output_index: 0, delta: "Policy violation: cannot generate this image." },
+						{
+							type: "response.output_text.delta",
+							output_index: 0,
+							delta: "Policy violation: cannot generate this image.",
+						},
 						{
 							type: "response.output_item.done",
 							output_index: 0,

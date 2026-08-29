@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent } from "@at-inc/pi-agent-core";
 import type { Model } from "@at-inc/pi-ai";
 import { getModel, streamSimple } from "@at-inc/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@at-inc/pi-ai/providers/all";

@@ -7,7 +7,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@at-inc/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@at-inc/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, Usage } from "@at-inc/pi-ai/compat";
 import type {

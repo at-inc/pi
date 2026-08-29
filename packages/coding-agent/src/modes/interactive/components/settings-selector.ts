@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "@at-inc/pi-agent-core";
 import { getSupportedThinkingLevels, type Model, type Transport } from "@at-inc/pi-ai";
 import {
 	type Component,
