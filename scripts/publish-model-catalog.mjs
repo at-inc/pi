@@ -139,7 +139,7 @@ function gitSourceCommit() {
 	return result.stdout.trim();
 }
 
-function aws(args, { allowNotFound = false } = {}) {
+function aws(args) {
 	const result = spawnSync("aws", args, {
 		encoding: "utf8",
 		env: {
@@ -149,25 +149,40 @@ function aws(args, { allowNotFound = false } = {}) {
 		},
 	});
 	if (result.error) throw result.error;
-	if (result.status === 0) return true;
+	if (result.status === 0) return result.stdout.trim();
 	const message = `${result.stdout}\n${result.stderr}`.trim();
-	if (allowNotFound && /(?:404|NoSuchKey|Not Found)/i.test(message)) return false;
 	throw new Error(`aws ${args.slice(0, 2).join(" ")} failed:\n${message}`);
 }
 
 function downloadIndex(bucket, endpoint, outputPath) {
-	return aws(
-		[
-			"s3",
-			"cp",
-			`s3://${bucket}/${CATALOG_INDEX_KEY}`,
-			outputPath,
+	const objects = JSON.parse(
+		aws([
+			"s3api",
+			"list-objects-v2",
+			"--bucket",
+			bucket,
+			"--prefix",
+			CATALOG_INDEX_KEY,
+			"--max-keys",
+			"1",
 			"--endpoint-url",
 			endpoint,
-			"--only-show-errors",
-		],
-		{ allowNotFound: true },
+			"--output",
+			"json",
+		]),
 	);
+	if (!objects.Contents?.some((object) => object.Key === CATALOG_INDEX_KEY)) return false;
+
+	aws([
+		"s3",
+		"cp",
+		`s3://${bucket}/${CATALOG_INDEX_KEY}`,
+		outputPath,
+		"--endpoint-url",
+		endpoint,
+		"--only-show-errors",
+	]);
+	return true;
 }
 
 function uploadJson(bucket, endpoint, sourcePath, key, cacheControl) {
