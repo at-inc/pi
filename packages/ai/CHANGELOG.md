@@ -15,6 +15,7 @@
 - Forced Anthropic OAuth to re-authenticate (`prompt=login`) so an existing claude.ai browser session cannot silently complete login as the wrong account.
 - Hardened ChatGPT image stream handling for incomplete, malformed, and failed responses.
 - Surfaced ChatGPT assistant text as the image generation error message when Codex fails without producing an image.
+- Fixed Anthropic OAuth requests identifying as Claude Code 2.1.258 so newly gated Claude models work.
 
 ## [0.84.4] - 2026-08-28
 
