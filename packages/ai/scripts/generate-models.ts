@@ -371,6 +371,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-astra",
 ]);
 // Public OpenAI documents additional_tools for applications that load tools
 // outside the normal tool-search flow. Codex currently uses the input item for
@@ -385,6 +386,7 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-astra",
 ]);
 const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -394,6 +396,7 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-astra",
 ]);
 
 function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cost"] {
@@ -411,12 +414,13 @@ function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cos
 	};
 }
 
-// OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. Keep these
-// authoritative values until models.dev and passthrough catalogs catch up.
+// OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. GPT-6 Astra is
+// not in models.dev yet. Keep these authoritative until catalogs catch up.
 // https://developers.openai.com/api/docs/pricing
 const OPENAI_GPT_56_STANDARD_COSTS: Record<string, ModelCost> = {
 	"gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
 	"gpt-5.6-terra": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
+	"gpt-6-astra": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
 };
 
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
@@ -541,13 +545,14 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 		modelId.includes("gpt-5.3") ||
 		modelId.includes("gpt-5.4") ||
 		modelId.includes("gpt-5.5") ||
-		modelId.includes("gpt-5.6")
+		modelId.includes("gpt-5.6") ||
+		modelId.includes("gpt-6-astra")
 	);
 }
 
 function supportsOpenAiMax(model: Model<Api>): boolean {
 	return (
-		model.id.includes("gpt-5.6") &&
+		(model.id.includes("gpt-5.6") || model.id.includes("gpt-6-astra")) &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses" ||
@@ -891,6 +896,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.provider === "openai" && model.id === "gpt-5.5") {
 		mergeThinkingLevelMap(model, { minimal: null });
+	}
+	// GPT-6 Astra rejects none and does not document minimal.
+	// https://developers.openai.com/api/docs/models/gpt-6-astra
+	if (model.id.includes("gpt-6-astra")) {
+		mergeThinkingLevelMap(model, { off: null, minimal: null });
 	}
 	if (model.id.endsWith("gpt-5.5-pro")) {
 		mergeThinkingLevelMap(model, { off: null, minimal: null, low: null });
@@ -2485,6 +2495,18 @@ async function generateModels() {
 	// Add missing gpt models
 	const missingOpenAiModels: Model<"openai-responses">[] = [
 		{
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-6-astra"]),
+			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			maxTokens: 128000,
+		},
+		{
 			id: "gpt-5.6-sol",
 			name: "GPT-5.6 Sol",
 			api: "openai-responses",
@@ -2861,6 +2883,7 @@ async function generateModels() {
 		"gpt-5.6-luna": 1050000,
 		"gpt-5.6-sol": 1050000,
 		"gpt-5.6-terra": 1050000,
+		"gpt-6-astra": 1050000,
 	};
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
