@@ -5,6 +5,7 @@
 ### Added
 
 - Added OpenAI GPT-6 Astra model metadata (`gpt-6-astra`) until models.dev includes it.
+- Added `openai-codex` GPT-6 Astra model metadata (`gpt-6-astra`).
 
 ## [0.85.4] - 2026-09-02
 

@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added inherited OpenAI GPT-6 Astra model metadata (`gpt-6-astra`).
+- Added inherited OpenAI GPT-6 Astra model metadata (`gpt-6-astra`), including `openai-codex`.
 
 ## [0.85.4] - 2026-09-02
 

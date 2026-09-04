@@ -109,6 +109,28 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getModel("azure-openai-responses", "gpt-6-astra")?.contextWindow).toBe(1050000);
 	});
 
+	it("includes xhigh and max but not off or minimal for openai-codex GPT-6 Astra", () => {
+		const model = getModel("openai-codex", "gpt-6-astra");
+		expect(model).toBeDefined();
+		expect(model).toMatchObject({
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			contextWindow: 272000,
+			maxTokens: 128000,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				xhigh: "xhigh",
+				max: "max",
+			},
+			compat: {
+				supportsToolSearch: true,
+				supportsAdditionalTools: true,
+			},
+		});
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
 		const model = getModel("openai", "gpt-5.5-pro");
 		expect(model).toBeDefined();
