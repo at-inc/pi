@@ -419,8 +419,8 @@ function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cos
 	};
 }
 
-// OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. GPT-6 Astra is
-// not in models.dev yet. Keep these authoritative until catalogs catch up.
+// OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. Keep these
+// authoritative values until models.dev and passthrough catalogs catch up.
 // https://developers.openai.com/api/docs/pricing
 const OPENAI_GPT_56_STANDARD_COSTS: Record<string, ModelCost> = {
 	"gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
@@ -2500,18 +2500,6 @@ async function generateModels() {
 
 	// Add missing gpt models
 	const missingOpenAiModels: Model<"openai-responses">[] = [
-		{
-			id: "gpt-6-astra",
-			name: "GPT-6 Astra",
-			api: "openai-responses",
-			baseUrl: "https://api.openai.com/v1",
-			provider: "openai",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-6-astra"]),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
-			maxTokens: 128000,
-		},
 		{
 			id: "gpt-5.6-sol",
 			name: "GPT-5.6 Sol",
