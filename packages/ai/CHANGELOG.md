@@ -4,7 +4,17 @@
 
 ### Added
 
-- Added GPT-6 Astra for OpenAI API keys and OpenAI Codex subscriptions.
+- Added OpenAI Codex GPT-6 Astra model metadata (`gpt-6-astra`).
+- Added compact assistant-message frames and persistent Anthropic per-turn thinking effort.
+
+### Changed
+
+- Replaced the Cloudflare AI Gateway binding shim with a direct AI binding fetch.
+
+### Fixed
+
+- Improved provider stream compatibility, OpenAI Codex SSE terminal-event handling, and model metadata for Qwen, Fireworks, Baseten, GitHub Copilot, and OpenRouter.
+- Removed the unnecessary Chord dependency from the AI package.
 
 ## [0.85.4] - 2026-09-02
 

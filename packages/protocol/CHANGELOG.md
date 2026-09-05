@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Replaced the previous protocol schema surface with transport-neutral session, snapshot, and lifecycle contracts.
+
+### Added
+
+- Added CBOR codecs, length-prefixed framing, and stable protocol errors for remote pi sessions.
+
 ## [0.85.4] - 2026-09-02
 
 ## [0.85.0] - 2026-09-04

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Replaced the previous SQLite session schema and repository implementation with the new storage contract. Existing databases are not migrated automatically.
+
+### Added
+
+- Added storage-backed session entries, branches, sequences, statistics, and usage ledgers for the new agent runtime.
+
+### Removed
+
+- Removed the legacy SQLite search backend and writer-lease implementation.
+
 ## [0.85.4] - 2026-09-02
 
 ### Changed

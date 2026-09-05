@@ -2,13 +2,19 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Reworked the experimental client, server, and session runtime around the new agent harness, durable session storage, and transport-neutral protocol APIs.
+
 ### Added
 
 - Added inherited `openai-codex` GPT-6 Astra model metadata (`gpt-6-astra`).
+- Added in-memory session restoration, experimental remote runtime services, plugin loading, and Chord-backed service adapters.
 
 ### Fixed
 
 - Fixed configurable save keybindings in the model and thinking selectors ([#8797](https://github.com/earendil-works/pi/issues/8797)).
+- Fixed compaction cancellation, session fork boundaries, imported-session collisions, tool availability with Bash-only configurations, and bounded shell output.
 
 ## [0.85.4] - 2026-09-02
 

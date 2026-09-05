@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Reworked the agent harness and session APIs around storage-backed runtimes, named branches, and durable run state. Consumers using the previous reducer and session contracts must migrate.
+
+### Added
+
+- Added durable session repositories, in-memory session restoration, runtime lanes, fork policies, and structured tool execution primitives.
+
+### Fixed
+
+- Improved compaction, branch recovery, tool-settlement, shell-output limits, cancellation, and proxy-stream error handling.
+
 ## [0.85.4] - 2026-09-02
 
 ### Breaking Changes

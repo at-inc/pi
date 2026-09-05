@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Reworked server session management around durable session metadata, snapshots, and transport-neutral services.
+
+### Added
+
+- Added session routing, host/service testing helpers, and Unix transport support for the new protocol.
+
 ## [0.85.4] - 2026-09-02
 
 ## [0.85.0] - 2026-09-04
