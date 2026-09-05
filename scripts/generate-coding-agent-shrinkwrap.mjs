@@ -12,6 +12,7 @@ const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
 const internalPackagePrefixes = ["@at-inc/pi-"];
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
+	["esbuild@0.28.1", "postinstall selects and verifies the platform-specific esbuild binary"],
 	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);
 
@@ -141,7 +142,7 @@ function getInternalWorkspaces(lockPackages) {
 		if (!lockPath.startsWith("packages/") || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}
-		if (!isInternalPackageName(entry.name)) {
+		if (!isInternalPackageName(entry.name) && entry.name !== "@earendil-works/chord") {
 			continue;
 		}
 

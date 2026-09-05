@@ -15,11 +15,17 @@ export default defineConfig({
 		silent: "passed-only",
 	},
 	resolve: {
+		conditions: ["source"],
 		alias: [
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex },
-			{ find: /^@earendil-works\/pi-agent-core$/, replacement: agentSrcIndex },
-			{ find: /^@earendil-works\/pi-ai$/, replacement: aiSrcIndex },
-			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{ find: /^@at-inc\/pi-agent-core$/, replacement: agentSrcIndex },
+			{ find: /^@at-inc\/pi-ai$/, replacement: aiSrcIndex },
+			{ find: /^@at-inc\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{
+				find: /^@at-inc\/pi-ai\/utils\/uuid$/,
+				replacement: fileURLToPath(new URL("../ai/src/utils/uuid.ts", import.meta.url)),
+			},
 		],
 	},
+	ssr: { resolve: { conditions: ["source"] } },
 });

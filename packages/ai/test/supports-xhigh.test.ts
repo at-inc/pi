@@ -52,7 +52,7 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).not.toContain("max");
 	});
 
-	it.each(["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
+	it.each(["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"] as const)(
 		"includes xhigh for openai-codex %s models",
 		(modelId) => {
 			const model = getModel("openai-codex", modelId);
@@ -106,7 +106,9 @@ describe("getSupportedThinkingLevels", () => {
 			},
 		});
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-		expect(getModel("azure-openai-responses", "gpt-6-astra")?.contextWindow).toBe(1050000);
+		const azureModel = getModel("azure-openai-responses", "gpt-6-astra");
+		expect(azureModel?.contextWindow).toBe(1050000);
+		expect(getSupportedThinkingLevels(azureModel!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
 	});
 
 	it("includes xhigh and max but not off or minimal for openai-codex GPT-6 Astra", () => {
