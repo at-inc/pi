@@ -48,8 +48,8 @@
 	},
 	"dependencies": {
 		"@at-inc/pi-agent-core": "^0.85.4",
-		"@earendil-works/chord": "0.85.0",
-		"@earendil-works/pi-protocol": "^0.85.4"
+		"@earendil-works/chord": "^0.85.1",
+		"@earendil-works/pi-protocol": "^0.85.1"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

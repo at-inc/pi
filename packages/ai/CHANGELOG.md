@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.85.1] - 2026-09-05
+
 ### Added
 
 - Added OpenAI Codex GPT-6 Astra model metadata (`gpt-6-astra`).
@@ -32,6 +34,10 @@
 - Hardened ChatGPT image stream handling for incomplete, malformed, and failed responses.
 - Surfaced ChatGPT assistant text as the image generation error message when Codex fails without producing an image.
 - Fixed Anthropic OAuth requests identifying as Claude Code 2.1.258 so newly gated Claude models work.
+### Fixed
+
+- Fixed long prompt-cache requests for GPT-5.6+ Responses models to use `prompt_cache_options.ttl: "30m"` instead of `prompt_cache_retention: "24h"`.
+
 ## [0.85.0] - 2026-09-04
 
 ### Breaking Changes

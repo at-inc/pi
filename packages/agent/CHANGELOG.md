@@ -19,6 +19,7 @@
 ### Breaking Changes
 
 - Renamed the package to `@at-inc/pi-agent-core` and moved publication to GitHub Packages.
+## [0.85.1] - 2026-09-05
 
 ## [0.85.0] - 2026-09-04
 

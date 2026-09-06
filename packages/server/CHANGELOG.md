@@ -11,6 +11,7 @@
 - Added session routing, host/service testing helpers, and Unix transport support for the new protocol.
 
 ## [0.85.4] - 2026-09-02
+## [0.85.1] - 2026-09-05
 
 ## [0.85.0] - 2026-09-04
 

@@ -11,6 +11,7 @@
 - Added multi-session client and session-handle support with structured server errors.
 
 ## [0.85.4] - 2026-09-02
+## [0.85.1] - 2026-09-05
 
 ## [0.85.0] - 2026-09-04
 
