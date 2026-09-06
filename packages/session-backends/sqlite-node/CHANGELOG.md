@@ -3,9 +3,6 @@
 ## [Unreleased]
 
 ### Breaking Changes
-## [0.85.1] - 2026-09-05
-
-## [0.85.0] - 2026-09-04
 
 - Replaced the previous SQLite session schema and repository implementation with the new storage contract. Existing databases are not migrated automatically.
 
@@ -22,6 +19,8 @@
 ### Changed
 
 - Switched the agent-core dependency to `@at-inc/pi-agent-core`.
+
+## [0.85.1] - 2026-09-05
 
 ## [0.85.0] - 2026-09-04
 ## [0.84.4] - 2026-08-28

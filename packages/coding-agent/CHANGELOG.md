@@ -10,42 +10,28 @@
 
 - Added inherited `openai-codex` GPT-6 Astra model metadata (`gpt-6-astra`).
 - Added in-memory session restoration, experimental remote runtime services, plugin loading, and Chord-backed service adapters.
+- Added GPT-6 Astra for OpenAI API keys and OpenAI Codex subscriptions.
+- Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
 
 ### Fixed
 
 - Fixed configurable save keybindings in the model and thinking selectors ([#8797](https://github.com/earendil-works/pi/issues/8797)).
+- Fixed configurable save keybindings in the model and thinking selectors ([#9149](https://github.com/earendil-works/pi/pull/9149) by [@rwachtler](https://github.com/rwachtler)).
 - Fixed compaction cancellation, session fork boundaries, imported-session collisions, tool availability with Bash-only configurations, and bounded shell output.
+- Fixed mouse hover changing selection and recentering autocomplete and settings lists, causing clicks to target a different item.
+- Fixed SDK import failures caused by unintentionally publishing internal experimental code and dependencies in 0.85.0. The experimental `client` and `experimental/plugin` subpaths and server/client commands are now source-only through `pi-test.sh`; the supported local SDK and stdio RPC API are unchanged ([#9132](https://github.com/earendil-works/pi/issues/9132)).
+- Fixed long prompt-cache requests for GPT-5.6+ Responses models to use `prompt_cache_options.ttl: "30m"` instead of `prompt_cache_retention: "24h"`.
+- Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
+
+### Changed
+
+- Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
 
 ## [0.85.4] - 2026-09-02
 
 ### Breaking Changes
 
 - Renamed the package to `@at-inc/pi` and moved publication to GitHub Packages.
-### Changed
-
-- Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
-
-### Fixed
-
-- Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
-
-## [0.85.1] - 2026-09-05
-
-### New Features
-
-- **GPT-6 Astra** — Available through OpenAI API keys and OpenAI Codex subscriptions. See [API Keys](docs/providers.md#api-keys) and [OpenAI Codex](docs/providers.md#openai-codex).
-
-### Added
-
-- Added GPT-6 Astra for OpenAI API keys and OpenAI Codex subscriptions.
-- Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
-
-### Fixed
-
-- Fixed configurable save keybindings in the model and thinking selectors ([#9149](https://github.com/earendil-works/pi/pull/9149) by [@rwachtler](https://github.com/rwachtler)).
-- Fixed SDK import failures caused by unintentionally publishing internal experimental code and dependencies in 0.85.0. The experimental `client` and `experimental/plugin` subpaths and server/client commands are now source-only through `pi-test.sh`; the supported local SDK and stdio RPC API are unchanged ([#9132](https://github.com/earendil-works/pi/issues/9132)).
-- Fixed mouse hover changing selection and recentering autocomplete and settings lists, causing clicks to target a different item.
-- Fixed long prompt-cache requests for GPT-5.6+ Responses models to use `prompt_cache_options.ttl: "30m"` instead of `prompt_cache_retention: "24h"`.
 
 ## [0.85.0] - 2026-09-04
 
