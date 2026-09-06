@@ -7,7 +7,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
-const codingAgentName = "@earendil-works/pi-coding-agent";
+const codingAgentName = "@at-inc/pi";
 const developmentPackages = new Set(["pi-client", "pi-protocol", "pi-server"].map((name) => `@earendil-works/${name}`));
 
 function run(command, args, options = {}) {

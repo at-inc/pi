@@ -11,7 +11,7 @@ const outputDir = join(codingAgentDir, "install-lock");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
-const internalPackagePrefixes = ["@at-inc/pi-"];
+const internalPackagePrefixes = ["@at-inc/pi-", "@earendil-works/pi-"];
 const installPackageName = "@at-inc/pi-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
