@@ -13,7 +13,9 @@ import type {
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { stream } from "./openai-codex-responses.ts";
 
-export const OPENAI_CODEX_IMAGE_DRIVER_MODEL_ID = "gpt-5.4-mini";
+// ChatGPT retired gpt-5.4-mini for Codex accounts ("not supported when using Codex with a ChatGPT account"),
+// which broke every generation; Luna is the cheapest current slug that accepts the image_generation tool.
+export const OPENAI_CODEX_IMAGE_DRIVER_MODEL_ID = "gpt-5.6-luna";
 const DEFAULT_IMAGE_TIMEOUT_MS = 150_000;
 const MAX_IMAGE_BASE64_CHARS = 24 * 1024 * 1024;
 
@@ -43,7 +45,7 @@ export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions
 	};
 	const driver: Model<"openai-codex-responses"> = {
 		id: OPENAI_CODEX_IMAGE_DRIVER_MODEL_ID,
-		name: "GPT-5.4 mini",
+		name: "GPT-5.6 Luna",
 		api: "openai-codex-responses",
 		provider: model.provider,
 		baseUrl: model.baseUrl,
