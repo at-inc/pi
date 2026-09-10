@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Switched the ChatGPT image generation driver from `gpt-5.4-mini`, which ChatGPT no longer accepts for Codex accounts, to `gpt-5.6-luna`.
+
 ## [0.85.5] - 2026-09-05
 
 ### Added
