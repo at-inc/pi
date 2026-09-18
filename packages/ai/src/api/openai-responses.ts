@@ -15,6 +15,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic, createProviderErrorDiagnostic } from "../utils/diagnostics.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -208,6 +209,9 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				normalizeProviderError(error),
 				`${model.provider === "openai" ? "OpenAI" : model.provider} API error`,
 			);
+			if (output.stopReason === "error") {
+				appendAssistantMessageDiagnostic(output, createProviderErrorDiagnostic(error));
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

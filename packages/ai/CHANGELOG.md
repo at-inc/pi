@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserved HTTP status, response headers, and provider error payloads in diagnostics for Anthropic, OpenAI Chat Completions, Responses, and Codex errors.
+- Preserved Responses text identity and phase from the start of streaming, including interrupted responses.
+
 ## [0.85.6] - 2026-09-18
 
 ### Added

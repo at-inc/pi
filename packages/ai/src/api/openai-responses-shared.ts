@@ -477,7 +477,12 @@ export async function processResponsesStream<TApi extends Api>(
 		}
 		if (item.type === "message") {
 			applyMessagePhaseStopReason(item);
-			const block: TextContent = { type: "text", text: "" };
+			// Keep replay identity and phase even if the stream ends before output_item.done.
+			const block: TextContent = {
+				type: "text",
+				text: "",
+				textSignature: encodeTextSignatureV1(item.id, item.phase ?? undefined),
+			};
 			output.content.push(block);
 			const slot = { type: "text", block, contentIndex: output.content.length - 1 } satisfies ResponsesOutputSlot;
 			outputSlots.set(outputIndex, slot);

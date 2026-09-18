@@ -37,6 +37,25 @@ export function createAssistantMessageDiagnostic(
 	return { type, timestamp: Date.now(), error: extractDiagnosticError(error), details };
 }
 
+/** Preserve provider metadata that is lost when SDK errors become display strings. */
+export function createProviderErrorDiagnostic(error: unknown): AssistantMessageDiagnostic {
+	const source = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+	const status =
+		typeof source.status === "number"
+			? source.status
+			: typeof source.statusCode === "number"
+				? source.statusCode
+				: undefined;
+	const headers =
+		source.headers instanceof Headers
+			? Object.fromEntries(source.headers)
+			: source.headers && typeof source.headers === "object"
+				? source.headers
+				: undefined;
+	const payload = source.payload ?? (source.error && typeof source.error === "object" ? source.error : undefined);
+	return createAssistantMessageDiagnostic("provider_error", error, { status, headers, payload });
+}
+
 export function appendAssistantMessageDiagnostic<T extends { diagnostics?: AssistantMessageDiagnostic[] }>(
 	message: T,
 	diagnostic: AssistantMessageDiagnostic,

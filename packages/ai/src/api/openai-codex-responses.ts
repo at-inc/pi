@@ -25,6 +25,7 @@ import { combineAbortSignals } from "../utils/abort-signals.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
+	createProviderErrorDiagnostic,
 	formatThrownValue,
 } from "../utils/diagnostics.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
@@ -442,7 +443,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						statusText: response.statusText,
 					});
 					const info = await parseErrorResponse(fakeResponse);
-					throw new Error(info.friendlyMessage || info.message);
+					throw new CodexApiError(info.friendlyMessage || info.message, {
+						code: info.code,
+						payload: info.payload,
+						status: response.status,
+						headers: headersToRecord(response.headers),
+					});
 				} catch (error) {
 					if (error instanceof Error) {
 						if (error.name === "AbortError" || error.message === "Request was aborted") {
@@ -493,6 +499,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			if (output.stopReason === "error") {
+				appendAssistantMessageDiagnostic(output, createProviderErrorDiagnostic(error));
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -682,12 +691,25 @@ async function processStream(
 class CodexApiError extends Error {
 	readonly code?: string;
 	readonly payload?: Record<string, unknown>;
+	readonly status?: number;
+	readonly headers?: Record<string, string>;
 
-	constructor(message: string, options?: { code?: string; payload?: Record<string, unknown>; cause?: unknown }) {
+	constructor(
+		message: string,
+		options?: {
+			code?: string;
+			payload?: Record<string, unknown>;
+			status?: number;
+			headers?: Record<string, string>;
+			cause?: unknown;
+		},
+	) {
 		super(message);
 		this.name = "CodexApiError";
 		this.code = options?.code;
 		this.payload = options?.payload;
+		this.status = options?.status;
+		this.headers = options?.headers;
 		this.cause = options?.cause;
 	}
 }
@@ -1570,10 +1592,14 @@ async function processWebSocketStream(
 // Error Handling
 // ============================================================================
 
-async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
+async function parseErrorResponse(
+	response: Response,
+): Promise<{ message: string; friendlyMessage?: string; code?: string; payload?: Record<string, unknown> }> {
 	const raw = await response.text();
 	let message = raw || response.statusText || "Request failed";
 	let friendlyMessage: string | undefined;
+	let code: string | undefined;
+	let payload: Record<string, unknown> | undefined;
 
 	try {
 		const parsed = JSON.parse(raw) as {
@@ -1581,7 +1607,8 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 		};
 		const err = parsed?.error;
 		if (err) {
-			const code = err.code || err.type || "";
+			payload = parsed;
+			code = err.code || err.type || "";
 			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
 				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
 				const mins = err.resets_at
@@ -1594,7 +1621,7 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 		}
 	} catch {}
 
-	return { message, friendlyMessage };
+	return { message, friendlyMessage, code, payload };
 }
 
 // ============================================================================

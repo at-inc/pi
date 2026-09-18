@@ -35,6 +35,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic, createProviderErrorDiagnostic } from "../utils/diagnostics.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
@@ -718,6 +719,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
 			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
 				output.errorMessage += `\n${rawMetadata}`;
+			}
+			if (output.stopReason === "error") {
+				appendAssistantMessageDiagnostic(output, createProviderErrorDiagnostic(error));
 			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
