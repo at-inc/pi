@@ -2,7 +2,6 @@ import type { Tool as OpenAITool, ToolChoiceTypes } from "openai/resources/respo
 import type {
 	AssistantImages,
 	AssistantMessage,
-	Context,
 	ImageContent,
 	ImagesContext,
 	ImagesFunction,
@@ -11,6 +10,7 @@ import type {
 	Model,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import { normalizeContext } from "../utils/transcript.ts";
 import { stream } from "./openai-codex-responses.ts";
 
 export const OPENAI_CODEX_IMAGE_DRIVER_MODEL_ID = "gpt-5.4-mini";
@@ -53,10 +53,10 @@ export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions
 		contextWindow: 400_000,
 		maxTokens: 128_000,
 	};
-	const responsesContext: Context = {
+	const responsesContext = normalizeContext({
 		systemPrompt: "Use the image generation tool exactly once to fulfill the user's request.",
 		messages: [{ role: "user", content: context.input, timestamp: Date.now() }],
-	};
+	});
 	const action = context.input.some((item) => item.type === "image") ? "edit" : "generate";
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_IMAGE_TIMEOUT_MS;
 	const timeoutSignal = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
