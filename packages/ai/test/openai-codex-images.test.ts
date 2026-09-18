@@ -136,7 +136,7 @@ describe("OpenAI Codex images", () => {
 			output: [{ type: "image", data: IMAGE_DATA, mimeType: "image/png" }],
 		});
 		expect(requestBody).toMatchObject({
-			model: "gpt-5.4-mini",
+			model: "gpt-5.6-luna",
 			store: false,
 			stream: true,
 			tools: [{ type: "image_generation", action }],

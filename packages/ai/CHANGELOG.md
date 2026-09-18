@@ -26,6 +26,7 @@
 - Fixed Baseten requests to send session-affinity headers from `sessionId` for automatic prompt-cache routing ([#9629](https://github.com/earendil-works/pi/issues/9629)).
 - Fixed retry classification for Cloudflare 520 responses ([#9627](https://github.com/earendil-works/pi/issues/9627)).
 - Fixed retry classification for transient Azure peak-load capacity errors ([#9669](https://github.com/earendil-works/pi/issues/9669)).
+- Switched the ChatGPT image generation driver from `gpt-5.4-mini`, which ChatGPT no longer accepts for Codex accounts, to `gpt-5.6-luna`.
 
 ## [0.85.5] - 2026-09-05
 
