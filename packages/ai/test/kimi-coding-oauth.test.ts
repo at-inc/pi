@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { kimiCodingOAuth } from "../src/auth/oauth/kimi-coding.ts";
 import type { ProviderAuthInteraction } from "../src/auth/types.ts";
+import { createModels } from "../src/models.ts";
+import { kimiCodingProvider } from "../src/providers/kimi-coding.ts";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const OAUTH_HOST = "https://auth.kimi.com";
@@ -31,17 +34,24 @@ function deviceAuthorizationResponse(overrides?: Record<string, unknown>): Respo
 	});
 }
 
-function createInteraction(events: Array<Record<string, unknown>>): ProviderAuthInteraction {
+function createInteraction(events: Array<Record<string, unknown>>, region = "mainland-cn"): ProviderAuthInteraction {
 	return {
 		signal: new AbortController().signal,
-		prompt: async () => {
-			throw new Error("Kimi Code login should not prompt");
+		prompt: async (prompt) => {
+			expect(prompt.type).toBe("select");
+			return region;
 		},
 		notify: (event) => events.push(event),
 	};
 }
 
 describe("Kimi Code OAuth", () => {
+	beforeEach(() => {
+		vi.stubEnv("KIMI_CODE_OAUTH_HOST", "");
+		vi.stubEnv("KIMI_OAUTH_HOST", "");
+		vi.stubEnv("KIMI_CODE_BASE_URL", "");
+	});
+
 	afterEach(() => {
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
@@ -111,6 +121,8 @@ describe("Kimi Code OAuth", () => {
 		await vi.advanceTimersByTimeAsync(5000);
 		await expect(credentialPromise).resolves.toEqual({
 			type: "oauth",
+			oauthHost: OAUTH_HOST,
+			baseUrl: "https://api.kimi.com/coding",
 			access: "access-token",
 			refresh: "refresh-token",
 			expires: startTime.getTime() + 10000 + 3600 * 1000,
@@ -217,6 +229,8 @@ describe("Kimi Code OAuth", () => {
 		);
 		expect(credential).toEqual({
 			type: "oauth",
+			oauthHost: OAUTH_HOST,
+			baseUrl: "https://api.kimi.com/coding",
 			access: "new-access",
 			refresh: "new-refresh",
 			expires: expect.any(Number),
@@ -225,7 +239,123 @@ describe("Kimi Code OAuth", () => {
 
 		await expect(kimiCodingOAuth.toAuth(credential)).resolves.toEqual({
 			headers: { Authorization: "Bearer new-access" },
+			baseUrl: "https://api.kimi.com/coding",
 		});
+	});
+
+	// Same regional-login failure reported in can1357/oh-my-pi#12024.
+	it("keeps international login, refresh, and model requests on kimi.ai after environment changes", async () => {
+		vi.useFakeTimers();
+		const urls: string[] = [];
+		const events: Array<Record<string, unknown>> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown) => {
+				const url = getUrl(input);
+				urls.push(url);
+				if (url === "https://auth.kimi.ai/api/oauth/device_authorization") {
+					return deviceAuthorizationResponse({
+						interval: 1,
+						verification_uri: "https://www.kimi.ai/code/authorize_device",
+						verification_uri_complete: "https://www.kimi.ai/code/authorize_device?user_code=ABCD-1234",
+					});
+				}
+				if (url === "https://auth.kimi.ai/api/oauth/token") {
+					return jsonResponse({
+						access_token: "global-access",
+						refresh_token: "global-refresh",
+						expires_in: 3600,
+					});
+				}
+				throw new Error(`Unexpected fetch URL: ${url}`);
+			}),
+		);
+
+		const login = kimiCodingOAuth.login(createInteraction(events, "global"));
+		await vi.advanceTimersByTimeAsync(1000);
+		const credential = await login;
+		expect(events[0]).toMatchObject({
+			verificationUri: "https://www.kimi.ai/code/authorize_device?user_code=ABCD-1234",
+		});
+		expect(credential).toMatchObject({ oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding" });
+		vi.stubEnv("KIMI_CODE_OAUTH_HOST", OAUTH_HOST);
+		vi.stubEnv("KIMI_CODE_BASE_URL", "https://api.kimi.com/coding");
+		// Round-trip through storage as a restarted client would.
+		const refreshed = await kimiCodingOAuth.refresh(
+			JSON.parse(JSON.stringify(credential)),
+			new AbortController().signal,
+		);
+		expect(refreshed).toMatchObject({ oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding" });
+		expect(urls).toEqual([
+			"https://auth.kimi.ai/api/oauth/device_authorization",
+			"https://auth.kimi.ai/api/oauth/token",
+			"https://auth.kimi.ai/api/oauth/token",
+		]);
+
+		vi.useRealTimers();
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("kimi-coding", async () => refreshed);
+		const models = createModels({ credentials });
+		models.setProvider(kimiCodingProvider());
+		const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+			expect(getUrl(input)).toBe("https://api.kimi.ai/coding/v1/messages?beta=true");
+			expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer global-access");
+			return new Response(
+				[
+					'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":1,"output_tokens":0}}}',
+					'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+					'event: message_stop\ndata: {"type":"message_stop"}',
+					"",
+				].join("\n\n"),
+				{ headers: { "content-type": "text/event-stream" } },
+			);
+		});
+		const result = await models.completeSimple(
+			models.getModel("kimi-coding", "kimi-for-coding")!,
+			{ messages: [{ role: "user", content: "Hello", timestamp: Date.now() }] },
+			{ fetch: request },
+		);
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.stopReason).toBe("stop");
+		expect(request).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		["KIMI_CODE_OAUTH_HOST", "https://auth.kimi.ai/"],
+		["KIMI_OAUTH_HOST", "https://auth.kimi.ai"],
+		["KIMI_CODE_BASE_URL", "https://api.kimi.ai/coding/v1/"],
+	])("infers both international endpoints from %s without a prompt", async (name, value) => {
+		vi.useFakeTimers();
+		vi.stubEnv(name, value);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown) => {
+				const url = getUrl(input);
+				if (url === "https://auth.kimi.ai/api/oauth/device_authorization")
+					return deviceAuthorizationResponse({ interval: 1 });
+				if (url === "https://auth.kimi.ai/api/oauth/token")
+					return jsonResponse({ access_token: "a", refresh_token: "r", expires_in: 60 });
+				throw new Error(`Unexpected fetch URL: ${url}`);
+			}),
+		);
+		const interaction = createInteraction([]);
+		interaction.prompt = vi.fn().mockRejectedValue(new Error("Should not prompt"));
+		const login = kimiCodingOAuth.login(interaction);
+		await vi.advanceTimersByTimeAsync(1000);
+		await expect(login).resolves.toMatchObject({
+			oauthHost: "https://auth.kimi.ai",
+			baseUrl: "https://api.kimi.ai/coding",
+		});
+		expect(interaction.prompt).not.toHaveBeenCalled();
+	});
+
+	it("does not start device authorization when region selection is canceled", async () => {
+		const fetch = vi.fn();
+		vi.stubGlobal("fetch", fetch);
+		const interaction = createInteraction([]);
+		interaction.prompt = vi.fn().mockRejectedValue(new Error("Canceled"));
+		await expect(kimiCodingOAuth.login(interaction)).rejects.toThrow("Canceled");
+		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it("retries refresh on 429 and fails unauthorized on invalid_grant", async () => {
