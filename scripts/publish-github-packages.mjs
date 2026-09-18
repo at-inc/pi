@@ -56,6 +56,8 @@ function isPublished(name, version) {
 	throw new Error(output || `Failed to query ${name}@${version}`);
 }
 
+run("node", ["scripts/prepare-github-package-bundles.mjs"]);
+
 const packageStates = packages.map((pkg) => {
 	const manifest = readPackage(pkg.directory);
 	if (manifest.name !== pkg.name) {

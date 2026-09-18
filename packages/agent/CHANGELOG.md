@@ -1,6 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [0.86.0] - 2026-09-18
+
+### Added
+
+- Added mid-conversation system messages and streaming legacy JSONL session migration and forks.
+
+### Fixed
+
+- Capped agent retry backoff and corrected fork lane validation and sequence handling.
+- Bundled matching Chord and telemetry modules in GitHub Packages releases so installation does not depend on unpublished upstream versions.
 
 ## [0.85.5] - 2026-09-05
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.86.0] - 2026-09-18
 
 ### Added
 
@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Bundled the matching telemetry module in GitHub Packages releases so installation does not depend on an unpublished upstream version.
 - Fixed Kimi Code international accounts using mainland endpoints. Login now selects and stores the account region for OAuth refresh and model requests; API-key connections also support `KIMI_CODE_BASE_URL`.
 - Fixed Vercel AI Gateway replaying unsigned thinking as assistant text ([#9676](https://github.com/earendil-works/pi/issues/9676)).
 - Fixed Google Generative AI and Vertex AI using unsupported thinking levels when reasoning is omitted or when model capabilities differ within a Gemini family ([#9455](https://github.com/earendil-works/pi/issues/9455)).

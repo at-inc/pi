@@ -213,13 +213,17 @@ if (!options.skipTest) {
 	run("./test.sh", [], { cwd: repoRoot });
 }
 
+run("node", ["scripts/prepare-github-package-bundles.mjs"], { cwd: repoRoot });
 const tarballs = packReleasePackages(packages, tarballDirectory);
+// Exercise the same three artifacts that GitHub Packages publishes; upstream
+// modules must come from their bundles, not test-only workspace overrides.
+const githubTarballs = new Map([...tarballs].filter(([name]) => name.startsWith("@at-inc/")));
 
 let binaryPlatform;
 if (!options.skipInstall) {
 	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir);
 
-	installCodingAgentConsumer(nodeInstallDirectory, tarballs);
+	installCodingAgentConsumer(nodeInstallDirectory, githubTarballs);
 	smokeTestCodingAgentConsumer(nodeInstallDirectory);
 	createPiShim(nodeInstallDirectory);
 
@@ -227,7 +231,7 @@ if (!options.skipInstall) {
 		if (!commandExists("bun")) {
 			throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
 		}
-		installCodingAgentConsumer(bunInstallDirectory, tarballs, "bun");
+		installCodingAgentConsumer(bunInstallDirectory, githubTarballs, "bun");
 		smokeTestCodingAgentConsumer(bunInstallDirectory, "bun");
 		createPiShim(bunInstallDirectory);
 	}

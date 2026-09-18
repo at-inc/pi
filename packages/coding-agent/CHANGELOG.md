@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.86.0] - 2026-09-18
 
 ### Breaking Changes
 
@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- Bundled matching Chord and TUI modules in GitHub Packages releases so installation does not depend on unpublished upstream versions.
 - Fixed signal-terminated local shell commands being reported as successful with partial output ([#9577](https://github.com/earendil-works/pi/issues/9577) by [@BrendanJMurphy](https://github.com/BrendanJMurphy)).
 - Fixed local clipboard failures reporting success when the terminal ignored the fallback OSC 52 write, and added platform-specific setup guidance when no clipboard backend works ([#9618](https://github.com/earendil-works/pi/issues/9618)).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
