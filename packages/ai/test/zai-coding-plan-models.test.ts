@@ -36,6 +36,12 @@ it("uses API-equivalent reference costs for Coding Plan models", () => {
 			cacheRead: 0.26,
 			cacheWrite: 0,
 		});
+		expect(getBuiltinModel(provider, "glm-5.3-flash").cost).toEqual({
+			input: 0.15,
+			output: 0.5,
+			cacheRead: 0.03,
+			cacheWrite: 0,
+		});
 	}
 });
 
