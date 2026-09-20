@@ -187,6 +187,38 @@ describe("harness compaction", () => {
 		expect(entries[result.firstKeptEntryIndex]?.type).toBe("message");
 	});
 
+	// #9740: oversized trailing tool results must retain their call, not the entire transcript.
+	it("retains the preceding tool call when trailing results exceed the recent-token budget", () => {
+		const user = createMessageEntry(createUserMessage("Read the migration report"));
+		const assistant = createMessageEntry(createAssistantMessage("Checking the report"), user.id);
+		const call = createMessageEntry(
+			{
+				...createAssistantMessage(""),
+				content: [{ type: "toolCall", id: "large-read", name: "read", arguments: { path: "report.txt" } }],
+				stopReason: "toolUse",
+			},
+			assistant.id,
+		);
+		const result = createMessageEntry(
+			{
+				role: "toolResult",
+				toolCallId: "large-read",
+				toolName: "read",
+				content: [{ type: "text", text: "x".repeat(40_000) }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+			call.id,
+		);
+		const entries = [user, assistant, call, result];
+
+		expect(findCutPoint(entries, 0, entries.length, 2000)).toEqual({
+			firstKeptEntryIndex: 2,
+			turnStartIndex: 0,
+			isSplitTurn: true,
+		});
+	});
+
 	it("covers cut-point and turn-start edge cases", () => {
 		const firstCustom = createCustomEntry("first");
 		const secondCustom = createCustomEntry("second", firstCustom.id);

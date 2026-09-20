@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.86.1-rev.1] - 2026-09-20
+
 ### Fixed
 
 - Fixed idle prompt-cache warming rebuilding expired caches when its timer or an extension decision is delayed.

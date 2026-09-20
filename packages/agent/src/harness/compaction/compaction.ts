@@ -387,12 +387,8 @@ export function findCutPoint(
 		const messageTokens = estimateTokens(entry.message as AgentMessage);
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {
-			for (let c = 0; c < cutPoints.length; c++) {
-				if (cutPoints[c] >= i) {
-					cutIndex = cutPoints[c];
-					break;
-				}
-			}
+			// Port coding-agent #9740: retain the preceding tool call when its results alone exceed the budget.
+			cutIndex = cutPoints.find((candidate) => candidate >= i) ?? cutPoints[cutPoints.length - 1];
 			break;
 		}
 	}

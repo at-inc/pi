@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.86.1-rev.1] - 2026-09-20
+
+### Fixed
+
+- Fixed compaction retaining the entire transcript when trailing tool results alone exceed the recent-token budget; retain their preceding tool call instead ([#9740](https://github.com/earendil-works/pi/issues/9740)).
+
 ## [0.86.1] - 2026-09-20
 
 ## [0.86.0] - 2026-09-19

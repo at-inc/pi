@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.86.1-rev.1] - 2026-09-20
+
 ### Fixed
 
 - Preserved provider error metadata under the JSON-compatible diagnostic types, including failures with non-serializable payloads.
