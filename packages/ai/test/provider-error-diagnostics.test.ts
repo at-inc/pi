@@ -155,4 +155,34 @@ describe("provider error diagnostics", () => {
 		expect(startingSignature).toBe(JSON.stringify({ v: 1, id: "msg_test", phase }));
 		expect(output.content).toEqual([{ type: "text", text: "Partial answer", textSignature: startingSignature }]);
 	});
+
+	it("normalizes optional provider metadata to JSON values", () => {
+		const diagnostic = createProviderErrorDiagnostic({
+			status: 429,
+			headers: new Headers({ "retry-after": "60" }),
+			payload: { message: "Plan limit", optional: undefined, values: [undefined, "retry"] },
+		});
+		expect(diagnostic.details).toEqual({
+			status: 429,
+			headers: { "retry-after": "60" },
+			payload: { message: "Plan limit", values: [null, "retry"] },
+		});
+		expect(createProviderErrorDiagnostic(new Error("Disconnected")).details).toEqual({});
+	});
+
+	it("keeps the original failure and HTTP metadata when the payload cannot be serialized", () => {
+		const error = Object.assign(new Error("Plan limit"), {
+			status: 429,
+			headers: { "retry-after": "60" },
+			payload: { unsupported: 1n },
+		});
+		const diagnostic = createProviderErrorDiagnostic(error);
+		expect(diagnostic.error?.message).toBe("Plan limit");
+		expect(diagnostic.details).toEqual({
+			status: 429,
+			headers: { "retry-after": "60" },
+			payload: "[object Object]",
+		});
+		expect(() => JSON.stringify(diagnostic)).not.toThrow();
+	});
 });

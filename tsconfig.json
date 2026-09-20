@@ -17,9 +17,14 @@
 			"@at-inc/pi-ai/oauth": ["./packages/ai/src/oauth.ts"],
 			"@at-inc/pi-ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
 			"@at-inc/pi-ai/dist/*": ["./packages/ai/src/*"],
+			"@earendil-works/pi-durable": ["./packages/durable/src/index.ts"],
+			"@earendil-works/pi-durable/*": ["./packages/durable/src/*"],
 			"@at-inc/pi-agent-core": ["./packages/agent/src/index.ts"],
 			"@at-inc/pi-agent-core/harness/session/testing": [
 				"./packages/agent/src/harness/session/testing/index.ts"
+			],
+			"@at-inc/pi-agent-core/experimental/pico3": [
+				"./packages/agent/src/harness/pico3/index.ts"
 			],
 			"@at-inc/pi-agent-core/node": ["./packages/agent/src/node.ts"],
 			"@at-inc/pi-agent-core/*": [
