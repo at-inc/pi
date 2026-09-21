@@ -29,7 +29,10 @@ test("Chord bridge publishes exactly once per Pico envelope and converges to a f
 	const raw = await env.root.watch(ctx);
 	const envelopes: Envelope[] = [];
 	raw.start((envelope) => envelopes.push(envelope));
-	const bridge = await attachChordView(env.root, replicatedState, ctx);
+	const failures: Error[] = [];
+	const bridge = await attachChordView(env.root, replicatedState, ctx, {
+		onFailure: (error) => failures.push(error),
+	});
 	onTestFinished(() => bridge.close());
 	const service = createPicoConversationService(env.h, env.root, bridge.view);
 	const deliveries: { sequence: number; events: PublishedConversationView["commit"]["events"] }[] = [];
@@ -41,6 +44,7 @@ test("Chord bridge publishes exactly once per Pico envelope and converges to a f
 	await (await env.root.send({ content: "hello" }, ctx)).wait(ctx);
 	await env.root.waitForIdle(ctx);
 	await sleep(0);
+	assert.deepEqual(failures, []);
 	assert.equal(deliveries.length, envelopes.length);
 	assert.deepEqual(
 		deliveries.map((delivery) => delivery.sequence),
@@ -87,11 +91,11 @@ test("Chord publication failure closes only the bridge and never rejects the per
 				get value() {
 					return state.value;
 				},
-				get state() {
-					return state.state;
-				},
 				subscribe: (listener) => state.subscribe(listener),
-				publish() {
+				change() {
+					throw new Error("publish failed");
+				},
+				replace() {
 					throw new Error("publish failed");
 				},
 			};
