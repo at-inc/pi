@@ -2,11 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Claude Opus 5.5 to the built-in Anthropic model catalog with adaptive thinking, 1M context, and official pricing metadata.
+- Added Grok 4.7 to the built-in xAI model catalog with long-context pricing metadata.
+
+### Fixed
+
+- Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
+
 ## [0.87.0-rev.1] - 2026-09-22
 
 ### Fixed
 
 - Fixed Anthropic OAuth requests identifying as Claude Code 2.1.280 so newly gated Claude models work.
+
 
 ## [0.87.0] - 2026-09-21
 
