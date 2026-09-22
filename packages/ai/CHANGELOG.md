@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.87.0-rev.2] - 2026-09-22
+
 ### Added
 
 - Added Claude Opus 5.5 to the built-in Anthropic model catalog with adaptive thinking, 1M context, and official pricing metadata.

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.87.0-rev.2] - 2026-09-22
+
 ### Added
 
 - Added inherited Claude Opus 5.5 support for Anthropic with adaptive thinking and a 1M context window.
