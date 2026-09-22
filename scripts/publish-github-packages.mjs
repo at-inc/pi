@@ -87,6 +87,9 @@ for (const pkg of packageStates) {
 
 	run("npm", ["pack", "--dry-run", "--ignore-scripts"], { cwd: pkg.directory });
 	if (!dryRun) {
-		run("npm", ["publish", "--ignore-scripts", "--registry", registry], { cwd: pkg.directory });
+		// npm treats 0.87.0-rev.1 as a prerelease and refuses to publish it to latest.
+		const publishArgs = ["publish", "--ignore-scripts", "--registry", registry];
+		if (pkg.version.includes("-rev.")) publishArgs.push("--tag", "rev");
+		run("npm", publishArgs, { cwd: pkg.directory });
 	}
 }
