@@ -986,6 +986,8 @@ export interface Model<TApi extends Api> {
 	provider: ProviderId;
 	baseUrl: string;
 	reasoning: boolean;
+	/** Whether this provider/model supports priority or fast inference. Only true declares support; unset means unknown. */
+	supportsFastMode?: boolean;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
 	 * Missing keys use provider defaults. null marks a level as unsupported.

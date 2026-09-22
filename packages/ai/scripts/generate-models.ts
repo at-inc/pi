@@ -374,6 +374,24 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6-luna",
 ]);
+// Provider-specific fast inference support is catalog metadata, not a client-side model-name heuristic.
+// Keep exact IDs: new families and gateway transports need explicit confirmation.
+const OPENAI_FAST_MODE_MODEL_IDS = new Set([
+	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-5.5",
+	"gpt-5.4",
+]);
+const ANTHROPIC_FAST_MODE_MODEL_IDS = new Set([
+	"claude-opus-5-5",
+	"claude-sonnet-5",
+	"claude-opus-4-8",
+	"claude-opus-4-6",
+]);
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
@@ -3225,6 +3243,18 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		// Cloudflare's OpenAI endpoint forwards the priority service tier unchanged.
+		// Apply after Azure cloning so support does not leak to unverified providers.
+		if (
+			((model.provider === "openai" || model.provider === "cloudflare-ai-gateway") &&
+				model.api === "openai-responses" && OPENAI_FAST_MODE_MODEL_IDS.has(model.id)) ||
+			(model.provider === "openai-codex" && model.api === "openai-codex-responses" &&
+				OPENAI_FAST_MODE_MODEL_IDS.has(model.id)) ||
+			(model.provider === "anthropic" && model.api === "anthropic-messages" &&
+				ANTHROPIC_FAST_MODE_MODEL_IDS.has(model.id))
+		) {
+			model.supportsFastMode = true;
+		}
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
