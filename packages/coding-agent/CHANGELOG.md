@@ -6,6 +6,10 @@
 
 - Added inherited GPT-6 Sol and GPT-6 Luna support for OpenAI API keys, OpenAI Codex subscriptions, and Azure OpenAI.
 
+### Changed
+
+- Changed the experimental micro runtime default model to `openai-codex/gpt-6-sol`.
+
 ## [0.87.0-rev.2] - 2026-09-22
 
 ### Added
