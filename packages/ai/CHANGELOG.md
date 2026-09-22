@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.87.0-rev.1] - 2026-09-22
+
+### Fixed
+
+- Fixed Anthropic OAuth requests identifying as Claude Code 2.1.280 so newly gated Claude models work.
+
 ## [0.87.0] - 2026-09-21
 
 ### Added
