@@ -1059,6 +1059,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh", max: "max" });
 	}
+	if (model.id.includes("opus-5-5") || model.id.includes("opus.5.5")) {
+		mergeThinkingLevelMap(model, { off: null, minimal: null });
+	}
 	if (model.id.includes("fable-5")) {
 		mergeThinkingLevelMap(model, { off: null, xhigh: "xhigh", max: "max" });
 	}

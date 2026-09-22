@@ -12,6 +12,7 @@
 ### Fixed
 
 - Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
+- Fixed Claude Opus 5.5 catalog metadata advertising unsupported `off` and `minimal` thinking levels when the model comes from models.dev.
 
 ## [0.87.0-rev.1] - 2026-09-22
 
