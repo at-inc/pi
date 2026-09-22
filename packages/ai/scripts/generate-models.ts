@@ -371,6 +371,8 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
 ]);
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
@@ -379,6 +381,8 @@ const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
 ]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
@@ -388,6 +392,8 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
 ]);
 const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -398,6 +404,8 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
 ]);
 
 // Keep the generated default no less restrictive than coding-agent's historical
@@ -444,6 +452,8 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-sol",
+	"gpt-6-luna",
 ]);
 const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
 	"grok-3",
@@ -557,13 +567,13 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 		modelId.includes("gpt-5.4") ||
 		modelId.includes("gpt-5.5") ||
 		modelId.includes("gpt-5.6") ||
-		modelId.includes("gpt-6-astra")
+		modelId.includes("gpt-6-")
 	);
 }
 
 function supportsOpenAiMax(model: Model<Api>): boolean {
 	return (
-		(model.id.includes("gpt-5.6") || model.id.includes("gpt-6-astra")) &&
+		(model.id.includes("gpt-5.6") || model.id.includes("gpt-6-")) &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses" ||
@@ -1111,6 +1121,15 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	} else if (model.id.includes("gpt-6-astra")) {
 		// Passthrough catalogs also must not advertise unsupported none/minimal efforts.
 		mergeThinkingLevelMap(model, { off: null, minimal: null });
+	}
+	// GPT-6 Sol and Luna support none/low/medium/high/xhigh/max, but not minimal.
+	// Codex keeps its minimal-to-low alias; Azure mirrors GPT-5.x by not sending none.
+	if (model.id.includes("gpt-6-sol") || model.id.includes("gpt-6-luna")) {
+		if (model.api === "azure-openai-responses") {
+			mergeThinkingLevelMap(model, { off: null, minimal: null });
+		} else if (model.provider !== "openai-codex") {
+			mergeThinkingLevelMap(model, { minimal: null });
+		}
 	}
 	if (
 		(model.provider === "moonshotai" || model.provider === "moonshotai-cn") &&
@@ -2787,6 +2806,30 @@ async function generateModels() {
 			maxTokens: 128000,
 		},
 		{
+			id: "gpt-6-sol",
+			name: "GPT-6 Sol",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }),
+			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			maxTokens: 128000,
+		},
+		{
+			id: "gpt-6-luna",
+			name: "GPT-6 Luna",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }),
+			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			maxTokens: 128000,
+		},
+		{
 			id: "gpt-5.6-sol",
 			name: "GPT-5.6 Sol",
 			api: "openai-responses",
@@ -2976,7 +3019,7 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 and GPT-6 Astra use Codex's 272k default catalog limit.
+	// Older model limits are based on observed server behavior; GPT-5.6 and GPT-6 models use Codex's 272k default catalog limit.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
 	const CODEX_GPT_56_CONTEXT = 272000;
@@ -2992,6 +3035,30 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-6-sol",
+			name: "GPT-6 Sol",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }),
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-6-luna",
+			name: "GPT-6 Luna",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }),
 			contextWindow: CODEX_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
@@ -3137,6 +3204,8 @@ async function generateModels() {
 		"gpt-5.6-sol": 1050000,
 		"gpt-5.6-terra": 1050000,
 		"gpt-6-astra": 1050000,
+		"gpt-6-luna": 1050000,
+		"gpt-6-sol": 1050000,
 	};
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")

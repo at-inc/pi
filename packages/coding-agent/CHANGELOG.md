@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added inherited GPT-6 Sol and GPT-6 Luna support for OpenAI API keys, OpenAI Codex subscriptions, and Azure OpenAI.
+
 ## [0.87.0-rev.2] - 2026-09-22
 
 ### Added

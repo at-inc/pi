@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added OpenAI and OpenAI Codex GPT-6 Sol and GPT-6 Luna model metadata (`gpt-6-sol`, `gpt-6-luna`) until models.dev includes them.
+
 ## [0.87.0-rev.2] - 2026-09-22
 
 ### Added
