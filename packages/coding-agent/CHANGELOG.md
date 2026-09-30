@@ -4,6 +4,19 @@
 
 ## [0.99.2] - 2026-09-30
 
+### Changed
+
+- Integrated upstream 0.99.2 while preserving the fork's Codex image tools and GitHub Packages distribution.
+- Defaulted the Codex image driver and image micro runtime to GPT-6.
+
+### Fixed
+
+- Detect authentication file rewrites even when file size and timestamps are unchanged.
+- Updated vulnerable dependencies to brace-expansion 5.0.12, shell-quote 1.11.0 in the sandbox example, and undici 6.29.0 in the Gondolin example.
+- Keep undici external in the Node CLI bundle so Bun uses its built-in implementation instead of incompatible bundled Node internals.
+
+## [0.99.2] - 2026-09-30
+
 ### New Features
 
 - MCP servers stay out of the way: servers with the default `codemode` exposure are no longer listed in the `codemode` description and no longer block the first prompt. They appear in a short system prompt section, and scripts find their tools with `searchTools()` and `describeNamespace()`. See [Control tool exposure](docs/mcp.md#control-tool-exposure).

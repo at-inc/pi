@@ -6,6 +6,17 @@
 
 ### Added
 
+- Added GPT-6 Sol, GPT-6 Luna, and GPT-6.1 Sol to the fork model catalog.
+- Added a copy-code sign-in method for Anthropic OAuth.
+
+### Changed
+
+- Updated provider Fast mode capabilities in the published model catalog.
+
+## [0.99.2] - 2026-09-30
+
+### Added
+
 - Added the lightweight `@earendil-works/pi-ai/models` entry point for model collections and provider construction without loading TypeBox, built-in catalogs, or provider SDKs.
 - Added Anthropic workload identity federation from the Anthropic SDK environment variables `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` (plus optional `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`). API keys and `ANTHROPIC_AUTH_TOKEN` take precedence ([#10177](https://github.com/earendil-works/pi/issues/10177), [#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo))
 

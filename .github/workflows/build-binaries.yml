@@ -221,6 +221,7 @@ jobs:
           fi
 
   publish-npm:
+    if: github.repository == 'earendil-works/pi'
     runs-on: ubuntu-latest
     needs: stage-github-release
     environment: npm-publish
@@ -274,6 +275,7 @@ jobs:
         run: node scripts/publish.mjs
 
   announce-pi-dev-release:
+    if: github.repository == 'earendil-works/pi'
     runs-on: ubuntu-latest
     needs: publish-npm
     environment: pi-model-upload

@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+## [0.99.2] - 2026-09-30
+
 ### Added
 
 - Added `TuiAltScreen.getScreenLines()`, which returns the lines of the last rendered frame.
+
+### Fixed
+
+- Complete slash commands after leading whitespace.
 
 ## [0.99.2] - 2026-09-30
 
