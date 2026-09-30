@@ -14,21 +14,35 @@ async function sourceGraph(entry: string): Promise<Set<string>> {
 		visited.add(path);
 		const source = await readFile(path, "utf8");
 		expect(source, `${path} imports a Node built-in`).not.toMatch(/(?:from\s+|import\s*)["']node:/);
-		for (const match of source.matchAll(/(?:from\s+|import\s*)["'](\.[^"']+)["']/g)) {
-			pending.push(resolve(dirname(path), match[1]));
+		// Type-only imports are erased and load nothing.
+		for (const match of source.matchAll(/\b(import|export)(\s+type\b)?[^;"']*?(?:from\s*)?["'](\.[^"']+)["']/g)) {
+			if (match[2] === undefined) pending.push(resolve(dirname(path), match[3]));
 		}
 	}
 	return visited;
 }
 
 describe("durable storage runtime boundaries", () => {
-	it("keeps the package root free of SQLite and Node imports", async () => {
+	it("keeps the package root limited to portable core storage", async () => {
 		const graph = await sourceGraph("index.ts");
+		expect([...graph].some((path) => path.includes("/env/"))).toBe(false);
+		expect([...graph].some((path) => path.includes("/storage/jsonl/"))).toBe(false);
 		expect([...graph].some((path) => path.includes("/storage/sqlite/"))).toBe(false);
 	});
 
 	it("keeps the portable SQLite subpath free of Node imports", async () => {
 		const graph = await sourceGraph("storage/sqlite/index.ts");
 		expect([...graph].some((path) => path.endsWith("/storage/sqlite/node.ts"))).toBe(false);
+	});
+
+	it("keeps the portable environment subpath free of Node imports", async () => {
+		const graph = await sourceGraph("env/index.ts");
+		expect([...graph].some((path) => path.endsWith("/env/node.ts"))).toBe(false);
+	});
+
+	it("keeps the portable JSONL subpath free of Node imports", async () => {
+		const graph = await sourceGraph("storage/jsonl/index.ts");
+		expect([...graph].some((path) => path.endsWith("/storage/jsonl/node.ts"))).toBe(false);
+		expect([...graph].some((path) => path.endsWith("/env/node.ts"))).toBe(false);
 	});
 });

@@ -11,14 +11,13 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"autoevals": "0.3.0",
 		"@at-inc/pi-ai": "^0.87.0-rev.2",
 		"@at-inc/pi": "^0.87.0-rev.2",
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
+		"autoevals": "0.3.0",
 		"shx": "0.4.0",
-		"typescript": "5.9.3",
-		"vitest-evals": "0.15.0",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11",
+		"vitest-evals": "0.15.0"
 	}
 }

@@ -48,7 +48,11 @@ import {
 	type TranscriptContext,
 } from "../utils/transcript.ts";
 
-import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import {
+	getJsonSchemaToolParameters,
+	resolveJsonSchemaStrictSampling,
+	type UnsupportedStrictSchemaKeywordCheck,
+} from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -599,6 +603,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
+				await options?.onProviderStreamEvent?.(event, model);
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					const transformations = event.message.input_transformations;
@@ -774,6 +779,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						}
 						if (event.usage.cache_creation_input_tokens != null) {
 							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+						}
+						// Vercel AI Gateway includes the TTL breakdown in deltas, though the SDK only types it on message_start.
+						const cacheCreation = (
+							event.usage as typeof event.usage & { cache_creation?: { ephemeral_1h_input_tokens?: number } }
+						).cache_creation;
+						if (cacheCreation?.ephemeral_1h_input_tokens != null) {
+							output.usage.cacheWrite1h = cacheCreation.ephemeral_1h_input_tokens;
 						}
 						// Anthropic reports reasoning tokens as a subset of output tokens.
 						const thinkingTokens = event.usage.output_tokens_details?.thinking_tokens;
@@ -1457,6 +1469,41 @@ function shouldUseFineGrainedToolStreamingBeta(
 	return getCurrentTools(context.messages).length > 0 && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
 
+// Keywords Anthropic strict tool use rejects with a 400 for the whole request.
+// https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+const ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS = new Set([
+	"minimum",
+	"maximum",
+	"exclusiveMinimum",
+	"exclusiveMaximum",
+	"multipleOf",
+	"maxItems",
+	"uniqueItems",
+	"minContains",
+	"maxContains",
+	"minProperties",
+	"maxProperties",
+]);
+const ANTHROPIC_STRICT_STRING_FORMATS = new Set([
+	"date-time",
+	"time",
+	"date",
+	"duration",
+	"email",
+	"hostname",
+	"uri",
+	"ipv4",
+	"ipv6",
+	"uuid",
+]);
+
+const isAnthropicStrictUnsupportedKeyword: UnsupportedStrictSchemaKeywordCheck = (key, value) => {
+	if (ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS.has(key)) return true;
+	if (key === "minItems") return value !== 0 && value !== 1;
+	if (key === "format") return typeof value !== "string" || !ANTHROPIC_STRICT_STRING_FORMATS.has(value);
+	return false;
+};
+
 function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
@@ -1467,7 +1514,7 @@ function convertTools(
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
-		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools, isAnthropicStrictUnsupportedKeyword);
 		const parameters = getJsonSchemaToolParameters(tool, strict);
 		const schema = parameters as { properties?: unknown; required?: string[] };
 		const legacyInputSchema = {

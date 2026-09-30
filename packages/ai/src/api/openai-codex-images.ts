@@ -2,10 +2,11 @@ import type { Tool as OpenAITool, ToolChoiceTypes } from "openai/resources/respo
 import type {
 	AssistantImages,
 	AssistantMessage,
+	ImageApi,
 	ImageContent,
+	ImageModel,
 	ImagesContext,
 	ImagesFunction,
-	ImagesModel,
 	ImagesOptions,
 	Model,
 } from "../types.ts";
@@ -19,8 +20,8 @@ export const OPENAI_CODEX_IMAGE_DRIVER_MODEL_ID = "gpt-6-luna";
 const DEFAULT_IMAGE_TIMEOUT_MS = 150_000;
 const MAX_IMAGE_BASE64_CHARS = 24 * 1024 * 1024;
 
-export const generateImages: ImagesFunction<"openai-codex-images", ImagesOptions> = async (
-	model: ImagesModel<"openai-codex-images">,
+export const generateImages: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {

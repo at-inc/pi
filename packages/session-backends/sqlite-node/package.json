@@ -18,7 +18,7 @@
 	],
 	"scripts": {
 		"clean": "node -e \"import('node:fs/promises').then(fs=>fs.rm('dist',{recursive:true,force:true}))\"",
-		"build": "tsgo -p tsconfig.build.json && node scripts/copy-migrations.mjs",
+		"build": "tsc -p tsconfig.build.json && node scripts/copy-migrations.mjs",
 		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
 		"test": "vitest --run",
 		"coverage": "vitest --run --coverage",
@@ -39,7 +39,7 @@
 		"@at-inc/pi-agent-core": "^0.87.0-rev.2"
 	},
 	"devDependencies": {
-		"@vitest/coverage-v8": "4.1.9",
-		"vitest": "4.1.9"
+		"@vitest/coverage-v8": "4.1.11",
+		"vitest": "4.1.11"
 	}
 }

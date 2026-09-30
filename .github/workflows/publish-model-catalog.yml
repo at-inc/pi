@@ -12,6 +12,7 @@ on:
       - '.gitignore'
       - 'package.json'
       - 'packages/ai/**'
+      - 'scripts/model-catalog-protocol.ts'
       - 'scripts/publish-model-catalog.mjs'
   # Aside consumes this catalog from its own R2 bucket. Publish hourly so model
   # availability is not coupled to pi.dev's business-hours release window.

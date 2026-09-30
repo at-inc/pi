@@ -1,10 +1,15 @@
 import { zstdDecompressSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { generateImages } from "../src/api/openai-codex-images.ts";
-import { builtinImagesProviders } from "../src/providers/all.ts";
-import type { ImagesContext, ImagesModel } from "../src/types.ts";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { generateImages as generateCompatImages, getImageModel } from "../src/compat.ts";
+import { createModels } from "../src/models.ts";
+import { builtinImagesProviders, builtinModels, getBuiltinImageModel } from "../src/providers/all.ts";
+import { openaiCodexImagesProvider } from "../src/providers/openai-codex-images.ts";
+import type { ImageModel, ImagesContext } from "../src/types.ts";
 
-const MODEL: ImagesModel<"openai-codex-images"> = {
+const MODEL: ImageModel<"openai-codex-images"> = {
+	type: "image",
 	id: "chatgpt-image-generation",
 	name: "ChatGPT Image Generation",
 	api: "openai-codex-images",
@@ -297,5 +302,45 @@ describe("OpenAI Codex images", () => {
 
 	it("registers ChatGPT before OpenRouter in the built-in image inventory", () => {
 		expect(builtinImagesProviders().map((provider) => provider.id)).toEqual(["openai-codex", "openrouter"]);
+	});
+
+	it("generates Codex images through the unified collection, image-only factory, and global compat API", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("openai-codex", async () => ({
+			type: "oauth",
+			access: mockToken(),
+			refresh: "mock-refresh-token",
+			expires: Date.now() + 3_600_000,
+		}));
+		const models = builtinModels({ credentials });
+		const model = models.getModelOfType("image", "openai-codex", "chatgpt-image-generation")!;
+		expect(model).toMatchObject(MODEL);
+		expect(getBuiltinImageModel("openai-codex", "chatgpt-image-generation")).toEqual(model);
+		expect(getImageModel("openai-codex", "chatgpt-image-generation")).toEqual(model);
+
+		const imageModels = createModels({ credentials });
+		imageModels.setProvider(openaiCodexImagesProvider());
+		expect(imageModels.getModels()).toEqual([]);
+		expect(imageModels.getModelsOfType("image")).toEqual([model]);
+
+		const context: ImagesContext = { input: [{ type: "text", text: "Draw a circle" }] };
+		const options = {
+			fetch: async () =>
+				sse([
+					completedResponse([
+						{ type: "image_generation_call", id: "ig_1", status: "completed", result: IMAGE_DATA },
+					]),
+				]),
+		};
+		for (const result of [
+			await models.generateImages(model, context, options),
+			await imageModels.generateImages(model, context, options),
+			await generateCompatImages(model, context, { ...options, apiKey: mockToken() }),
+		]) {
+			expect(result).toMatchObject({
+				stopReason: "stop",
+				output: [{ type: "image", data: IMAGE_DATA, mimeType: "image/png" }],
+			});
+		}
 	});
 });

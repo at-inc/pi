@@ -3,10 +3,10 @@ import type { generateImages as generateImagesOpenRouterFunction } from "../../a
 import { registerImagesApiProvider } from "../../images-api-registry.ts";
 import type {
 	AssistantImages,
-	ImagesApi,
+	ImageApi,
+	ImageModel,
 	ImagesContext,
 	ImagesFunction,
-	ImagesModel,
 	ImagesOptions,
 } from "../../types.ts";
 
@@ -21,7 +21,7 @@ interface OpenRouterImagesProviderModule {
 let openAICodexImagesProviderModulePromise: Promise<OpenAICodexImagesProviderModule> | undefined;
 let openRouterImagesProviderModulePromise: Promise<OpenRouterImagesProviderModule> | undefined;
 
-function createLazyLoadErrorImages(model: ImagesModel<ImagesApi>, error: unknown): AssistantImages {
+function createLazyLoadErrorImages(model: ImageModel<ImageApi>, error: unknown): AssistantImages {
 	return {
 		api: model.api,
 		provider: model.provider,
@@ -47,8 +47,8 @@ function loadOpenAICodexImagesProviderModule(): Promise<OpenAICodexImagesProvide
 	return openAICodexImagesProviderModulePromise;
 }
 
-export const generateImagesOpenAICodex: ImagesFunction<"openai-codex-images", ImagesOptions> = async (
-	model: ImagesModel<"openai-codex-images">,
+export const generateImagesOpenAICodex: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {
@@ -60,8 +60,8 @@ export const generateImagesOpenAICodex: ImagesFunction<"openai-codex-images", Im
 	}
 };
 
-export const generateImagesOpenRouter: ImagesFunction<"openrouter-images", ImagesOptions> = async (
-	model: ImagesModel<"openrouter-images">,
+export const generateImagesOpenRouter: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {
