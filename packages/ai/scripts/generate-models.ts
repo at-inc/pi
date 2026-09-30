@@ -372,6 +372,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-luna",
 	"gpt-6-astra",
 	"gpt-6-sol",
+	"gpt-6.1-sol",
 	"gpt-6-luna",
 ]);
 // Provider-specific fast inference support is catalog metadata, not a client-side model-name heuristic.
@@ -379,6 +380,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 const OPENAI_FAST_MODE_MODEL_IDS = new Set([
 	"gpt-6-astra",
 	"gpt-6-sol",
+	"gpt-6.1-sol",
 	"gpt-6-luna",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
@@ -400,6 +402,7 @@ const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-5.6-luna",
 	"gpt-6-astra",
 	"gpt-6-sol",
+	"gpt-6.1-sol",
 	"gpt-6-luna",
 ]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
@@ -411,6 +414,7 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.6-luna",
 	"gpt-6-astra",
 	"gpt-6-sol",
+	"gpt-6.1-sol",
 	"gpt-6-luna",
 ]);
 const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
@@ -423,6 +427,7 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.6-luna",
 	"gpt-6-astra",
 	"gpt-6-sol",
+	"gpt-6.1-sol",
 	"gpt-6-luna",
 ]);
 
@@ -1120,9 +1125,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.provider === "openai-codex" && supportsOpenAiXhigh(model.id)) {
 		mergeThinkingLevelMap(model, { minimal: "low" });
 	}
-	// Apply Astra's verified levels after Codex's minimal-to-low alias.
+	// Apply Astra's verified levels after Codex's minimal-to-low alias. GPT-6.1 Sol also rejects reasoning.effort "none".
 	if (
-		model.id === "gpt-6-astra" &&
+		(model.id === "gpt-6-astra" || model.id === "gpt-6.1-sol") &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses")
@@ -1136,7 +1141,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			xhigh: "xhigh",
 			max: "max",
 		});
-	} else if (model.id.includes("gpt-6-astra")) {
+	} else if (model.id.includes("gpt-6-astra") || model.id.includes("gpt-6.1-sol")) {
 		// Passthrough catalogs also must not advertise unsupported none/minimal efforts.
 		mergeThinkingLevelMap(model, { off: null, minimal: null });
 	}
@@ -2836,6 +2841,18 @@ async function generateModels() {
 			maxTokens: 128000,
 		},
 		{
+			id: "gpt-6.1-sol",
+			name: "GPT-6.1 Sol",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }),
+			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			maxTokens: 128000,
+		},
+		{
 			id: "gpt-6-luna",
 			name: "GPT-6 Luna",
 			api: "openai-responses",
@@ -3069,6 +3086,18 @@ async function generateModels() {
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
+			id: "gpt-6.1-sol",
+			name: "GPT-6.1 Sol",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }),
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
 			id: "gpt-6-luna",
 			name: "GPT-6 Luna",
 			api: "openai-codex-responses",
@@ -3224,6 +3253,7 @@ async function generateModels() {
 		"gpt-6-astra": 1050000,
 		"gpt-6-luna": 1050000,
 		"gpt-6-sol": 1050000,
+		"gpt-6.1-sol": 1050000,
 	};
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
