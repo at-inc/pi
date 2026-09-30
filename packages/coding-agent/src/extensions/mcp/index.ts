@@ -27,7 +27,6 @@
  */
 
 import { join, resolve } from "node:path";
-import { toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
 import type { SelectItem } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import { getAgentDir } from "../../config.ts";
@@ -38,6 +37,8 @@ import type {
 	ExtensionFactory,
 	ToolDefinition,
 } from "../../core/extensions/types.ts";
+import { mcpNamespace } from "../../core/mcp-servers.ts";
+import type { ModelRegistry } from "../../core/model-registry.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { CODEMODE_TOOL_NAME, isCodemodeTool } from "../codemode/tool.ts";
 import { isToolSearchTool, TOOL_SEARCH_TOOL_NAME } from "../tool-search/tool.ts";
@@ -144,10 +145,6 @@ function hasIndirectTools(entry: McpServerEntry): boolean {
 	return exposures.has("codemode") || exposures.has("deferred");
 }
 
-function namespaceName(server: string): string {
-	return `mcp__${server}`;
-}
-
 /** Name of the system prompt section that lists the servers whose tools are not declared. */
 export const MCP_SERVERS_SECTION = "mcp_servers";
 /** Characters of a server description in the section, as Codex allows for deferred namespaces. */
@@ -191,7 +188,7 @@ export function renderServersSection(servers: readonly McpServerListing[]): stri
 	const heads = listed.map((server) => {
 		const exposures = configuredExposures(server.entry);
 		const reach = exposures.has("codemode") ? "codemode" : "tool_search";
-		return `- ${namespaceName(server.entry.name)} (${reach})`;
+		return `- ${mcpNamespace(server.entry.name)} (${reach})`;
 	});
 	const omitted = (count: number) =>
 		count > 0 ? [`- … ${count} more server${count === 1 ? "" : "s"}; find their tools with searchTools()`] : [];
@@ -213,14 +210,12 @@ export function renderServersSection(servers: readonly McpServerListing[]): stri
 }
 
 /**
- * Whether a codemode script needs the server: it names the server's namespace, as written or as the
- * script identifier codemode derives from it, or searches, enumerates, or describes tools or
- * namespaces, which may name the server in other forms.
+ * Whether a codemode script needs the server: it names the server's namespace, or searches,
+ * enumerates, or describes tools or namespaces, which may name the server in other forms.
  */
 function scriptNeedsServer(code: string, server: string): boolean {
 	if (/\b(searchTools|describeNamespace|describeTool|ALL_TOOLS)\b/.test(code)) return true;
-	const name = namespaceName(server);
-	return code.includes(name) || code.includes(toCodemodeIdentifier(name));
+	return code.includes(mcpNamespace(server));
 }
 
 /** Short state for lists and the startup report. `withError` appends the first line of a failure. */
@@ -293,6 +288,8 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 		/** Working directory of the session, for stdio servers. */
 		let sessionCwd = process.cwd();
 		let credentials = options.credentials;
+		/** The session's model registry, which resolves `auth.provider` tokens. */
+		let modelRegistry: ModelRegistry | undefined;
 		let serverLog: McpServerLog | undefined;
 		const openUrl = options.openUrl ?? openBrowser;
 		const updateConfig =
@@ -317,9 +314,11 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 			const registered: McpServer[] = [];
 			const overriddenNames: string[] = [];
 			for (const { name, config, extensionPath } of pi.getMcpServers()) {
-				const configured = configuredEntries.find((entry) => entry.name === name);
+				const configured = configuredEntries.find((entry) => mcpNamespace(entry.name) === mcpNamespace(name));
 				if (configured) {
-					overriddenNames.push(`"${name}" registered by ${extensionPath} is overridden by ${configured.source}`);
+					overriddenNames.push(
+						`"${name}" registered by ${extensionPath} is overridden by "${configured.name}" in ${configured.source}`,
+					);
 					continue;
 				}
 				registered.push({
@@ -352,16 +351,25 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 			const entry = findServer(server)?.entry ?? connection.entry;
 			const description = entry.config.description?.trim();
 			const namespace = {
-				name: namespaceName(server),
+				name: mcpNamespace(server),
 				...(description ? { description } : {}),
 				...(connection.instructions ? { instructions: connection.instructions } : {}),
 			};
 			const previous = serverTools.get(server) ?? new Set<string>();
 			const current = new Set<string>();
+			// Like Codex, all tools whose names sanitize to the same name get the hash suffix, so which
+			// one would keep the plain name does not depend on the order of the list.
+			const plain = [...new Set(connection.tools.map((tool) => tool.name))].map((tool) =>
+				createMcpToolName(server, tool),
+			);
 			const assignName = (tool: string, owner: string) => {
 				const name = createMcpToolName(server, tool, (candidate) => {
 					const existing = toolOwners.get(candidate);
-					return (existing !== undefined && existing !== owner) || current.has(candidate);
+					return (
+						(existing !== undefined && existing !== owner) ||
+						current.has(candidate) ||
+						plain.indexOf(candidate) !== plain.lastIndexOf(candidate)
+					);
 				});
 				toolOwners.set(name, owner);
 				current.add(name);
@@ -502,6 +510,7 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 				cwd: sessionCwd,
 				createTransport: options.createTransport ?? runtime.createDefaultTransport,
 				credentials: getCredentials(runtime),
+				providerToken: async (provider) => modelRegistry?.getApiKeyForProvider(provider),
 				log: getServerLog(runtime),
 				onTools: registerTools,
 				onChange: onConnectionChange,
@@ -940,6 +949,7 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 			warnedUnreachable = false;
 			waitedForStartup = false;
 			sessionCwd = ctx.cwd;
+			modelRegistry = ctx.modelRegistry;
 			const current = ++generation;
 			sessionActive = true;
 			configuredEntries = loaded.servers;

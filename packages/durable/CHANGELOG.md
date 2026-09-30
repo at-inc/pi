@@ -4,6 +4,12 @@
 
 ### Breaking Changes
 
+- The portable SQLite facade in `@earendil-works/pi-durable/storage/sqlite` is asynchronous: `SqliteDatabase` extends the new `SqliteExecutor` (`exec`, `run`, `get`, `all` by SQL text), `prepare` and `SqliteStatement` are removed, `transaction` takes an async callback that receives a transaction handle, and `close()` returns a promise. Custom adapters must be rewritten ([#10232](https://github.com/earendil-works/pi/pull/10232) by [@christianklotz](https://github.com/christianklotz)).
+
+## [0.99.2] - 2026-09-30
+
+### Breaking Changes
+
 - `TaskRuntime` now requires `env`, `hooks`, `getTask()`, `waitForTask()`, `outcomes()`, `entry()`, and `conversation()`; `ToolExecutionApi` requires `env`, `diagnostic()`, and `conversation()`.
 - `createRegistry()` also pre-registers the built-in `pi.tool` task.
 - `tx.createTask()` requires `options.ownership`: `{ kind: "conversation" }` or `{ kind: "task", taskId }`. `TaskOptions.after` and `TaskRecord.after` are removed; a task waits on other tasks by committing a `waiting` state. `TaskRecord` gains `owner`, and `TaskState` gains `waiting` and `completing`; the SQLite task schema changed.

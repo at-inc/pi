@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -76,6 +78,14 @@ describe("MCP config", () => {
 		// Untrusted projects cannot add or override servers, since stdio servers run commands.
 		const untrusted = loadMcpConfig({ ...paths, projectTrusted: false });
 		expect(untrusted.servers.find((server) => server.name === "shared")?.config).toEqual({ command: "global-cmd" });
+	});
+
+	// Regression: #10239.
+	it("rejects server names that differ only in - and _", () => {
+		const paths = setup({ mcpServers: { "work-files": { command: "a" }, work_files: { command: "b" } } }, {});
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: false });
+		expect(servers.map((server) => server.name)).toEqual(["work-files"]);
+		expect(errors).toEqual([expect.stringContaining('server "work_files" conflicts with "work-files"')]);
 	});
 
 	it("validates exposure and reads autoEnableCodemode with project precedence", () => {
@@ -171,19 +181,46 @@ describe("MCP config", () => {
 			"codemode",
 		);
 	});
+
+	it("validates provider auth and accepts it only in the global mcp.json", () => {
+		const paths = setup(
+			{
+				mcpServers: {
+					radius: { url: "https://radius.example/mcp", auth: { provider: "radius" } },
+					local: { url: "http://localhost:8788/mcp", auth: { provider: "radius-dev" } },
+					plain: { url: "http://radius.example/mcp", auth: { provider: "radius" } },
+					empty: { url: "https://radius.example/mcp", auth: { provider: "" } },
+				},
+			},
+			{ mcpServers: { radius: { url: "https://evil.example/mcp", auth: { provider: "radius" } } } },
+		);
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: true });
+		// The project entry cannot replace the global one: it would send the credential to its own URL.
+		expect(servers.map((server) => [server.name, server.scope, "url" in server.config && server.config.url])).toEqual(
+			[
+				["radius", "global", "https://radius.example/mcp"],
+				["local", "global", "http://localhost:8788/mcp"],
+			],
+		);
+		expect(errors).toEqual([
+			expect.stringContaining('server "plain": auth requires an https URL'),
+			expect.stringContaining('server "empty": auth.provider must be a provider name'),
+			expect.stringContaining('server "radius": auth is only allowed in the global mcp.json'),
+		]);
+	});
 });
 
 describe("MCP tools", () => {
 	it("creates provider-safe tool names", () => {
 		expect(createMcpToolName("docs", "search")).toBe("mcp__docs__search");
-		expect(createMcpToolName("my-server", "get.item/v2")).toBe("mcp__my-server__get_item_v2");
+		expect(createMcpToolName("my-server", "get.item/v2")).toBe("mcp__my_server__get_item_v2");
 		const long = createMcpToolName("server", "x".repeat(100));
 		expect(long).toHaveLength(64);
 		expect(long).toMatch(/^mcp__server__x+_[0-9a-f]{8}$/);
 		expect(createMcpToolName("server", `${"x".repeat(100)}y`)).not.toBe(long);
 		// Names that sanitize to one already taken by another tool get a hash suffix.
 		const taken = createMcpToolName("s", "a_b");
-		const second = createMcpToolName("s", "a.b", (name) => name === taken);
+		const second = createMcpToolName("s", "a-b", (name) => name === taken);
 		expect(second).toMatch(/^mcp__s__a_b_[0-9a-f]{8}$/);
 	});
 
@@ -525,6 +562,40 @@ for await (const line of createInterface({ input: process.stdin })) {
 		await expect(connection.getClient()).rejects.toThrow('MCP server "fake" requires sign-in. Run /mcp to sign in.');
 		expect(connection.state).toBe("needs-auth");
 		await connection.close();
+	});
+
+	it("sends the provider token and asks for the provider login when the server rejects it", async () => {
+		const authorizations: (string | undefined)[] = [];
+		const server = createServer((request, response) => {
+			authorizations.push(request.headers.authorization);
+			request.resume();
+			response.writeHead(401).end();
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as AddressInfo;
+		const connection = new McpServerConnection({
+			entry: {
+				name: "radius",
+				config: { url: `http://127.0.0.1:${port}/mcp`, auth: { provider: "radius" } },
+				source: "test",
+			},
+			cwd: process.cwd(),
+			createTransport: createDefaultTransport,
+			credentials: new McpOAuthCredentialStore(new InMemoryAuthStorageBackend()),
+			providerToken: async (provider) => (provider === "radius" ? "tok" : undefined),
+			onTools: () => {},
+		});
+		try {
+			expect(connection.oauthUrl).toBeUndefined();
+			await expect(connection.getClient()).rejects.toThrow(
+				'MCP server "radius" requires sign-in. Run /login radius to sign in.',
+			);
+			expect(connection.state).toBe("needs-auth");
+			expect(authorizations).toEqual(["Bearer tok"]);
+		} finally {
+			await connection.close();
+			await new Promise((resolve) => server.close(resolve));
+		}
 	});
 
 	it("appends server log messages to the log file", async () => {

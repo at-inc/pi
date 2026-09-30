@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.99.2] - 2026-09-30
+
 ### Changed
 
 - Allowed `CodemodeSandbox.workerUrl` to be a string, as required for embedded worker entrypoints in Bun compiled executables ([#10204](https://github.com/earendil-works/pi/issues/10204)).

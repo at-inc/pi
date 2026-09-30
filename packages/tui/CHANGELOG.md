@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `TuiAltScreen.getScreenLines()`, which returns the lines of the last rendered frame.
+
+## [0.99.2] - 2026-09-30
+
 ## [0.99.1] - 2026-09-29
 
 ## [0.99.0] - 2026-09-29
