@@ -104,6 +104,7 @@ export interface DurableController {
 export interface OpenDurableOptions {
 	readonly cwd?: string;
 	readonly continueSession?: boolean;
+	readonly sessionId?: string;
 }
 
 export interface OpenDurableResult {
@@ -145,7 +146,11 @@ function titleOf(entry: EntryRecord | undefined): { title?: string } {
 }
 
 export async function openDurable(options: OpenDurableOptions = {}): Promise<OpenDurableResult> {
-	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false);
+	const location = await selectSession(
+		options.cwd ?? process.cwd(),
+		options.continueSession ?? false,
+		options.sessionId,
+	);
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
 	try {
@@ -196,13 +201,16 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
 			},
 		});
-		const label = (id: ConversationId): string => (id === root.id ? "main" : `subagent ${id}`);
+		const label = (id: ConversationId, forked = false): string =>
+			id === root.id ? "main" : `${forked ? "branch" : "subagent"} ${id}`;
 		const opened = harness;
 		const summaries: ConversationSummary[] = [];
 		let cursor: Cursor | undefined;
 		do {
 			const page = await opened.commit((tx) => tx.scanConversations({}, 256, cursor), context);
-			for (const { id } of page.items) summaries.push({ id, label: label(id), ...(await firstInput(opened, id)) });
+			for (const { id, parent } of page.items) {
+				summaries.push({ id, label: label(id, parent !== undefined), ...(await firstInput(opened, id)) });
+			}
 			cursor = page.next;
 		} while (cursor !== undefined);
 		let current: Conversation = root;
@@ -275,7 +283,10 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			let conversations = state.conversations;
 			for (const change of publication.changes) {
 				if (change.type === "conversation") {
-					conversations = [...conversations, { id: change.value.id, label: label(change.value.id) }];
+					conversations = [
+						...conversations,
+						{ id: change.value.id, label: label(change.value.id, change.value.parent !== undefined) },
+					];
 				} else if (change.type === "entry" && change.value.kind === "pi.user") {
 					const id = change.value.conversationId;
 					conversations = conversations.map((summary) =>

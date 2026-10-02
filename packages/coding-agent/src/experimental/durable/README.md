@@ -16,6 +16,46 @@ normal model selection. `--continue` preserves the newest session's model for th
 (a lock left by a crash goes stale after 10 seconds, and the next start waits for that). Use `/login` or pi itself
 to configure providers; credentials are shared.
 
+## Existing JSONL-v3 sessions
+
+The stable `pi` CLI still reads and writes JSONL-v3. To keep using an existing session there, no conversion is needed:
+
+```bash
+pi --session /path/to/session.jsonl
+```
+
+To try the same history with durable, run an explicit import from the directory where the imported agent should work:
+
+```bash
+PI_REPO=/path/to/pi
+node --import "$PI_REPO/packages/coding-agent/src/experimental/source-resolver.ts" "$PI_REPO/packages/coding-agent/src/experimental/durable/main.ts" --import /path/to/session.jsonl
+node --import "$PI_REPO/packages/coding-agent/src/experimental/source-resolver.ts" "$PI_REPO/packages/coding-agent/src/experimental/durable/main.ts" --session <returned-session-id>
+```
+
+`--import` converts and exits without opening the TUI, contacting a model provider, or executing historical tool calls.
+It never writes to the source file. The destination contains `session.sqlite`, an exact `source.jsonl` archive, and
+`import.json` with the source SHA-256, entry-ID mapping, branch mapping, and conversion warnings. Stop any writer to the
+source session before importing. The destination working directory is the command's current directory; the original
+header, including its old working directory, remains in the archive.
+
+The original active branch becomes `main`; other branches become durable conversation forks and are selectable with
+`/agents`. Message and tool-call contents, compaction boundaries, context edits, model selection, and thinking state are
+converted. Each imported branch's model context is checked against the v3 projection before publication. Extension data
+is retained as data, not executed as an extension; inspect the reported warnings before continuing a session that used
+custom tools or extensions.
+
+Conversion happens in a private staging directory. Only a completed, closed SQLite database is published as a session;
+failed imports are removed and staging directories are ignored by `--continue`. Importing the same bytes into the same
+working directory returns the existing imported session, including any subsequent durable conversation, without
+overwriting it. Changed source contents produce a new snapshot. The stable and durable copies do not synchronize after
+import. Use `--session` with the returned ID to select an older imported snapshot explicitly.
+
+Malformed JSON, duplicate IDs, broken references, unsupported versions, and unsupported message formats fail the import
+rather than silently discarding history. Pending assistant messages are rejected; finish or repair the source session
+with the stable CLI first. Aborted, failed, and deferred assistant messages remain in history and usage but are excluded
+from model context, with a warning. Missing tool results become synthetic errors in model context; orphan tool results
+are excluded with a warning. Neither historical tools nor deferred requests are rerun.
+
 ## What it shows
 
 - **Durability:** every streamed partial, tool output, queue, and turn is committed. Kill the process in the middle
@@ -55,6 +95,8 @@ to configure providers; credentials are shared.
 | --- | --- |
 | `main.ts` | arguments, open, run, close |
 | `sessions.ts` | session directories and the lock |
+| `import.ts` | source archive, duplicate-import detection, and atomic SQLite publication |
+| `legacy-v3.ts` | validated v3 records, conversation forks, and context verification |
 | `login.ts` | provider login options for the selector |
 | `usage.ts` | cache-hit rate from the active transcript |
 | `runtime.ts` | Harness, registry, settings, environments; the plain `DurableView` and `DurableController` |
@@ -69,4 +111,4 @@ early.
 A turn that ends without an answer shows a notice; one recovered after a restart does not, since only submissions
 made by this process are watched.
 
-Not here: sessions list and resume picker, forks and tree navigation, extensions, prompt templates, images.
+Not here: sessions list and resume picker, interactive fork creation and tree navigation, extensions, prompt templates, images.
