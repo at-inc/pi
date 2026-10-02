@@ -73,7 +73,12 @@ try {
 			assert.equal(manifest.dependencies["@at-inc/pi-ai"], version);
 		}
 		if (pkg.name === "@at-inc/chord" || pkg.name === "@at-inc/pi-durable") {
-			assert.equal(manifest.gitHead, gitHead);
+			assert.match(manifest.gitHead, /^[0-9a-f]{40}$/);
+			if (spawnSync("git", ["cat-file", "-e", `${manifest.gitHead}^{commit}`], { stdio: "ignore" }).status !== 0) {
+				run("git", ["fetch", "--no-tags", "--depth=1", "origin", manifest.gitHead]);
+			}
+			run("git", ["diff", "--exit-code", manifest.gitHead, gitHead, "--", "packages/chord", "packages/durable",
+				"tsconfig.base.json", "package.json", "package-lock.json"]);
 			for (const [subpath, conditions] of Object.entries(manifest.exports)) {
 				if (typeof conditions === "string") {
 					assert.ok(existsSync(join(installedDirectory, conditions)));

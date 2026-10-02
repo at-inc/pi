@@ -44,11 +44,19 @@ function readPackage(directory) {
 function viewPackage(name, field) {
 	const result = spawnSync(
 		commandForPlatform("npm"),
-		["view", name, field, "--json", "--registry", registry],
+		field === "dist-tags" ? ["dist-tag", "ls", name, "--registry", registry] :
+			["view", name, field, "--json", "--registry", registry],
 		{ encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] },
 	);
 
-	if (result.status === 0 && result.stdout.trim()) return JSON.parse(result.stdout);
+	if (result.status === 0 && result.stdout.trim()) {
+		if (field !== "dist-tags") return JSON.parse(result.stdout);
+		return Object.fromEntries(result.stdout.trim().split("\n").map((line) => {
+			const separator = line.indexOf(": ");
+			if (separator < 1) throw new Error(`Invalid dist-tag response for ${name}`);
+			return [line.slice(0, separator), line.slice(separator + 2)];
+		}));
+	}
 
 	const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
 	if (result.status !== 0 && (output.includes("E404") || output.includes("404 Not Found"))) return null;

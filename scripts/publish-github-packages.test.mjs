@@ -57,7 +57,7 @@ const { join } = require("node:path");
 const root = process.env.FIXTURE_ROOT;
 const options = JSON.parse(process.env.FIXTURE_OPTIONS);
 const args = process.argv.slice(2);
-const manifest = args[0] === "view" ? null : JSON.parse(readFileSync("package.json", "utf8"));
+const manifest = ["view", "dist-tag"].includes(args[0]) ? null : JSON.parse(readFileSync("package.json", "utf8"));
 appendFileSync(join(root, "calls.jsonl"), JSON.stringify({ args, name: manifest?.name, manifest, cwd: process.cwd() }) + "\\n");
 const tagsFile = join(root, "tags.json");
 const tags = JSON.parse(readFileSync(tagsFile, "utf8"));
@@ -67,7 +67,12 @@ if (args[0] === "view") {
 		const existingAi = options.args?.includes("--durable-only") && args[1].startsWith("@at-inc/pi-ai@") && !options.missingAi;
 		if (!options.published && !existingAi) { console.error("E404 Not Found"); process.exit(1); }
 		console.log(JSON.stringify(args[1].split("@").at(-1)));
-	} else console.log(JSON.stringify(tags[args[1]]));
+	} else if (tags[args[1]]?.latest) console.log(JSON.stringify(tags[args[1]]));
+} else if (args[0] === "dist-tag") {
+	if (options.fault === "auth") { console.error("E401 Unauthorized"); process.exit(1); }
+	const entries = Object.entries(tags[args[2]] ?? {});
+	if (!entries.length) { console.error("E404 Not Found"); process.exit(1); }
+	console.log(entries.map(([tag, version]) => tag + ": " + version).join("\\n"));
 } else if (args[0] === "pack") {
 	if (options.fault === "pack" && manifest.name.endsWith("agent-core")) process.exit(1);
 	const files = options.fault === "contents" && manifest.name.endsWith("agent-core") ? [] :
@@ -108,7 +113,7 @@ for (const [version, tag, args, names] of [
 		assert.deepEqual(result.published.map(({ name }) => name), names);
 		const preflight = result.calls.slice(0, result.calls.indexOf(result.published[0]));
 		assert.deepEqual(preflight.filter(({ args }) => args[0] === "pack").map(({ name }) => name), names);
-		assert.equal(preflight.filter(({ args }) => args[2] === "dist-tags").length, names.length);
+		assert.equal(preflight.filter(({ args }) => args[0] === "dist-tag").length, names.length);
 		for (const call of result.published) {
 			assert.deepEqual(call.args, ["publish", "--ignore-scripts", "--registry", registry, "--tag", tag]);
 			assert.equal(result.tags[call.name][tag], version);
@@ -211,4 +216,12 @@ test("refuses conflicting release selections", (t) => {
 	const result = publish(t, { args: ["--durable-only", "--libraries-only"] });
 	assert.notEqual(result.status, 0);
 	assert.equal(result.calls.length, 0);
+});
+
+test("verifies existing prereleases without a latest tag or a second publish", (t) => {
+	const result = publish(t, { args: ["--durable-only"], published: true, noLatest: true });
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.published.length, 0);
+	assert.match(result.stdout, /beta verified; latest unchanged \(absent\)/);
+	assert.ok(result.calls.some(({ args }) => args[0] === "dist-tag" && args[1] === "ls"));
 });
