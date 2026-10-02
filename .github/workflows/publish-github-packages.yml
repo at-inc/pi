@@ -5,6 +5,11 @@ on:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      libraries_only:
+        description: Publish only pi-ai and pi-agent-core
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,6 +33,12 @@ jobs:
           scope: "@at-inc"
           cache: npm
 
+      - name: Setup Bun
+        if: ${{ inputs.libraries_only }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -38,15 +49,25 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Build
-        run: npm run build
+        run: npm run ${{ inputs.libraries_only && 'build:offline' || 'build' }}
 
       - name: Check
         run: npm run check
 
       - name: Test
-        run: npm test
+        run: ./test.sh
+
+      - name: Verify local library installation
+        if: ${{ inputs.libraries_only }}
+        run: node scripts/check-library-install.mjs
 
       - name: Publish packages
-        run: node scripts/publish-github-packages.mjs
+        run: node scripts/publish-github-packages.mjs ${{ inputs.libraries_only && '--libraries-only' || '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published library installation
+        if: ${{ inputs.libraries_only }}
+        run: node scripts/check-library-install.mjs --registry
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

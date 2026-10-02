@@ -6,6 +6,18 @@
 
 - `/arminsayshi` now plays a 3D version in fullscreen mode, with one cube per pixel of Armin. The 3D pi logo easter egg on header logo click is replaced by it.
 
+### Added
+
+- Added explicit, non-destructive JSONL-v3 imports into experimental durable sessions, including branches, compaction, context edits, source archives, and explicit session selection.
+
+### Fixed
+
+- Refresh durable model choices after login and preserve the authenticated Codex preference for new unconfigured sessions.
+- Reject option-shaped Git package refs and terminate clone and fetch options before positional arguments.
+- Avoid repeated scans when parsing prompt defaults, skill blocks, and npm package specs.
+- Omit credential command contents from configuration resolution errors.
+- Publish the coordinator's client socket before accepting server registrations, preventing intermittent startup connection failures.
+
 ## [1.0.0] - 2026-10-01
 
 ### New Features

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed quadratic matching of long Cerebras bodyless error messages.
+- Match model compatibility endpoints by parsed hostname rather than URL substrings, preserving existing built-in model settings.
+
 ## [1.0.0] - 2026-10-01
 
 ### Added
