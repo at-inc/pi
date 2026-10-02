@@ -346,6 +346,8 @@ settings: {
 
 When a provider rejects a request because the context is too long, generation compacts and retries once. A summary that would cut before the start of the current context settles as `stale` when it is placed, so when several are in flight, the furthest cut stays in effect. Summarization spend counts in `pi.usage`. A `beforeCompact` hook on `CompactionTask` can decline or supply its own summary.
 
+Before the hook runs, native selection reserves a 5% margin for the estimated serialized summary input. It keeps the preferred cut when an output budget fits, otherwise retains more history; the resulting cut and output budget remain pinned through retries. A request that still cannot fit fails with `summary_budget` before calling the model. Native and hook-supplied summaries that exceed the pinned output budget fail without placing a summary; rejected provider responses still count in `pi.usage`. Without new context or explicit focus, an unchanged compacted context is a no-op.
+
 Running compactions are listed in `docs["pi.live"].compactions` with their reason, attempt, and retry backoff. The agent events add `compaction_start` and `compaction_end`, and a `compactions` field in the snapshot.
 
 ## Agent Events (Experimental)

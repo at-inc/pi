@@ -1,5 +1,10 @@
 import type { AssistantMessage, Message, ModelThinkingLevel, SimpleStreamOptions } from "@at-inc/pi-ai";
-import { calculateContextTokens, estimateMessageTokens } from "@at-inc/pi-ai/utils/estimate";
+import {
+	calculateContextTokens,
+	estimateContextTokens,
+	estimateMessageTokens,
+	estimateTextTokens,
+} from "@at-inc/pi-ai/utils/estimate";
 import { isRetryableAssistantError, retryDelayMs } from "@at-inc/pi-ai/utils/retry";
 import type { Context, Draft } from "@earendil-works/chord";
 import { CompactionEntry } from "../entries.ts";
@@ -113,8 +118,44 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			if (ref === undefined || model === undefined) return failNoModel(runtime, ref, context);
 			const policy = settings.compaction;
 			const view = await runtime.context(conversationId, context);
-			const cut = selectCut(view, policy.keepRecentTokens);
-			if (cut === undefined) return complete(runtime, context);
+			const head = view.head;
+			// Safety selection can retain extra history; don't summarize it again without new context or focus.
+			if (
+				head?.kind === CompactionEntry.kind &&
+				task.input.instructions === undefined &&
+				!view.entries.some(
+					(entry) =>
+						entry.id > head.id &&
+						((entry.edits?.length ?? 0) > 0 || entry.model?.some((message) => message.role !== "system")),
+				)
+			)
+				return complete(runtime, context);
+			const preferred = selectCut(view, policy.keepRecentTokens);
+			if (preferred === undefined) return complete(runtime, context);
+			let cut = preferred;
+			let maxTokens = Math.min(
+				Math.floor(0.8 * policy.reserveTokens),
+				model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
+			);
+			// Select the safe range before hooks/checkpointing; a pinned firstKept never moves during retries.
+			while (model.contextWindow > 0) {
+				const available =
+					Math.floor(
+						model.contextWindow -
+							estimateContextTokens(summaryMessages(summarizedMessages(view, cut), task.input.instructions, 0))
+								.tokens *
+								1.05,
+					) - 1;
+				if (available > 0) {
+					maxTokens = Math.min(maxTokens, available);
+					break;
+				}
+				let earlier = cut - 1;
+				const start = view.head === undefined ? 0 : 1;
+				while (earlier > start && !isCandidate(view.contributions, earlier)) earlier--;
+				if (earlier <= start) break;
+				cut = earlier;
+			}
 			const firstKept = view.entries[cut]!.id;
 			const { reason, instructions } = task.input;
 			const compaction = {
@@ -129,16 +170,13 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				if (decision === undefined) decision = await hook(compaction, runtime, context);
 			});
 			if (decision !== undefined && "decline" in decision) return complete(runtime, context);
-			if (decision !== undefined) return place(runtime, firstKept, decision.summary, context);
+			if (decision !== undefined) return place(runtime, firstKept, decision.summary, maxTokens, context);
 			const request: SummaryRequest = {
 				attempt: 1,
 				model: ref,
 				thinkingLevel: agent.thinkingLevel,
 				streamOptions: settings.stream,
-				maxTokens: Math.min(
-					Math.floor(0.8 * policy.reserveTokens),
-					model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
-				),
+				maxTokens,
 				tail: view.entries.reduce((tail, entry) => (entry.id > tail ? entry.id : tail), firstKept),
 				firstKept,
 			};
@@ -153,14 +191,26 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			const view = await runtime.context(runtime.conversationId, context, tail);
 			const cut = view.entries.findIndex((entry) => entry.id === firstKept);
 			const now = runtime.now();
-			const messages: Message[] = [
-				{ role: "system", content: SUMMARIZATION_SYSTEM_PROMPT, timestamp: now },
-				{
-					role: "user",
-					content: [{ type: "text", text: summaryPrompt(summarizedMessages(view, cut), task.input.instructions) }],
-					timestamp: now,
-				},
-			];
+			const messages = summaryMessages(summarizedMessages(view, cut), task.input.instructions, now);
+			if (
+				model.contextWindow > 0 &&
+				estimateContextTokens(messages).tokens * 1.05 + maxTokens >= model.contextWindow
+			) {
+				await runtime.commit(async (tx) => {
+					removeCompactionStatus(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
+					return {
+						status: "terminal",
+						outcome: {
+							status: "failed",
+							error: {
+								message: "Summarization request exceeds the safe context budget",
+								detail: { reason: "summary_budget" },
+							},
+						},
+					};
+				}, context);
+				return;
+			}
 			const { deferred: _deferred, ...forwarded } = streamOptions;
 			const options: SimpleStreamOptions = {
 				...forwarded,
@@ -189,7 +239,8 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 					message.usage,
 				);
 				const live = await tx.doc(LiveDoc, runtime.conversationId);
-				if (summary !== undefined) return placeSummary(tx, runtime, current, live, firstKept, summary);
+				if (summary !== undefined)
+					return placeSummary(tx, runtime, current, live, firstKept, summary, maxTokens, message.usage.output);
 				if (retry) {
 					const status = compactionStatus(live, runtime.taskId);
 					if (status !== undefined) status.retry = { at: until, error: message.errorMessage ?? "" };
@@ -345,6 +396,13 @@ function summaryPrompt(messages: readonly Message[], instructions: string | unde
 	return `<conversation>\n${serializeConversation(messages)}\n</conversation>\n\n${SUMMARIZATION_PROMPT}${focus}`;
 }
 
+function summaryMessages(messages: readonly Message[], instructions: string | undefined, timestamp: number): Message[] {
+	return [
+		{ role: "system", content: SUMMARIZATION_SYSTEM_PROMPT, timestamp },
+		{ role: "user", content: [{ type: "text", text: summaryPrompt(messages, instructions) }], timestamp },
+	];
+}
+
 /** Messages as plain text, so the summarizer reads a transcript instead of continuing it. System messages are omitted. */
 export function serializeConversation(messages: readonly Message[]): string {
 	const parts: string[] = [];
@@ -388,10 +446,24 @@ function truncate(text: string, maxChars: number): string {
 }
 
 /** Place a summary supplied by a hook in its own commit. */
-async function place(runtime: Runtime, firstKept: EntryId, summary: string, context: Context): Promise<void> {
+async function place(
+	runtime: Runtime,
+	firstKept: EntryId,
+	summary: string,
+	maxTokens: number,
+	context: Context,
+): Promise<void> {
 	await runtime.commit(
 		async (tx, current) =>
-			placeSummary(tx, runtime, current, await tx.doc(LiveDoc, runtime.conversationId), firstKept, summary),
+			placeSummary(
+				tx,
+				runtime,
+				current,
+				await tx.doc(LiveDoc, runtime.conversationId),
+				firstKept,
+				summary,
+				maxTokens,
+			),
 		context,
 	);
 }
@@ -409,8 +481,19 @@ async function placeSummary(
 	live: Draft<LiveState>,
 	firstKept: EntryId,
 	summary: string,
+	maxTokens: number,
+	outputTokens = 0,
 ): Promise<Next> {
 	removeCompactionStatus(live, runtime.taskId);
+	if (Math.max(estimateTextTokens(summary), outputTokens) > maxTokens) {
+		return {
+			status: "terminal",
+			outcome: {
+				status: "failed",
+				error: { message: "Summarization output exceeds its token budget", detail: { reason: "summary_budget" } },
+			},
+		};
+	}
 	const text = `${SUMMARY_PREFIX}${summary}${SUMMARY_SUFFIX}`;
 	const entry = {
 		kind: CompactionEntry.kind,
