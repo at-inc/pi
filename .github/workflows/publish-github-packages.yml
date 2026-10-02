@@ -10,6 +10,10 @@ on:
         description: Publish only pi-ai and pi-agent-core
         type: boolean
         default: false
+      durable_only:
+        description: Publish only fork Durable and Chord (exclusive with libraries_only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,10 +38,16 @@ jobs:
           cache: npm
 
       - name: Setup Bun
-        if: ${{ inputs.libraries_only }}
+        if: ${{ inputs.libraries_only || inputs.durable_only }}
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
+
+      - name: Setup pnpm
+        if: ${{ inputs.durable_only }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
 
       - name: Install system dependencies
         run: |
@@ -49,11 +59,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Hydrate model data
-        if: ${{ inputs.libraries_only }}
+        if: ${{ inputs.libraries_only || inputs.durable_only }}
         run: npm run hydrate:model-data
 
       - name: Build
-        run: npm run ${{ inputs.libraries_only && 'build:offline' || 'build' }}
+        run: npm run ${{ (inputs.libraries_only || inputs.durable_only) && 'build:offline' || 'build' }}
 
       - name: Check
         run: npm run check
@@ -65,13 +75,23 @@ jobs:
         if: ${{ inputs.libraries_only }}
         run: node scripts/check-library-install.mjs
 
+      - name: Verify local Durable installation
+        if: ${{ inputs.durable_only }}
+        run: node scripts/check-durable-install.mjs
+
       - name: Publish packages
-        run: node scripts/publish-github-packages.mjs ${{ inputs.libraries_only && '--libraries-only' || '' }}
+        run: node scripts/publish-github-packages.mjs ${{ inputs.libraries_only && '--libraries-only' || '' }} ${{ inputs.durable_only && '--durable-only' || '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify published library installation
         if: ${{ inputs.libraries_only }}
         run: node scripts/check-library-install.mjs --registry
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published Durable installation
+        if: ${{ inputs.durable_only }}
+        run: node scripts/check-durable-install.mjs --registry
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

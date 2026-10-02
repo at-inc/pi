@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added GitHub Packages distribution as `@at-inc/pi-durable` with matching fork Chord and AI dependencies pinned to the exact release version. Consumers can retain upstream import names with npm aliases.
+
 ## [1.0.0] - 2026-10-01
 
 ### Added
