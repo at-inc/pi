@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
 	clearConfigValueCache,
 	resolveConfigValue,
+	resolveConfigValueOrThrow,
 	resolveConfigValueUncached,
 } from "../src/core/resolve-config-value.ts";
 import * as shellModule from "../src/utils/shell.ts";
@@ -60,6 +61,23 @@ describe("resolveConfigValue", () => {
 			expect(resolveConfigValue(command)).toBeUndefined();
 		},
 	);
+
+	test("does not include failed credential commands or their output in errors", () => {
+		vi.stubEnv("PI_TEST_CONFIG_COMMAND_OUTPUT", "CODEQL_FAKE_STDOUT_SECRET");
+		vi.stubEnv("PI_TEST_CONFIG_COMMAND_ERROR", "CODEQL_FAKE_STDERR_SECRET");
+		const command =
+			'!echo "$PI_TEST_CONFIG_COMMAND_OUTPUT"; echo "$PI_TEST_CONFIG_COMMAND_ERROR" >&2; false CODEQL_FAKE_INLINE_SECRET';
+		expect(() => resolveConfigValueOrThrow(command, "OAuth client secret")).toThrow(
+			new Error("Failed to resolve OAuth client secret from shell command"),
+		);
+	});
+
+	test("identifies missing environment variables without including literal credential parts", () => {
+		vi.stubEnv("PI_TEST_CONFIG_MISSING", undefined);
+		expect(() =>
+			resolveConfigValueOrThrow("CODEQL_FAKE_LITERAL_SECRET-$PI_TEST_CONFIG_MISSING", "OAuth client secret"),
+		).toThrow(new Error("Failed to resolve OAuth client secret from environment variable: PI_TEST_CONFIG_MISSING"));
+	});
 
 	test("caches successful and failed commands until explicitly cleared", () => {
 		const counterFile = join(tempDir, "counter");

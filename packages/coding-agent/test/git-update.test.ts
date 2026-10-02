@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { allowNetwork } from "./test-network-env.ts";
@@ -99,6 +99,7 @@ describe("DefaultPackageManager git update", () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -153,7 +154,7 @@ describe("DefaultPackageManager git update", () => {
 			await packageManager.update();
 
 			expect(executedCommands).toContain(
-				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
+				"git fetch --prune --no-tags -- origin +refs/heads/main:refs/remotes/origin/main",
 			);
 			expect(executedCommands).not.toContain("git fetch --prune origin");
 			expect(executedCommands).not.toContain("git reset --hard @{upstream}");
@@ -203,6 +204,79 @@ describe("DefaultPackageManager git update", () => {
 	});
 
 	describe("pinned sources", () => {
+		it.each([false, true])(
+			"should reject option-shaped refs before Git runs with an existing checkout: %s",
+			async (installed) => {
+				if (installed) setupRemoteAndInstall();
+				const managerWithInternals = packageManager as unknown as {
+					runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void>;
+				};
+				const runCommand = vi
+					.spyOn(managerWithInternals, "runCommand")
+					.mockRejectedValue(new Error("Git must not run"));
+				const source = `${gitSource}@--upload-pack=invalid-probe`;
+				const originalPackages = settingsManager.getGlobalSettings().packages;
+
+				await expect(packageManager.installAndPersist(source)).rejects.toThrow("Invalid Git ref");
+				expect(settingsManager.getGlobalSettings().packages).toEqual(originalPackages);
+				settingsManager.setPackages([source]);
+				await expect(packageManager.update()).rejects.toThrow("Invalid Git ref");
+				await expect(packageManager.resolve()).rejects.toThrow("Invalid Git ref");
+				await expect(packageManager.resolveExtensionSources([source], { temporary: true })).rejects.toThrow(
+					"Invalid Git ref",
+				);
+				expect(runCommand).not.toHaveBeenCalled();
+				expect(existsSync(installedDir)).toBe(installed);
+			},
+		);
+
+		it.each(["tag", "branch", "commit"])(
+			"should clone and checkout a pinned %s through the public install path",
+			async (kind) => {
+				mkdirSync(remoteDir, { recursive: true });
+				initGitRepo(remoteDir);
+				const pinnedCommit = createCommit(remoteDir, "extension.ts", "// pinned", "Pinned commit");
+				git(["tag", "v1"], remoteDir);
+				git(["branch", "feature/pinned"], remoteDir);
+				createCommit(remoteDir, "extension.ts", "// latest", "Latest commit");
+				vi.stubEnv("GIT_CONFIG_COUNT", "1");
+				vi.stubEnv("GIT_CONFIG_KEY_0", `url.${remoteDir}.insteadOf`);
+				vi.stubEnv("GIT_CONFIG_VALUE_0", "https://github.com/test/extension");
+				const ref = kind === "tag" ? "v1" : kind === "branch" ? "feature/pinned" : pinnedCommit;
+				const managerWithInternals = packageManager as unknown as {
+					runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void>;
+				};
+				const runCommand = vi.spyOn(managerWithInternals, "runCommand");
+
+				await packageManager.install(`${gitSource}@${ref}`);
+
+				expect(runCommand).toHaveBeenCalledWith("git", [
+					"clone",
+					"--",
+					"https://github.com/test/extension",
+					installedDir,
+				]);
+				expect(runCommand).toHaveBeenCalledWith("git", ["checkout", ref], { cwd: installedDir });
+				expect(getCurrentCommit(installedDir)).toBe(pinnedCommit);
+				expect(getFileContent(installedDir, "extension.ts")).toBe("// pinned");
+			},
+		);
+
+		it("should install an existing checkout at a pinned ref with fetch options terminated", async () => {
+			setupRemoteAndInstall();
+			const pinnedCommit = createCommit(remoteDir, "extension.ts", "// pinned", "Pinned commit");
+			git(["tag", "v2"], remoteDir);
+			const managerWithInternals = packageManager as unknown as {
+				runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void>;
+			};
+			const runCommand = vi.spyOn(managerWithInternals, "runCommand");
+
+			await packageManager.install(`${gitSource}@v2`);
+
+			expect(runCommand).toHaveBeenCalledWith("git", ["fetch", "--", "origin", "v2"], { cwd: installedDir });
+			expect(getCurrentCommit(installedDir)).toBe(pinnedCommit);
+		});
+
 		it("should checkout the configured pinned git ref during full and targeted updates", async () => {
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);
@@ -274,7 +348,7 @@ describe("DefaultPackageManager git update", () => {
 			await packageManager.resolveExtensionSources([gitSource], { temporary: true });
 
 			expect(executedCommands).toContain(
-				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
+				"git fetch --prune --no-tags -- origin +refs/heads/main:refs/remotes/origin/main",
 			);
 			expect(getFileContent(cachedDir, "pi-extensions/session-breakdown.ts")).toBe("// fresh");
 		});

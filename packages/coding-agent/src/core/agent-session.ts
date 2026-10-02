@@ -169,14 +169,23 @@ export interface ParsedSkillBlock {
  * Returns null if the text doesn't contain a skill block.
  */
 export function parseSkillBlock(text: string): ParsedSkillBlock | null {
-	const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-	if (!match) return null;
-	return {
-		name: match[1],
-		location: match[2],
-		content: match[3],
-		userMessage: match[4]?.trim() || undefined,
-	};
+	const header = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n/);
+	if (!header) return null;
+	const closingTag = "\n</skill>";
+	let closingIndex = text.indexOf(closingTag, header[0].length);
+	while (closingIndex !== -1) {
+		const suffix = text.slice(closingIndex + closingTag.length).match(/^(?:\n\n([\s\S]+))?$/);
+		if (suffix) {
+			return {
+				name: header[1],
+				location: header[2],
+				content: text.slice(header[0].length, closingIndex),
+				userMessage: suffix[1]?.trim() || undefined,
+			};
+		}
+		closingIndex = text.indexOf(closingTag, closingIndex + closingTag.length);
+	}
+	return null;
 }
 
 /** Tool execution events of calls a tool made through `ctx.executeTool()` carry `parentToolCallId`. */

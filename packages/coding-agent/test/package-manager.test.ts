@@ -871,7 +871,7 @@ Content`,
 
 			await packageManager.install(source);
 
-			expect(runCommandSpy).toHaveBeenCalledWith("git", ["fetch", "origin", "v2"], { cwd: targetDir });
+			expect(runCommandSpy).toHaveBeenCalledWith("git", ["fetch", "--", "origin", "v2"], { cwd: targetDir });
 			expect(runCommandSpy).toHaveBeenCalledWith("git", ["reset", "--hard", "FETCH_HEAD^{commit}"], {
 				cwd: targetDir,
 			});
@@ -1315,6 +1315,44 @@ Content`,
 	});
 
 	describe("source parsing", () => {
+		it.each([
+			["npm:pkg", "pkg"],
+			["npm:pkg@1.2.3", "pkg"],
+			["npm:pkg@latest", "pkg"],
+			["npm:pkg@^1.2.3", "pkg"],
+			["npm:@scope/pkg", "@scope/pkg"],
+			["npm:@scope/pkg@1.2.3-beta.1", "@scope/pkg"],
+			["npm:@scope/pkg@next", "@scope/pkg"],
+			["npm:@scope/pkg@~1.2.3", "@scope/pkg"],
+		])("should resolve the installed package name for %s", (source, name) => {
+			const installedPath = join(tempDir, ".pi", "npm", "node_modules", name);
+			mkdirSync(installedPath, { recursive: true });
+
+			expect(packageManager.getInstalledPath(source, "project")).toBe(installedPath);
+		});
+
+		it("should parse long malformed npm specs without quadratic backtracking", () => {
+			const source = `npm:${"?/".repeat(32_000)}@`;
+			const started = performance.now();
+
+			expect(packageManager.addSourceToSettings(source)).toBe(true);
+			expect(performance.now() - started).toBeLessThan(1_000);
+			expect(settingsManager.getGlobalSettings().packages).toEqual([source]);
+		});
+
+		it.each(["git:--upload-pack=invalid-probe", "git:git@evil.example:../../victim/repo"])(
+			"should report invalid explicit Git sources instead of treating %s as a local path",
+			async (source) => {
+				const runCommand = vi.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand");
+
+				await expect(packageManager.install(source)).rejects.toThrow("Invalid Git package source");
+				await expect(packageManager.resolveExtensionSources([source])).rejects.toThrow(
+					"Invalid Git package source",
+				);
+				expect(runCommand).not.toHaveBeenCalled();
+			},
+		);
+
 		it("should emit progress events on install attempt", async () => {
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
@@ -1340,7 +1378,7 @@ Content`,
 
 			await expect(packageManager.install(source)).rejects.toThrow("simulated git clone failure");
 
-			expect(runCommand).toHaveBeenCalledWith("git", ["clone", source, expect.any(String)]);
+			expect(runCommand).toHaveBeenCalledWith("git", ["clone", "--", source, expect.any(String)]);
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
 		});
 

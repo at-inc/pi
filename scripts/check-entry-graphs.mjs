@@ -101,7 +101,10 @@ function expand(pkgDir, entry, target) {
 	if (!existsSync(dir)) return [];
 	return readdirSync(dir)
 		.filter((name) => name.endsWith(".ts"))
-		.map((name) => [entry.replace("*", name.replace(/\.ts$/, "")), target.replace("*", name.replace(/\.ts$/, ""))]);
+		.map((name) => {
+			const stem = name.replace(/\.ts$/, "");
+			return [entry.split("*").join(stem), target.split("*").join(stem)];
+		});
 }
 
 let failures = 0;
