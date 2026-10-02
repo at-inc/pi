@@ -12,8 +12,8 @@ node --import ./packages/coding-agent/src/experimental/source-resolver.ts packag
 A new session starts with pi's default model and thinking level from `settings.json`. `--continue` opens the newest
 session for the current directory. Sessions live under
 `~/.pi/agent/experimental/durable-sessions/<cwd-hash>/<session>/session.sqlite`; a lock keeps a second process out
-(a lock left by a crash goes stale after 10 seconds, and the next start waits for that). Log in with pi itself;
-credentials are shared.
+(a lock left by a crash goes stale after 10 seconds, and the next start waits for that). Use `/login` or pi itself
+to configure providers; credentials are shared.
 
 ## What it shows
 
@@ -22,7 +22,9 @@ credentials are shared.
   finishes. Nothing in the TUI handles recovery; it only renders the conversation view.
 - **One view:** the TUI renders `Conversation.viewState()`, the structural mount of the transcript and the built-in
   documents (`pi.live`, `pi.inbox`, `pi.agent`, `pi.usage`). Streaming, tool progress, the queue, retries,
-  compaction status, the model, and usage all come from it.
+  compaction status, the model, and usage all come from it. The footer shows cumulative input/output/cache tokens,
+  cache-hit rate, cost, and context-window usage; context turns yellow above 70% and red above 90%, with `(auto)`
+  when automatic compaction is enabled.
 - **Subagents:** the `subagent` tool runs a task in a child conversation owned by the call. `/agents` switches the
   view to any conversation, also while the subagent works, and the editor then talks to it: steer it while busy, or
   keep chatting after the call returned. Esc aborts the shown conversation; aborting the main turn aborts its
@@ -36,6 +38,7 @@ credentials are shared.
 - follow-up key (`app.message.followUp`): queue a follow-up
 - Esc: abort the shown conversation's work, including a manual compaction
 - `/model` or the model key: select a model for the shown conversation
+- `/login`: select a provider and configure OAuth or an API key
 - thinking key (Shift+Tab): cycle thinking levels
 - `/compact [instructions]`: summarize older context; reports "Nothing to compact" when the context fits in
   `compaction.keepRecentTokens`
@@ -51,6 +54,8 @@ credentials are shared.
 | --- | --- |
 | `main.ts` | arguments, open, run, close |
 | `sessions.ts` | session directories and the lock |
+| `login.ts` | provider login options for the selector |
+| `usage.ts` | cache-hit rate from the active transcript |
 | `runtime.ts` | Harness, registry, settings, environments; the plain `DurableView` and `DurableController` |
 | `prompt.ts` | pi's system prompt sections (tools, rules, docs, AGENTS.md, skills, cwd) as one extension |
 | `subagent.ts` | the foreground subagent tool |
@@ -63,4 +68,4 @@ early.
 A turn that ends without an answer shows a notice; one recovered after a restart does not, since only submissions
 made by this process are watched.
 
-Not here: sessions list and resume picker, forks and tree navigation, extensions, prompt templates, images, `/login`.
+Not here: sessions list and resume picker, forks and tree navigation, extensions, prompt templates, images.

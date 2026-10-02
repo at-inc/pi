@@ -308,6 +308,20 @@ describe("Models with image models", () => {
 		expect(missingApi.errorMessage).toContain('no image generation implementation for "test-images"');
 	});
 
+	it("builtinModels registers the built-in image providers", async () => {
+		const models = builtinModels({ authContext: fakeAuthContext({ OPENROUTER_API_KEY: "or-key" }) });
+		const images = models.getModelsOfType("image");
+		expect([...new Set(images.map((model) => model.provider))]).toEqual(["openai-codex", "openrouter"]);
+		expect(models.getModelsOfType("image", "openrouter").length).toBeGreaterThan(0);
+		expect(models.getModelsOfType("image", "openrouter").every((model) => model.api === "openrouter-images")).toBe(
+			true,
+		);
+		expect((await models.getAuth(models.getModelsOfType("image", "openrouter")[0]))?.auth.apiKey).toBe("or-key");
+		expect(models.getModelOfType("image", "openai-codex", "chatgpt-image-generation")?.api).toBe(
+			"openai-codex-images",
+		);
+	});
+
 	it("rejects chat models at the image entry point at runtime", async () => {
 		const models = createModels();
 		const chat = chatModel("p1", "chat");
@@ -394,7 +408,9 @@ describe("Models with image models", () => {
 		expect(provider.getModels().every((model) => isModelType(model, "chat"))).toBe(true);
 		expect(provider.getAllModels?.().some((model) => isModelType(model, "image"))).toBe(true);
 		expect(images.every((m) => m.type === "image" && m.api === "openrouter-images")).toBe(true);
-		expect(models.getModelsOfType("image").every((m) => m.provider === "openrouter")).toBe(true);
+		expect(
+			models.getModelsOfType("image").every((m) => m.provider === "openai-codex" || m.provider === "openrouter"),
+		).toBe(true);
 
 		// One upstream id can expose separate chat and image operations.
 		const chat = models.getModel("openrouter", "google/gemini-3-pro-image");

@@ -22,7 +22,7 @@
  */
 
 import { join } from "node:path";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@at-inc/pi-agent-core";
 import type { CodemodeJsonSchema, CodemodeTool } from "@earendil-works/pi-codemode";
 import {
 	MCP_TYPESCRIPT_PREAMBLE,

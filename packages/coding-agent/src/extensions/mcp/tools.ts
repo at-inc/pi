@@ -14,8 +14,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
+import type { AgentToolResult } from "@at-inc/pi-agent-core";
+import type { ImageContent, JsonValue, TextContent } from "@at-inc/pi-ai";
 import {
 	type CallToolResult,
 	type ContentBlock,

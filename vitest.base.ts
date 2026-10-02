@@ -13,6 +13,7 @@ export const workspaceSourcePaths = {
 	mcpOAuth: fileURLToPath(new URL("./packages/mcp/src/oauth/index.ts", import.meta.url)),
 	mcpTesting: fileURLToPath(new URL("./packages/mcp/src/testing/index.ts", import.meta.url)),
 	aiIndex: fileURLToPath(new URL("./packages/ai/src/index.ts", import.meta.url)),
+	aiModels: fileURLToPath(new URL("./packages/ai/src/models.ts", import.meta.url)),
 	aiCompat: fileURLToPath(new URL("./packages/ai/src/compat.ts", import.meta.url)),
 	aiOAuth: fileURLToPath(new URL("./packages/ai/src/oauth.ts", import.meta.url)),
 	aiApi: fileURLToPath(new URL("./packages/ai/src/api", import.meta.url)),
@@ -28,6 +29,7 @@ export const workspaceSourcePaths = {
 	serverIndex: fileURLToPath(new URL("./packages/server/src/index.ts", import.meta.url)),
 	serverUnix: fileURLToPath(new URL("./packages/server/src/transports/unix/index.ts", import.meta.url)),
 	codingAgentIndex: fileURLToPath(new URL("./packages/coding-agent/src/index.ts", import.meta.url)),
+	codingAgentPlugin: fileURLToPath(new URL("./packages/coding-agent/src/experimental/plugin.ts", import.meta.url)),
 	tuiIndex: fileURLToPath(new URL("./packages/tui/src/index.ts", import.meta.url)),
 } as const;
 
@@ -44,7 +46,24 @@ export default defineConfig({
 			{ find: /^@earendil-works\/pi-mcp$/, replacement: workspaceSourcePaths.mcpIndex },
 			{ find: /^@earendil-works\/pi-mcp\/oauth$/, replacement: workspaceSourcePaths.mcpOAuth },
 			{ find: /^@earendil-works\/pi-mcp\/testing$/, replacement: workspaceSourcePaths.mcpTesting },
+			{ find: /^@at-inc\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
+			{ find: /^@at-inc\/pi-ai\/models$/, replacement: workspaceSourcePaths.aiModels },
+			{ find: /^@at-inc\/pi-ai\/compat$/, replacement: workspaceSourcePaths.aiCompat },
+			{ find: /^@at-inc\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
+			{
+				find: /^@at-inc\/pi-ai\/utils\/(.+)$/,
+				replacement: `${workspaceSourcePaths.aiUtils}/$1.ts`,
+			},
+			{
+				find: /^@at-inc\/pi-ai\/api\/(.+)$/,
+				replacement: `${workspaceSourcePaths.aiApi}/$1.ts`,
+			},
+			{
+				find: /^@at-inc\/pi-ai\/providers\/(.+)$/,
+				replacement: `${workspaceSourcePaths.aiProviders}/$1.ts`,
+			},
 			{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
+			{ find: /^@earendil-works\/pi-ai\/models$/, replacement: workspaceSourcePaths.aiModels },
 			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: workspaceSourcePaths.aiCompat },
 			{ find: /^@earendil-works\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
 			{
@@ -60,6 +79,11 @@ export default defineConfig({
 				replacement: `${workspaceSourcePaths.aiProviders}/$1.ts`,
 			},
 			{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
+			{ find: /^@at-inc\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
+			{ find: /^@earendil-works\/pi-coding-agent$/, replacement: workspaceSourcePaths.codingAgentIndex },
+			{ find: /^@earendil-works\/pi-coding-agent\/experimental\/plugin$/, replacement: workspaceSourcePaths.codingAgentPlugin },
+			{ find: /^@at-inc\/pi$/, replacement: workspaceSourcePaths.codingAgentIndex },
+			{ find: /^@at-inc\/pi\/experimental\/plugin$/, replacement: workspaceSourcePaths.codingAgentPlugin },
 			{ find: /^@earendil-works\/pi-codemode$/, replacement: workspaceSourcePaths.codemodeIndex },
 			{ find: /^@earendil-works\/pi-codemode\/declarations$/, replacement: workspaceSourcePaths.codemodeDeclarations },
 			{ find: /^@earendil-works\/pi-codemode\/source$/, replacement: workspaceSourcePaths.codemodeSource },

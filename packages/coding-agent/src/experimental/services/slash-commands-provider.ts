@@ -1,5 +1,5 @@
+import type { ModelThinkingLevel } from "@at-inc/pi-ai";
 import { defineFacet, type Facet, type JsonValue } from "@earendil-works/chord";
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { AgentController } from "./agent-controller.ts";
 import { type ModelSummary, Models, type Models as ModelsService } from "./models.ts";
 import { PresentationPlugins, SessionPlugins } from "./plugins.ts";

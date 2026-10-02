@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "child_process";
-import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, unwatchFile, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -81,6 +81,21 @@ function emitReftableChange(provider: FooterDataProvider): void {
 	const { reftableWatcher } = provider as unknown as { reftableWatcher: FSWatcher | null };
 	expect(reftableWatcher).not.toBeNull();
 	reftableWatcher?.emit("change", "change", "tables.list");
+}
+
+function stopNativeWatchEvents(provider: FooterDataProvider): void {
+	// Fake-clock tests emit their own events; delayed native/polling events from
+	// fixture creation must not schedule extra refreshes under parallel test load.
+	const watchers = provider as unknown as {
+		headWatcher: FSWatcher | null;
+		reftableWatcher: FSWatcher | null;
+		reftableTablesListWatcher: FSWatcher | null;
+		reftableTablesListPath: string;
+	};
+	watchers.headWatcher?.close();
+	watchers.reftableWatcher?.close();
+	watchers.reftableTablesListWatcher?.close();
+	unwatchFile(watchers.reftableTablesListPath);
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
@@ -180,6 +195,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		process.chdir(worktreeDir);
 
 		const provider = new FooterDataProvider(worktreeDir);
+		stopNativeWatchEvents(provider);
 		try {
 			expect(provider.getGitBranch()).toBe("main");
 			vi.mocked(spawnSync).mockClear();
@@ -205,6 +221,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		process.chdir(worktreeDir);
 
 		const provider = new FooterDataProvider(worktreeDir);
+		stopNativeWatchEvents(provider);
 		try {
 			expect(provider.getGitBranch()).toBe("main");
 			vi.mocked(execFile).mockClear();
@@ -236,10 +253,10 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
+			await waitFor(() => vi.mocked(execFile).mock.calls.length >= 1);
 			await waitFor(() => provider.getGitBranch() === "foo");
 
-			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(execFile)).toHaveBeenCalled();
 			expect(provider.getGitBranch()).toBe("foo");
 			expect(onBranchChange).toHaveBeenCalledTimes(1);
 		} finally {

@@ -5,7 +5,7 @@ import {
 	type Models,
 	type SimpleStreamOptions,
 	type SystemMessage,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
 import {
 	AssistantEntry,
 	type CommitPublication,

@@ -1,5 +1,5 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Model, type Transport } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@at-inc/pi-agent-core";
+import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Model, type Transport } from "@at-inc/pi-ai";
 import type {
 	TuiMode as RendererTuiMode,
 	ScrollViewScrollbar,

@@ -2,14 +2,14 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@at-inc/pi-agent-core";
 import {
 	getCurrentSystemMessage,
 	type ImageContent,
 	type Model,
 	type Provider,
 	type ProviderHeaders,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { CacheWarmingAction } from "../cache-warmer.ts";

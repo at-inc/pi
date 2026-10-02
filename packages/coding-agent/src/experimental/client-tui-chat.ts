@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolResultMessage, UserMessage } from "@at-inc/pi-ai";
 import type { ConversationView, EntryRecord, InboxState, LiveState } from "@earendil-works/pi-durable";
 import { Container, Spacer, Text, TruncatedText, type TUI } from "@earendil-works/pi-tui";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";

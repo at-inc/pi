@@ -1,5 +1,5 @@
+import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@at-inc/pi-ai";
 import type { Op } from "@earendil-works/chord/delta";
-import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import {
 	type CommitPublication,
 	defineTool,

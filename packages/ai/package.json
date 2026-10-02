@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-ai",
+	"name": "@at-inc/pi-ai",
 	"version": "1.0.0",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
@@ -78,6 +78,9 @@
 		"partial-json": "0.1.7",
 		"typebox": "1.3.27"
 	},
+	"bundleDependencies": [
+		"@earendil-works/pi-telemetry"
+	],
 	"keywords": [
 		"ai",
 		"llm",
@@ -92,7 +95,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/at-inc/pi.git",
 		"directory": "packages/ai"
 	},
 	"engines": {
@@ -102,5 +105,8 @@
 		"@types/node": "22.19.19",
 		"canvas": "3.2.3",
 		"vitest": "4.1.11"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
 	}
 }

@@ -1,4 +1,3 @@
-import type { AttachedReplicatedState, Context, JsonValue } from "@earendil-works/chord";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -13,7 +12,8 @@ import type {
 	TSchema,
 	Usage,
 	UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
+import type { AttachedReplicatedState, Context, JsonValue } from "@earendil-works/chord";
 import type { ExecutionEnv } from "../env/index.ts";
 import type {
 	ConversationId,

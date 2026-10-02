@@ -1,4 +1,3 @@
-import type { Context } from "@earendil-works/chord";
 import {
 	createModels,
 	type FauxProviderHandle,
@@ -7,7 +6,8 @@ import {
 	type Message,
 	type Models,
 	type RegisterFauxProviderOptions,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
+import type { Context } from "@earendil-works/chord";
 import {
 	type Conversation,
 	createRegistry,

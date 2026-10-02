@@ -109,6 +109,69 @@ describe("getSupportedThinkingLevels", () => {
 		},
 	);
 
+	it("includes xhigh and max but not off or minimal for OpenAI GPT-6 Astra", () => {
+		const model = getModel("openai", "gpt-6-astra");
+		expect(model).toBeDefined();
+		expect(model).toMatchObject({
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			contextWindow: 272000,
+			maxTokens: 128000,
+			cost: {
+				input: 10,
+				output: 50,
+				cacheRead: 1,
+				cacheWrite: 12.5,
+				tiers: [
+					{
+						inputTokensAbove: 272000,
+						input: 20,
+						output: 75,
+						cacheRead: 2,
+						cacheWrite: 25,
+					},
+				],
+			},
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				xhigh: "xhigh",
+				max: "max",
+			},
+			compat: {
+				supportsToolSearch: true,
+				supportsAdditionalTools: true,
+				supportsExplicitPromptCacheMode: true,
+			},
+		});
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+		const azureModel = getModel("azure-openai-responses", "gpt-6-astra");
+		expect(azureModel?.contextWindow).toBe(1050000);
+		expect(getSupportedThinkingLevels(azureModel!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
+	it("includes xhigh and max but not off or minimal for openai-codex GPT-6 Astra", () => {
+		const model = getModel("openai-codex", "gpt-6-astra");
+		expect(model).toBeDefined();
+		expect(model).toMatchObject({
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			contextWindow: 272000,
+			maxTokens: 128000,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				xhigh: "xhigh",
+				max: "max",
+			},
+			compat: {
+				supportsToolSearch: true,
+				supportsAdditionalTools: true,
+			},
+		});
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
 	// OpenAI and Codex reject reasoning.effort "none" for GPT-6.1 Sol.
 	it("does not support off for GPT-6.1 Sol", () => {
 		const expected = {

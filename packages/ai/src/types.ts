@@ -28,7 +28,7 @@ export type KnownApi =
 
 export type Api = KnownApi | (string & {});
 
-export type KnownImageApi = "openrouter-images";
+export type KnownImageApi = "openai-codex-images" | "openrouter-images";
 
 export type ImageApi = KnownImageApi | (string & {});
 
@@ -1116,6 +1116,8 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	 */
 	type?: "chat";
 	reasoning: boolean;
+	/** Whether this provider/model supports priority or fast inference. Only true declares support; unset means unknown. */
+	supportsFastMode?: boolean;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
 	 * Missing keys use provider defaults. null marks a level as unsupported.

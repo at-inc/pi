@@ -5,11 +5,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { getNpmWorkspacePackages } from "./release-packages.mjs";
 
 const RELEASES_PREFIX = "releases/v1";
 const INSTALLER_PREFIX = "installer/v1";
-const INSTALLER_PACKAGE_NAME = "@earendil-works/pi-coding-agent-install";
+const INSTALLER_PACKAGE_NAME = "@at-inc/pi-install";
 const REGISTRY_URL = "https://registry.npmjs.org";
 const RETRY_DELAY_MS = 5000;
 const RETRY_TIMEOUT_MS = 10 * 60 * 1000;
@@ -233,7 +233,7 @@ function validateInstallerArtifacts(packageJsonPath, packageLockPath, version) {
 		packageLock.lockfileVersion !== 3 ||
 		packageLock.version !== version ||
 		root?.version !== version ||
-		root.dependencies?.["@earendil-works/pi-coding-agent"] !== version
+		root.dependencies?.["@at-inc/pi"] !== version
 	) {
 		throw new Error(`Installer package-lock.json must describe Pi ${version}`);
 	}
@@ -268,7 +268,7 @@ export async function advanceLatestRelease(version, readLatest, writeLatest) {
 
 async function main() {
 	const options = parseArgs(process.argv.slice(2));
-	const packages = getPublicWorkspacePackages();
+	const packages = getNpmWorkspacePackages();
 	for (const pkg of packages) {
 		if (pkg.version !== options.version) {
 			throw new Error(`${pkg.name} is ${pkg.version}; expected ${options.version}`);

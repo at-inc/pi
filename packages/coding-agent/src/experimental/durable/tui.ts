@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AuthEvent, ToolResultMessage, Usage, UserMessage } from "@at-inc/pi-ai";
 import type {
 	ConversationId,
 	EntryRecord,
@@ -37,14 +37,27 @@ import { createAllToolRenderers } from "../../core/tools/renderers/index.ts";
 import { AssistantMessageComponent } from "../../modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../../modes/interactive/components/custom-editor.ts";
 import { DynamicBorder } from "../../modes/interactive/components/dynamic-border.ts";
+import { ExtensionSelectorComponent } from "../../modes/interactive/components/extension-selector.ts";
 import { formatTokens } from "../../modes/interactive/components/footer.ts";
 import { keyText } from "../../modes/interactive/components/keybinding-hints.ts";
+import { LoginDialogComponent } from "../../modes/interactive/components/login-dialog.ts";
+import {
+	type AuthSelectorProvider,
+	OAuthSelectorComponent,
+} from "../../modes/interactive/components/oauth-selector.ts";
 import { type StatusIndicator, WorkingStatusIndicator } from "../../modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent, type ToolRenderers } from "../../modes/interactive/components/tool-execution.ts";
 import { UserMessageComponent } from "../../modes/interactive/components/user-message.ts";
 import { getEditorTheme, getMarkdownTheme, initTheme, theme } from "../../modes/interactive/theme/theme.ts";
 import { InteractiveThemeController } from "../../modes/interactive/theme/theme-controller.ts";
-import { agentOf, type DurableController, type DurableView, type DurableViewSource } from "./runtime.ts";
+import {
+	agentOf,
+	type DurableAuthView,
+	type DurableController,
+	type DurableView,
+	type DurableViewSource,
+} from "./runtime.ts";
+import { lastCacheHitRate } from "./usage.ts";
 
 const SELECT_THEME: SelectListTheme = {
 	selectedPrefix: (text) => theme.fg("accent", text),
@@ -147,6 +160,8 @@ interface Handlers {
 	abort(): void;
 	exit(): void;
 	selectModel(): void;
+	replyAuth(requestId: string, answer: string | null): void;
+	cancelLogin(): void;
 	cycleThinking(): void;
 }
 
@@ -163,6 +178,8 @@ class DurableTui {
 	readonly #editorContainer = new Container();
 	readonly #editor: CustomEditor;
 	readonly #cwd: string;
+	readonly #settings: SettingsManager;
+	readonly #handlers: Handlers;
 	/** The newest card per call ID; provider call IDs may repeat across turns. */
 	readonly #tools = new Map<string, ToolExecutionComponent>();
 	/** Every card shown, also older ones whose call ID a later turn reused. */
@@ -179,9 +196,15 @@ class DurableTui {
 	/** Set when the transcript was rebuilt: the next render repaints the screen and shows the end. */
 	#rebuilt = false;
 	#transcript: ScrollView;
+	#authDialog: LoginDialogComponent | undefined;
+	#authKey = "";
+	#authNoticeCount = 0;
+	#authPromptId: string | undefined;
 
-	constructor(cwd: string, handlers: Handlers) {
+	constructor(cwd: string, handlers: Handlers, settings: SettingsManager) {
 		this.#cwd = cwd;
+		this.#handlers = handlers;
+		this.#settings = settings;
 		this.#ui = new TuiAltScreen(new ProcessTerminal(), false, getAgentDir());
 		const keybindings = KeybindingsManager.create();
 		setKeybindings(keybindings);
@@ -305,6 +328,7 @@ class DurableTui {
 		this.#editor.borderColor = theme.getThinkingBorderColor(agentOf(view.conversation).thinkingLevel ?? "off");
 		this.#syncStatus(live);
 		this.#syncFooter(view);
+		this.#syncAuth(view.auth);
 		if (this.#rebuilt) this.#transcript.scrollToEnd();
 		this.#ui.requestRender(this.#rebuilt);
 		this.#rebuilt = false;
@@ -381,6 +405,10 @@ class DurableTui {
 		if (usage.output) stats.push(`↓${formatTokens(usage.output)}`);
 		if (usage.cacheRead) stats.push(`R${formatTokens(usage.cacheRead)}`);
 		if (usage.cacheWrite) stats.push(`W${formatTokens(usage.cacheWrite)}`);
+		const cacheHitRate = lastCacheHitRate(view.conversation.entries);
+		if (cacheHitRate !== undefined && (usage.cacheRead > 0 || usage.cacheWrite > 0)) {
+			stats.push(`CH${cacheHitRate.toFixed(1)}%`);
+		}
 		stats.push(`$${usage.cost.total.toFixed(3)}`);
 		const contextWindow =
 			view.models.find((model) => model.provider === agent.model?.provider && model.modelId === agent.model.modelId)
@@ -388,8 +416,15 @@ class DurableTui {
 		if (contextWindow > 0) {
 			const tokens = contextTokens(view.conversation.entries);
 			const percent = tokens === undefined ? undefined : (tokens / contextWindow) * 100;
-			const text = `${percent === undefined ? "?" : percent.toFixed(1)}%/${formatTokens(contextWindow)}`;
-			stats.push(percent !== undefined && percent > 90 ? theme.fg("error", text) : text);
+			const automatic = this.#settings.getCompactionSettings().enabled ? " (auto)" : "";
+			const text = `${percent === undefined ? "?" : percent.toFixed(1)}%/${formatTokens(contextWindow)}${automatic}`;
+			stats.push(
+				percent !== undefined && percent > 90
+					? theme.fg("error", text)
+					: percent !== undefined && percent > 70
+						? theme.fg("warning", text)
+						: text,
+			);
 		}
 		this.#footerStats.setText(theme.fg("dim", `${stats.join(" ")}  ${view.session.cwd}`));
 		const model = agent.model === undefined ? "no model" : `${agent.model.provider}/${agent.model.modelId}`;
@@ -398,8 +433,70 @@ class DurableTui {
 		this.#footerHints.setText(
 			`${theme.fg(label === "main" ? "dim" : "accent", label)}${theme.fg(
 				"dim",
-				` · ${model} · thinking:${agent.thinkingLevel ?? "off"} (${keyText("app.thinking.cycle")}) · ${keyText("app.model.select")} or /model · /agents · /compact · /tasks · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
+				` · ${model} · thinking:${agent.thinkingLevel ?? "off"} (${keyText("app.thinking.cycle")}) · ${keyText("app.model.select")} or /model · /login · /agents · /compact · /tasks · ${keyText("app.message.followUp")} follow-up · ${keyText("app.clear")} exit`,
 			)}`,
+		);
+	}
+
+	#syncAuth(auth: DurableAuthView | undefined): void {
+		if (auth === undefined) {
+			if (this.#authDialog !== undefined) this.restoreEditor();
+			this.#authDialog = undefined;
+			this.#authKey = "";
+			this.#authNoticeCount = 0;
+			this.#authPromptId = undefined;
+			return;
+		}
+		const key = `${auth.providerId}/${auth.authType}`;
+		if (this.#authDialog === undefined || this.#authKey !== key) {
+			this.#authKey = key;
+			this.#authNoticeCount = 0;
+			this.#authPromptId = undefined;
+			this.#authDialog = new LoginDialogComponent(
+				this.#ui,
+				auth.providerId,
+				() => this.#handlers.cancelLogin(),
+				auth.providerName,
+			);
+			this.mount(this.#authDialog);
+		}
+		for (const notice of auth.notices.slice(this.#authNoticeCount)) showAuthNotice(this.#authDialog, notice);
+		this.#authNoticeCount = auth.notices.length;
+		if (auth.prompt === undefined) {
+			if (this.#authPromptId !== undefined) {
+				this.#authPromptId = undefined;
+				if (this.#authDialog !== undefined) this.mount(this.#authDialog);
+			}
+			return;
+		}
+		if (auth.prompt.id === this.#authPromptId) return;
+		this.#authPromptId = auth.prompt.id;
+		const { id, request } = auth.prompt;
+		const dialog = this.#authDialog;
+		if (dialog === undefined) return;
+		if (request.type === "select") {
+			const selector = new ExtensionSelectorComponent(
+				request.message,
+				request.options.map((option) => option.label),
+				(label) => {
+					this.mount(dialog);
+					this.#handlers.replyAuth(id, request.options.find((option) => option.label === label)?.id ?? null);
+				},
+				() => {
+					this.mount(dialog);
+					this.#handlers.replyAuth(id, null);
+				},
+			);
+			this.mount(selector);
+			return;
+		}
+		const answer: Promise<string | null> =
+			request.type === "manual_code"
+				? dialog.showManualInput(request.message)
+				: dialog.showPrompt(request.message, request.placeholder);
+		void answer.then(
+			(value) => this.#handlers.replyAuth(id, value),
+			() => this.#handlers.replyAuth(id, null),
 		);
 	}
 
@@ -506,6 +603,25 @@ class DurableTui {
 	}
 }
 
+function authProviders(accounts: DurableView["loginProviders"]): AuthSelectorProvider[] {
+	return accounts.map((account) => ({
+		id: account.id,
+		name: account.name,
+		authType: account.authType,
+		...(account.status === undefined ? {} : { status: account.status }),
+		...(account.subscription === undefined ? {} : { subscription: account.subscription }),
+	}));
+}
+
+function showAuthNotice(dialog: LoginDialogComponent, notice: AuthEvent): void {
+	if (notice.type === "auth_url") dialog.showAuth(notice.url, notice.instructions);
+	else if (notice.type === "device_code") {
+		dialog.showDeviceCode(notice);
+		dialog.showWaiting("Waiting for authentication...");
+	} else if (notice.type === "info") dialog.showInfo(notice.message, notice.links);
+	else dialog.showProgress(notice.message);
+}
+
 function describeTask(node: TaskGraphNode): string {
 	const state = node.state;
 	const status =
@@ -598,6 +714,18 @@ export async function runDurableTui(
 		);
 		view.mount(selector);
 	};
+	const login = (): void => {
+		const selector = new OAuthSelectorComponent(
+			"login",
+			authProviders(source.current().loginProviders),
+			(providerId, authType) => {
+				view.restoreEditor();
+				void controller.login(providerId, authType);
+			},
+			() => view.restoreEditor(),
+		);
+		view.mount(selector);
+	};
 
 	const selectConversation = (): void => {
 		const snapshot = source.current();
@@ -618,25 +746,32 @@ export async function runDurableTui(
 		view.mount(selector);
 	};
 
-	view = new DurableTui(source.current().session.cwd, {
-		submit: (text) => {
-			const trimmed = text.trim();
-			if (!trimmed) return;
-			if (trimmed === "/model") return selectModel();
-			if (trimmed === "/tasks") return void controller.toggleTasks();
-			if (trimmed === "/agents") return selectConversation();
-			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
-				const instructions = trimmed.slice("/compact".length).trim();
-				return void controller.compact(instructions || undefined);
-			}
-			void controller.submit(trimmed, "steer");
+	view = new DurableTui(
+		source.current().session.cwd,
+		{
+			submit: (text) => {
+				const trimmed = text.trim();
+				if (!trimmed) return;
+				if (trimmed === "/model") return selectModel();
+				if (trimmed === "/login") return login();
+				if (trimmed === "/tasks") return void controller.toggleTasks();
+				if (trimmed === "/agents") return selectConversation();
+				if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
+					const instructions = trimmed.slice("/compact".length).trim();
+					return void controller.compact(instructions || undefined);
+				}
+				void controller.submit(trimmed, "steer");
+			},
+			followUp: (text) => void controller.submit(text, "followUp"),
+			abort: () => void controller.abort(),
+			exit,
+			selectModel,
+			replyAuth: (requestId, answer) => void controller.replyAuth(requestId, answer),
+			cancelLogin: () => void controller.cancelLogin(),
+			cycleThinking: () => void controller.cycleThinking(),
 		},
-		followUp: (text) => void controller.submit(text, "followUp"),
-		abort: () => void controller.abort(),
-		exit,
-		selectModel,
-		cycleThinking: () => void controller.cycleThinking(),
-	});
+		settings,
+	);
 
 	// pi's theme handling: the theme setting (also light/dark pairs) resolved against the terminal's reported colors.
 	const themes = new InteractiveThemeController(view.ui, {

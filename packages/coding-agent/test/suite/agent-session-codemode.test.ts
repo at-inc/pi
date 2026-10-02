@@ -1,5 +1,5 @@
 import { readFileSync, rmSync } from "node:fs";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@at-inc/pi-agent-core";
 import {
 	type AssistantImages,
 	type ClassifierModel,
@@ -11,8 +11,8 @@ import {
 	type ImageModel,
 	type ImagesContext,
 	type TranscriptContext,
-} from "@earendil-works/pi-ai";
-import type { ToolResultMessage, Usage } from "@earendil-works/pi-ai/compat";
+} from "@at-inc/pi-ai";
+import type { ToolResultMessage, Usage } from "@at-inc/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";

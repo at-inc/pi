@@ -3,7 +3,8 @@
  * Provider auth orchestration belongs to ModelRuntime and pi-ai Models.
  */
 
-import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import { isDeepStrictEqual } from "node:util";
+import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@at-inc/pi-ai";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -337,10 +338,7 @@ export class AuthStorage implements CredentialStore {
 		if (authPath && !sharedAuthFileReadState) {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}
-		if (authPath) {
-			const revision = getFileRevision(authPath);
-			if (revision !== undefined && revision === this.readState.revision) return;
-		}
+		if (this.isFileSnapshotCurrent()) return;
 		this.reload();
 	}
 
@@ -369,6 +367,17 @@ export class AuthStorage implements CredentialStore {
 	private updateReadState(data: AuthStorageData, revision?: string): void {
 		this.readState.data = data;
 		this.readState.revision = revision;
+	}
+
+	private isFileSnapshotCurrent(): boolean {
+		if (!this.authPath) return false;
+		const revision = getFileRevision(this.authPath);
+		if (revision === undefined || revision !== this.readState.revision) return false;
+		try {
+			return isDeepStrictEqual(this.parseStorageData(readFileSync(this.authPath, "utf-8")), this.readState.data);
+		} catch {
+			return false;
+		}
 	}
 
 	/**
@@ -404,8 +413,7 @@ export class AuthStorage implements CredentialStore {
 			const reload = this.reloadFromStorageAsync(options);
 			return options?.signal ? reload : reload.catch(() => this.readState.data);
 		}
-		const revision = getFileRevision(this.authPath);
-		if (revision !== undefined && revision === this.readState.revision) return this.readState.data;
+		if (this.isFileSnapshotCurrent()) return this.readState.data;
 		if (!this.readState.reload) {
 			const controller = new AbortController();
 			const reload: AuthFileReload = {

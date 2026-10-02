@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "@at-inc/pi-ai";
 import {
 	AssistantEntry,
 	type ConversationId,

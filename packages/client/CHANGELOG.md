@@ -12,12 +12,33 @@
 
 ## [0.87.1] - 2026-09-22
 
+## [0.87.0-rev.2] - 2026-09-22
+
+## [0.87.0-rev.1] - 2026-09-22
+
 ## [0.87.0] - 2026-09-21
+
+## [0.86.1-rev.1] - 2026-09-20
 
 ## [0.86.1] - 2026-09-20
 
 ## [0.86.0] - 2026-09-19
 
+## [0.85.7] - 2026-09-18
+
+## [0.85.6] - 2026-09-18
+
+## [0.85.5] - 2026-09-05
+
+### Breaking Changes
+
+- Reworked the client around transport-neutral sessions and durable snapshots; runtime state is now acquired through session handles instead of the previous session summary API.
+
+### Added
+
+- Added multi-session client and session-handle support with structured server errors.
+
+## [0.85.4] - 2026-09-02
 ## [0.85.1] - 2026-09-05
 
 ## [0.85.0] - 2026-09-04

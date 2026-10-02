@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { workspaceSourcePaths } from "../../vitest.base.ts";
 
 const telemetrySrcIndex = fileURLToPath(new URL("../telemetry/src/index.ts", import.meta.url));
 const aiSrcIndex = fileURLToPath(new URL("../ai/src/index.ts", import.meta.url));
@@ -17,10 +18,17 @@ export default defineConfig({
 	resolve: {
 		conditions: ["source"],
 		alias: [
+			{ find: /^@earendil-works\/chord$/, replacement: workspaceSourcePaths.chordIndex },
+			{ find: /^@earendil-works\/chord\/context$/, replacement: workspaceSourcePaths.chordContext },
+			{ find: /^@earendil-works\/chord\/delta$/, replacement: workspaceSourcePaths.chordDelta },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex },
-			{ find: /^@earendil-works\/pi-agent-core$/, replacement: agentSrcIndex },
-			{ find: /^@earendil-works\/pi-ai$/, replacement: aiSrcIndex },
-			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{ find: /^@at-inc\/pi-agent-core$/, replacement: agentSrcIndex },
+			{ find: /^@at-inc\/pi-ai$/, replacement: aiSrcIndex },
+			{ find: /^@at-inc\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{
+				find: /^@at-inc\/pi-ai\/utils\/uuid$/,
+				replacement: fileURLToPath(new URL("../ai/src/utils/uuid.ts", import.meta.url)),
+			},
 		],
 	},
 	ssr: { resolve: { conditions: ["source"] } },

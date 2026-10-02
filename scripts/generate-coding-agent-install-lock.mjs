@@ -11,9 +11,8 @@ const outputDir = join(codingAgentDir, "install-lock");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
-const internalPackagePrefix = "@earendil-works/pi-";
-const internalPackageNames = new Set(["@earendil-works/chord"]);
-const installPackageName = "@earendil-works/pi-coding-agent-install";
+const internalPackagePrefixes = ["@at-inc/pi-", "@earendil-works/pi-"];
+const installPackageName = "@at-inc/pi-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
 	["esbuild@0.28.2", "postinstall selects and verifies the platform-specific esbuild binary"],
@@ -131,7 +130,12 @@ function packageNameFromLockPath(lockPath) {
 
 function registryTarballUrl(packageName, version) {
 	const tarballName = packageName.startsWith("@") ? packageName.split("/")[1] : packageName;
-	return `https://registry.npmjs.org/${packageName}/-/${tarballName}-${version}.tgz`;
+	const registry = packageName.startsWith("@at-inc/") ? "https://npm.pkg.github.com" : "https://registry.npmjs.org";
+	return `${registry}/${packageName}/-/${tarballName}-${version}.tgz`;
+}
+
+function isInternalPackageName(name) {
+	return name === "@at-inc/pi" || internalPackagePrefixes.some((prefix) => name.startsWith(prefix));
 }
 
 function isExactVersionSpec(spec) {
@@ -145,7 +149,7 @@ function getInternalWorkspaces(lockPackages) {
 		if (!lockPath.startsWith("packages/") || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}
-		if (!entry.name.startsWith(internalPackagePrefix) && !internalPackageNames.has(entry.name)) {
+		if (!isInternalPackageName(entry.name) && entry.name !== "@earendil-works/chord") {
 			continue;
 		}
 
@@ -310,11 +314,7 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalNames
 		if (entry.dev || entry.devOptional || entry.extraneous) {
 			errors.push(`${lockPath || "root"} contains dev/extraneous metadata`);
 		}
-		if (
-			packageName !== undefined &&
-			(packageName.startsWith(internalPackagePrefix) || internalPackageNames.has(packageName)) &&
-			entry.version !== installerPackageJson.version
-		) {
+		if (packageName && isInternalPackageName(packageName) && entry.version !== installerPackageJson.version) {
 			errors.push(`${lockPath} internal package version ${entry.version} does not match ${installerPackageJson.version}`);
 		}
 		if (entry.hasInstallScript) {

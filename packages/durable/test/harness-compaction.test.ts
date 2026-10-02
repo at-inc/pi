@@ -10,7 +10,7 @@ import {
 	type TranscriptContext,
 	Type,
 	type UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
 import {
 	type AgentEvent,
 	type CompactionPolicy,

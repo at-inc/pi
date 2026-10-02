@@ -75,6 +75,7 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(credentials.access).toBe("access-token");
 		expect(credentials.refresh).toBe("refresh-token");
 		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(new URL(authUrl).searchParams.get("prompt")).toBe("login");
 	});
 
 	it("offers browser login first and uses the selected Anthropic copy code flow", async () => {

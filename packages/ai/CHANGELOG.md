@@ -20,8 +20,25 @@
 
 ### Added
 
+- Added GPT-6 Sol, GPT-6 Luna, and GPT-6.1 Sol to the fork model catalog.
+- Added a copy-code sign-in method for Anthropic OAuth.
+
+### Changed
+
+- Updated provider Fast mode capabilities in the published model catalog.
+
+## [0.99.2] - 2026-09-30
+
+### Added
+
 - Added the lightweight `@earendil-works/pi-ai/models` entry point for model collections and provider construction without loading TypeBox, built-in catalogs, or provider SDKs.
 - Added Anthropic workload identity federation from the Anthropic SDK environment variables `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and `ANTHROPIC_IDENTITY_TOKEN_FILE` (plus optional `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`). API keys and `ANTHROPIC_AUTH_TOKEN` take precedence ([#10177](https://github.com/earendil-works/pi/issues/10177), [#10242](https://github.com/earendil-works/pi/pull/10242) by [@philfreo](https://github.com/philfreo))
+
+- Added OpenAI and OpenAI Codex GPT-6 Sol and GPT-6 Luna model metadata (`gpt-6-sol`, `gpt-6-luna`) until models.dev includes them.
+
+### Changed
+
+- Changed OpenAI Codex image generation to use GPT-6 Luna as the driver model.
 
 ### Fixed
 
@@ -94,6 +111,25 @@
 - Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
 - Fixed Anthropic OAuth requests reporting an outdated Claude Code version.
 
+## [0.87.0-rev.2] - 2026-09-22
+
+### Added
+
+- Added Claude Opus 5.5 to the built-in Anthropic model catalog with adaptive thinking, 1M context, and official pricing metadata.
+- Added Grok 4.7 to the built-in xAI model catalog with long-context pricing metadata.
+
+### Fixed
+
+- Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
+- Fixed Claude Opus 5.5 catalog metadata advertising unsupported `off` and `minimal` thinking levels when the model comes from models.dev.
+
+## [0.87.0-rev.1] - 2026-09-22
+
+### Fixed
+
+- Fixed Anthropic OAuth requests identifying as Claude Code 2.1.280 so newly gated Claude models work.
+
+
 ## [0.87.0] - 2026-09-21
 
 ### Added
@@ -103,6 +139,12 @@
 ### Fixed
 
 - Fixed unknown OpenAI-compatible Chat Completions endpoints receiving strict tool schemas unless they explicitly advertise support, while preserving strict tools for capable built-in models ([#9816](https://github.com/earendil-works/pi/issues/9816)).
+
+## [0.86.1-rev.1] - 2026-09-20
+
+### Fixed
+
+- Preserved provider error metadata under the JSON-compatible diagnostic types, including failures with non-serializable payloads.
 
 ## [0.86.1] - 2026-09-20
 
@@ -156,6 +198,77 @@
 
 - Removed GPT-5.4 and GPT-5.4 mini from the OpenAI Codex catalog after they became unavailable to ChatGPT accounts ([#9394](https://github.com/earendil-works/pi/issues/9394)).
 
+## [0.85.7] - 2026-09-18
+
+### Fixed
+
+- Preserved HTTP status, response headers, and provider error payloads in diagnostics for Anthropic, OpenAI Chat Completions, Responses, and Codex errors.
+- Preserved Responses text identity and phase from the start of streaming, including interrupted responses.
+
+## [0.85.6] - 2026-09-18
+
+### Added
+
+- Enabled native deferred tool loading for Fireworks Messages models. Use `ToolSearch` or `tool_search` as the loader name for prompt-prefix deferral ([#9323](https://github.com/earendil-works/pi/issues/9323)).
+
+### Fixed
+
+- Bundled the matching telemetry module in GitHub Packages releases so installation does not depend on an unpublished upstream version.
+- Fixed Kimi Code international accounts using mainland endpoints. Login now selects and stores the account region for OAuth refresh and model requests; API-key connections also support `KIMI_CODE_BASE_URL`.
+- Fixed Vercel AI Gateway replaying unsigned thinking as assistant text ([#9676](https://github.com/earendil-works/pi/issues/9676)).
+- Fixed Google Generative AI and Vertex AI using unsupported thinking levels when reasoning is omitted or when model capabilities differ within a Gemini family ([#9455](https://github.com/earendil-works/pi/issues/9455)).
+- Fixed Anthropic-compatible relays breaking signed thinking replay when they report a different response model, while preserving fallback pricing ([#9188](https://github.com/earendil-works/pi/issues/9188)).
+- Fixed Amazon Bedrock one-hour cache writes being priced at the five-minute rate ([#9457](https://github.com/earendil-works/pi/issues/9457)).
+- Added `RetryPolicy.maxAgentDelayMs` support to cap shared assistant retry backoff for summarization calls ([#8826](https://github.com/earendil-works/pi/issues/8826)).
+- Fixed quadratic CPU usage when draining buffered `EventStream` events ([#9055](https://github.com/earendil-works/pi/issues/9055)).
+- Fixed Mistral Medium reasoning requests to use `reasoning_effort` for all reasoning-capable `mistral-medium-*` model IDs instead of the unsupported `prompt_mode` ([#8700](https://github.com/earendil-works/pi/issues/8700)).
+- Fixed OpenCode and OpenCode Go requests to send `x-opencode-session` from `sessionId` across all supported API adapters ([#9326](https://github.com/earendil-works/pi/issues/9326)).
+- Fixed OpenAI Codex requests to send the model's Off reasoning effort instead of omitting it, while respecting unsupported Off mappings ([#9191](https://github.com/earendil-works/pi/issues/9191)).
+- Fixed Fireworks unsigned thinking replay and reasoning effort selection using catalog metadata, with verified DeepSeek V4 and Qwen3.8 fallbacks and removal of redundant GLM 5.2 and Kimi K3 effort aliases ([#9323](https://github.com/earendil-works/pi/issues/9323)).
+- Fixed OpenRouter requests to send `x-session-id` from `sessionId` for Chat Completions and Anthropic Messages models when prompt caching is enabled ([#9102](https://github.com/earendil-works/pi/issues/9102)).
+- Fixed the DeepSeek catalog to advertise `deepseek-flash` for DeepSeek V4.1 Flash instead of retired Flash aliases, and refreshed DeepSeek pricing metadata ([#9423](https://github.com/earendil-works/pi/issues/9423)).
+- Removed GPT-5.4 and GPT-5.4 mini from the OpenAI Codex catalog after they became unavailable to ChatGPT accounts ([#9394](https://github.com/earendil-works/pi/issues/9394)).
+- Fixed Mistral-hosted GLM-5.2 reasoning requests to use `reasoning_effort` instead of the ignored `prompt_mode` ([#9375](https://github.com/earendil-works/pi/issues/9375)).
+- Fixed OpenAI-compatible Responses errors to identify the actual provider instead of always labeling them as OpenAI errors ([#9298](https://github.com/earendil-works/pi/issues/9298)).
+- Fixed Baseten requests to send session-affinity headers from `sessionId` for automatic prompt-cache routing ([#9629](https://github.com/earendil-works/pi/issues/9629)).
+- Fixed retry classification for Cloudflare 520 responses ([#9627](https://github.com/earendil-works/pi/issues/9627)).
+- Fixed retry classification for transient Azure peak-load capacity errors ([#9669](https://github.com/earendil-works/pi/issues/9669)).
+- Switched the ChatGPT image generation driver from `gpt-5.4-mini`, which ChatGPT no longer accepts for Codex accounts, to `gpt-5.6-luna`.
+
+## [0.85.5] - 2026-09-05
+
+### Added
+
+- Added OpenAI Codex GPT-6 Astra model metadata (`gpt-6-astra`).
+- Added compact assistant-message frames and persistent Anthropic per-turn thinking effort.
+
+### Changed
+
+- Replaced the Cloudflare AI Gateway binding shim with a direct AI binding fetch.
+
+### Fixed
+
+- Improved provider stream compatibility, OpenAI Codex SSE terminal-event handling, and model metadata for Qwen, Fireworks, Baseten, GitHub Copilot, and OpenRouter.
+- Removed the unnecessary Chord dependency from the AI package.
+- Fixed long prompt-cache requests for GPT-5.6+ Responses models to use `prompt_cache_options.ttl: "30m"` instead of `prompt_cache_retention: "24h"`.
+
+## [0.85.4] - 2026-09-02
+
+### Breaking Changes
+
+- Renamed the package to `@at-inc/pi-ai` and moved publication to GitHub Packages.
+
+### Added
+
+- Added ChatGPT OAuth image generation through the OpenAI Codex provider.
+
+### Fixed
+
+- Forced Anthropic OAuth to re-authenticate (`prompt=login`) so an existing claude.ai browser session cannot silently complete login as the wrong account.
+- Hardened ChatGPT image stream handling for incomplete, malformed, and failed responses.
+- Surfaced ChatGPT assistant text as the image generation error message when Codex fails without producing an image.
+- Fixed Anthropic OAuth requests identifying as Claude Code 2.1.258 so newly gated Claude models work.
+
 ## [0.85.1] - 2026-09-05
 
 ### Added
@@ -180,7 +293,6 @@
 - Added an optional timestamp argument to `uuidv7()` for follower IDs.
 - Added narrow `api`, `providers`, and `utils` subpath exports for direct imports without loading the package barrel.
 - Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
-- Added Meta provider (Model API key and Muse subscription OAuth) with Muse Spark models.
 
 ### Fixed
 
@@ -194,7 +306,6 @@
 - Fixed GitHub Copilot Claude Fable 5 requests to use the Anthropic Messages adapter so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
 - Fixed OpenAI Codex SSE parsing to process terminal events that are not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
 - Fixed `NO_PROXY` matching for both root domains and subdomains ([#8737](https://github.com/earendil-works/pi/pull/8737) by [@MeiSiristhebest](https://github.com/MeiSiristhebest)).
-
 ## [0.84.4] - 2026-08-28
 
 ### Added

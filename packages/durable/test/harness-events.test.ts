@@ -1,4 +1,3 @@
-import type { Draft } from "@earendil-works/chord";
 import {
 	type AssistantMessage,
 	type FauxResponseStep,
@@ -7,7 +6,8 @@ import {
 	fauxThinking,
 	fauxToolCall,
 	Type,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
+import type { Draft } from "@earendil-works/chord";
 import {
 	AgentDoc,
 	type AgentEvent,

@@ -1,4 +1,4 @@
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "@at-inc/pi-agent-core";
 import {
 	Box,
 	type Component,

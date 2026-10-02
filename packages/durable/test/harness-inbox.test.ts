@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Op } from "@earendil-works/chord/delta";
 import {
 	type AssistantMessage,
 	type FauxResponseStep,
@@ -11,7 +10,8 @@ import {
 	type ToolResultMessage,
 	Type,
 	type Usage,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
+import type { Op } from "@earendil-works/chord/delta";
 import {
 	type Conversation,
 	defineDoc,

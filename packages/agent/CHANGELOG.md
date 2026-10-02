@@ -21,6 +21,10 @@
 
 ## [0.87.1] - 2026-09-22
 
+## [0.87.0-rev.2] - 2026-09-22
+
+## [0.87.0-rev.1] - 2026-09-22
+
 ## [0.87.0] - 2026-09-21
 
 ### Breaking Changes
@@ -51,10 +55,48 @@
 
 - Fixed harness reads misclassifying text files beginning with `GIF` as images ([#9755](https://github.com/earendil-works/pi/issues/9755)).
 
+## [0.86.1-rev.1] - 2026-09-20
+
+### Fixed
+
+- Fixed compaction retaining the entire transcript when trailing tool results alone exceed the recent-token budget; retain their preceding tool call instead ([#9740](https://github.com/earendil-works/pi/issues/9740)).
+
 ## [0.86.1] - 2026-09-20
 
 ## [0.86.0] - 2026-09-19
 
+## [0.85.7] - 2026-09-18
+
+## [0.85.6] - 2026-09-18
+
+### Added
+
+- Added mid-conversation system messages and streaming legacy JSONL session migration and forks.
+
+### Fixed
+
+- Capped agent retry backoff and corrected fork lane validation and sequence handling.
+- Bundled matching Chord and telemetry modules in GitHub Packages releases so installation does not depend on unpublished upstream versions.
+
+## [0.85.5] - 2026-09-05
+
+### Breaking Changes
+
+- Reworked the agent harness and session APIs around storage-backed runtimes, named branches, and durable run state. Consumers using the previous reducer and session contracts must migrate.
+
+### Added
+
+- Added durable session repositories, in-memory session restoration, runtime lanes, fork policies, and structured tool execution primitives.
+
+### Fixed
+
+- Improved compaction, branch recovery, tool-settlement, shell-output limits, cancellation, and proxy-stream error handling.
+
+## [0.85.4] - 2026-09-02
+
+### Breaking Changes
+
+- Renamed the package to `@at-inc/pi-agent-core` and moved publication to GitHub Packages.
 ## [0.85.1] - 2026-09-05
 
 ## [0.85.0] - 2026-09-04
@@ -63,7 +105,6 @@
 
 - Fixed proxied assistant responses dropping persisted provider-native thinking levels.
 - Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
-
 ## [0.84.4] - 2026-08-28
 
 ### Breaking Changes

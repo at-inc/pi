@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { JsonValue } from "@earendil-works/chord";
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
@@ -9,7 +8,8 @@ import {
 	fauxToolCall,
 	type ToolResultMessage,
 	Type,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
+import type { JsonValue } from "@earendil-works/chord";
 import {
 	defineTool,
 	type EntryRecord,

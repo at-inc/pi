@@ -1,5 +1,5 @@
+import { type AssistantMessage, Type } from "@at-inc/pi-ai";
 import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, Type } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
 	configure,

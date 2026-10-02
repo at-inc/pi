@@ -1,6 +1,6 @@
+import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@at-inc/pi-ai";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	type AgentState,
 	type Conversation,

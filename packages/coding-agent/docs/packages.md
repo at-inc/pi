@@ -79,9 +79,9 @@ Put runtime packages imported by extensions in `dependencies`. Pi installs packa
 
 Pi supplies these packages to extensions and skills:
 
-- `@earendil-works/pi-ai`
-- `@earendil-works/pi-agent-core`
-- `@earendil-works/pi-coding-agent`
+- `@at-inc/pi-ai`
+- `@at-inc/pi-agent-core`
+- `@at-inc/pi`
 - `@earendil-works/pi-tui`
 - `typebox`
 

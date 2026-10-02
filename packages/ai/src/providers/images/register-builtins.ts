@@ -1,3 +1,4 @@
+import type { generateImages as generateImagesOpenAICodexFunction } from "../../api/openai-codex-images.ts";
 import type { generateImages as generateImagesOpenRouterFunction } from "../../api/openrouter-images.ts";
 import { registerImagesApiProvider } from "../../images-api-registry.ts";
 import type {
@@ -9,10 +10,15 @@ import type {
 	ImagesOptions,
 } from "../../types.ts";
 
+interface OpenAICodexImagesProviderModule {
+	generateImages: typeof generateImagesOpenAICodexFunction;
+}
+
 interface OpenRouterImagesProviderModule {
 	generateImages: typeof generateImagesOpenRouterFunction;
 }
 
+let openAICodexImagesProviderModulePromise: Promise<OpenAICodexImagesProviderModule> | undefined;
 let openRouterImagesProviderModulePromise: Promise<OpenRouterImagesProviderModule> | undefined;
 
 function createLazyLoadErrorImages(model: ImageModel<ImageApi>, error: unknown): AssistantImages {
@@ -34,6 +40,26 @@ function loadOpenRouterImagesProviderModule(): Promise<OpenRouterImagesProviderM
 	return openRouterImagesProviderModulePromise;
 }
 
+function loadOpenAICodexImagesProviderModule(): Promise<OpenAICodexImagesProviderModule> {
+	openAICodexImagesProviderModulePromise ||= import("../../api/openai-codex-images.ts").then(
+		(module) => module as OpenAICodexImagesProviderModule,
+	);
+	return openAICodexImagesProviderModulePromise;
+}
+
+export const generateImagesOpenAICodex: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
+	context: ImagesContext,
+	options?: ImagesOptions,
+) => {
+	try {
+		const module = await loadOpenAICodexImagesProviderModule();
+		return await module.generateImages(model, context, options);
+	} catch (error) {
+		return createLazyLoadErrorImages(model, error);
+	}
+};
+
 export const generateImagesOpenRouter: ImagesFunction<ImagesOptions> = async (
 	model: ImageModel<ImageApi>,
 	context: ImagesContext,
@@ -48,6 +74,10 @@ export const generateImagesOpenRouter: ImagesFunction<ImagesOptions> = async (
 };
 
 export function registerBuiltInImagesApiProviders(): void {
+	registerImagesApiProvider({
+		api: "openai-codex-images",
+		generateImages: generateImagesOpenAICodex,
+	});
 	registerImagesApiProvider({
 		api: "openrouter-images",
 		generateImages: generateImagesOpenRouter,

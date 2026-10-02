@@ -3,8 +3,9 @@
  * the names the spec leaves to the application declared below. Keep the two in sync; `test/examples/` runs the same
  * patterns end to end.
  */
+
+import { type AssistantMessage, type Models, type ToolCall, Type } from "@at-inc/pi-ai";
 import type { Context, Draft } from "@earendil-works/chord";
-import { type AssistantMessage, type Models, type ToolCall, Type } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
 	configure,

@@ -9,8 +9,7 @@ const repoRoot = resolve(scriptDir, "..");
 const codingAgentDir = join(repoRoot, "packages/coding-agent");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
-const internalPackagePrefix = "@earendil-works/pi-";
-const internalPackageNames = new Set(["@earendil-works/chord"]);
+const internalPackagePrefixes = ["@at-inc/pi-", "@earendil-works/pi-"];
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
 	["esbuild@0.28.2", "postinstall selects and verifies the platform-specific esbuild binary"],
@@ -128,7 +127,12 @@ function packageNameFromLockPath(lockPath) {
 
 function registryTarballUrl(packageName, version) {
 	const tarballName = packageName.startsWith("@") ? packageName.split("/")[1] : packageName;
-	return `https://registry.npmjs.org/${packageName}/-/${tarballName}-${version}.tgz`;
+	const registry = packageName.startsWith("@at-inc/") ? "https://npm.pkg.github.com" : "https://registry.npmjs.org";
+	return `${registry}/${packageName}/-/${tarballName}-${version}.tgz`;
+}
+
+function isInternalPackageName(name) {
+	return name === "@at-inc/pi" || internalPackagePrefixes.some((prefix) => name.startsWith(prefix));
 }
 
 function getInternalWorkspaces(lockPackages) {
@@ -138,7 +142,7 @@ function getInternalWorkspaces(lockPackages) {
 		if (!lockPath.startsWith("packages/") || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}
-		if (!entry.name.startsWith(internalPackagePrefix) && !internalPackageNames.has(entry.name)) {
+		if (!isInternalPackageName(entry.name) && entry.name !== "@earendil-works/chord") {
 			continue;
 		}
 

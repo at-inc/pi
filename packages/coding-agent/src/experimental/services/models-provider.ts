@@ -1,6 +1,6 @@
+import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@at-inc/pi-ai";
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
 	type AgentState,

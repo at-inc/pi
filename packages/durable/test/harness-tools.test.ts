@@ -1,7 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { JsonValue } from "@earendil-works/chord";
 import {
 	type AssistantMessage,
 	type FauxResponseStep,
@@ -11,7 +10,8 @@ import {
 	type SystemMessage,
 	type ToolResultMessage,
 	Type,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
+import type { JsonValue } from "@earendil-works/chord";
 import {
 	AgentDoc,
 	type Conversation,

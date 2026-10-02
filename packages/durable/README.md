@@ -4,7 +4,7 @@
 
 A durable agent harness. Conversations, model turns, tool calls, and your own state are committed to storage before anything is shown. If the process dies mid-turn, reopening the storage picks the work up where it stopped.
 
-Built on [`@earendil-works/pi-ai`](../ai/README.md) for model access and `@earendil-works/chord` for document state.
+Built on [`@at-inc/pi-ai`](../ai/README.md) for model access and `@earendil-works/chord` for document state.
 
 ## Table of Contents
 
@@ -38,15 +38,15 @@ Built on [`@earendil-works/pi-ai`](../ai/README.md) for model access and `@earen
 ## Installation
 
 ```bash
-npm install @earendil-works/pi-durable @earendil-works/pi-ai @earendil-works/chord
+npm install @earendil-works/pi-durable @at-inc/pi-ai @earendil-works/chord
 ```
 
 ## Quick Start
 
 ```typescript
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@earendil-works/pi-ai/models";
-import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { createModels } from "@at-inc/pi-ai/models";
+import { openaiProvider } from "@at-inc/pi-ai/providers/openai";
 import { AssistantEntry, createRegistry, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 
 const context = BACKGROUND_CONTEXT;
@@ -149,7 +149,7 @@ An extension may bring `tools`, `sections`, `hooks`, `wraps` (decorators of a to
 Define your own tool with a TypeBox schema. `defineTool()` types `args` from `parameters`, which the Harness validates before `execute()`. `api.output()` streams running output, which becomes the result when `execute()` returns no `content`:
 
 ```typescript
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "@at-inc/pi-ai";
 
 const count = defineTool({
 	name: "count",

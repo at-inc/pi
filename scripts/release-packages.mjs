@@ -9,5 +9,9 @@ export function getPublicWorkspacePackages() {
 			...JSON.parse(readFileSync(join(directory, "package.json"), "utf8")),
 		}))
 		.filter((pkg) => pkg.private !== true)
-		.map(({ directory, name, version }) => ({ directory, name, version }));
+		.map(({ directory, name, version, publishConfig }) => ({ directory, name, version, publishConfig }));
+}
+
+export function getNpmWorkspacePackages() {
+	return getPublicWorkspacePackages().filter((pkg) => pkg.publishConfig?.registry !== "https://npm.pkg.github.com");
 }

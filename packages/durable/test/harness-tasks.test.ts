@@ -1,6 +1,6 @@
+import { createModels, Type } from "@at-inc/pi-ai";
 import type { Context } from "@earendil-works/chord";
 import { withCancel } from "@earendil-works/chord/context";
-import { createModels, Type } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	createRegistry,

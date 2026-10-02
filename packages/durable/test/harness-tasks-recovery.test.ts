@@ -1,8 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createModels, Type } from "@at-inc/pi-ai";
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { createModels, Type } from "@earendil-works/pi-ai";
 import {
 	createRegistry,
 	defineDoc,

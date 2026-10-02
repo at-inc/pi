@@ -1,4 +1,4 @@
-import { createModels } from "@earendil-works/pi-ai";
+import { createModels } from "@at-inc/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,

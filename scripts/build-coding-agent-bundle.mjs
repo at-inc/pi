@@ -23,6 +23,7 @@ const allowedExternalPackages = new Set([
 	"@earendil-works/chord/node",
 	"@silvia-odwyer/photon-node",
 	"jiti",
+	"undici",
 	// Optional native accelerators. Their callers fall back to JavaScript when absent.
 	"bufferutil",
 	"utf-8-validate",
@@ -86,7 +87,7 @@ function commonBuildOptions() {
 		banner,
 		bundle: true,
 		define: { PI_BUNDLED_NODE: "true" },
-		external: ["@earendil-works/chord", "@silvia-odwyer/photon-node"],
+		external: ["@earendil-works/chord", "@silvia-odwyer/photon-node", "undici"],
 		format: "esm",
 		legalComments: "none",
 		logLevel: "warning",

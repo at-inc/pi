@@ -9,8 +9,8 @@ import {
 	type AgentToolCallOutcome,
 	type AgentToolResult,
 	runToolCall,
-} from "@earendil-works/pi-agent-core";
-import type { ImageContent, JsonObject, JsonValue, TextContent } from "@earendil-works/pi-ai";
+} from "@at-inc/pi-agent-core";
+import type { ImageContent, JsonObject, JsonValue, TextContent } from "@at-inc/pi-ai";
 import {
 	type CodemodeJsonSchema,
 	CodemodeSandbox,

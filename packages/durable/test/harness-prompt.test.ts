@@ -1,5 +1,5 @@
-import { type SystemMessage, type Tool, Type } from "@earendil-works/pi-ai";
-import { getCurrentTools, toToolDeclaration } from "@earendil-works/pi-ai/utils/transcript";
+import { type SystemMessage, type Tool, Type } from "@at-inc/pi-ai";
+import { getCurrentTools, toToolDeclaration } from "@at-inc/pi-ai/utils/transcript";
 import {
 	type Conversation,
 	createRegistry,

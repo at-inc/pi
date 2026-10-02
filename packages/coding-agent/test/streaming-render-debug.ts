@@ -4,7 +4,7 @@
  * Run with: node --import ./src/experimental/source-resolver.ts test/streaming-render-debug.ts
  */
 
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@at-inc/pi-ai";
 import { ProcessTerminal, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";

@@ -5,7 +5,7 @@
 </p>
 <p align="center">
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square&logo=npm&logoColor=white" /></a>
+  <a href="https://github.com/at-inc/pi/packages"><img alt="GitHub Packages" src="https://img.shields.io/badge/GitHub%20Packages-%40at--inc-181717?style=flat-square&logo=github" /></a>
 </p>
 
 > New issues and PRs from new contributors are closed automatically. Maintainers review closed submissions daily. See [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTING.md).
@@ -21,7 +21,7 @@ Ask Pi to create the prompt templates, skills, extensions, and themes you need, 
 Install the command-line interface with npm:
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+npm install -g --ignore-scripts @at-inc/pi
 ```
 
 This requires Node.js 22.19 or newer. Pi does not require dependency lifecycle scripts for a normal npm installation.
@@ -64,6 +64,12 @@ npm run check
 ```
 
 Read [CONTRIBUTING.md](https://github.com/earendil-works/pi/blob/main/CONTRIBUTING.md) before opening an issue or pull request. It defines the contribution gate, issue quality bar, and required checks. Read [AGENTS.md](https://github.com/earendil-works/pi/blob/main/AGENTS.md) for repository-specific implementation, testing, dependency, and release rules.
+
+## See Also
+
+- [@at-inc/pi-ai](https://github.com/at-inc/pi/packages): Core LLM toolkit
+- [@at-inc/pi-agent-core](https://github.com/at-inc/pi/packages): Agent framework
+- [@earendil-works/pi-tui](https://www.npmjs.com/package/@earendil-works/pi-tui): Terminal UI components
 
 ## License
 

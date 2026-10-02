@@ -11,14 +11,14 @@ const packages = [
 	{ directory: "packages/telemetry", name: "@earendil-works/pi-telemetry" },
 	{ directory: "packages/codemode", name: "@earendil-works/pi-codemode" },
 	{ directory: "packages/mcp", name: "@earendil-works/pi-mcp" },
-	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
+	{ directory: "packages/ai", name: "@at-inc/pi-ai" },
 	{ directory: "packages/durable", name: "@earendil-works/pi-durable" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
-	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
+	{ directory: "packages/agent", name: "@at-inc/pi-agent-core" },
 	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },
 	{ directory: "packages/client", name: "@earendil-works/pi-client" },
 	{ directory: "packages/server", name: "@earendil-works/pi-server" },
-	{ directory: "packages/coding-agent", name: "@earendil-works/pi-coding-agent" },
+	{ directory: "packages/coding-agent", name: "@at-inc/pi" },
 ];
 
 function printUsage() {
@@ -215,13 +215,17 @@ if (!options.skipTest) {
 	run("./test.sh", [], { cwd: repoRoot });
 }
 
+run("node", ["scripts/prepare-github-package-bundles.mjs"], { cwd: repoRoot });
 const tarballs = packReleasePackages(packages, tarballDirectory);
+// Exercise the same three artifacts that GitHub Packages publishes; upstream
+// modules must come from their bundles, not test-only workspace overrides.
+const githubTarballs = new Map([...tarballs].filter(([name]) => name.startsWith("@at-inc/")));
 
 let binaryPlatform;
 if (!options.skipInstall) {
 	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir);
 
-	installCodingAgentConsumer(nodeInstallDirectory, tarballs);
+	installCodingAgentConsumer(nodeInstallDirectory, githubTarballs);
 	smokeTestCodingAgentConsumer(nodeInstallDirectory);
 	createPiShim(nodeInstallDirectory);
 
@@ -229,7 +233,7 @@ if (!options.skipInstall) {
 		if (!commandExists("bun")) {
 			throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
 		}
-		installCodingAgentConsumer(bunInstallDirectory, tarballs, "bun");
+		installCodingAgentConsumer(bunInstallDirectory, githubTarballs, "bun");
 		smokeTestCodingAgentConsumer(bunInstallDirectory, "bun");
 		createPiShim(bunInstallDirectory);
 	}

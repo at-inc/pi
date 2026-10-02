@@ -1,4 +1,4 @@
-import type { JsonObject } from "../types.ts";
+import type { JsonObject, JsonValue } from "../types.ts";
 
 export interface DiagnosticErrorInfo {
 	name?: string;
@@ -37,6 +37,36 @@ export function createAssistantMessageDiagnostic(
 	details?: JsonObject,
 ): AssistantMessageDiagnostic {
 	return { type, timestamp: Date.now(), error: extractDiagnosticError(error), details };
+}
+
+/** Preserve provider metadata that is lost when SDK errors become display strings. */
+export function createProviderErrorDiagnostic(error: unknown): AssistantMessageDiagnostic {
+	const source = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+	const status =
+		typeof source.status === "number"
+			? source.status
+			: typeof source.statusCode === "number"
+				? source.statusCode
+				: undefined;
+	const headers =
+		source.headers instanceof Headers
+			? Object.fromEntries(source.headers)
+			: source.headers && typeof source.headers === "object"
+				? source.headers
+				: undefined;
+	const payload = source.payload ?? (source.error && typeof source.error === "object" ? source.error : undefined);
+	const details: JsonObject = {};
+	for (const [key, value] of Object.entries({ status, headers, payload })) {
+		if (value === undefined) continue;
+		try {
+			const serialized = JSON.stringify(value);
+			if (serialized !== undefined) details[key] = JSON.parse(serialized) as JsonValue;
+		} catch {
+			// Malformed metadata must not hide the original provider failure.
+			details[key] = formatThrownValue(value);
+		}
+	}
+	return createAssistantMessageDiagnostic("provider_error", error, details);
 }
 
 export function appendAssistantMessageDiagnostic<T extends { diagnostics?: AssistantMessageDiagnostic[] }>(

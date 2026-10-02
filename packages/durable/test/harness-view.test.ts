@@ -1,5 +1,5 @@
+import { type AssistantMessage, type FauxResponseStep, fauxAssistantMessage, fauxText } from "@at-inc/pi-ai";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
-import { type AssistantMessage, type FauxResponseStep, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import {
 	AgentDoc,
 	type Conversation,

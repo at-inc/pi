@@ -1,5 +1,5 @@
 import { CLASSIFIER_MODELS, IMAGE_MODELS, MODELS } from "../models.generated.ts";
-import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
+import { type CreateModelsOptions, createModels, isModelType, type MutableModels, type Provider } from "../models.ts";
 import type { AnyModel, Api, ClassifierApi, ClassifierModel, ImageApi, ImageModel, Model } from "../types.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
@@ -187,4 +187,11 @@ export function builtinModels(options?: CreateModelsOptions): MutableModels {
 		models.setProvider(provider);
 	}
 	return models;
+}
+
+/** All built-in image-generation providers, freshly constructed. */
+export function builtinImagesProviders(): Provider[] {
+	return builtinProviders().filter((provider) =>
+		provider.getAllModels?.().some((model) => isModelType(model, "image")),
+	);
 }

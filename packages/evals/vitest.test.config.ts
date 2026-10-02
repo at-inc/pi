@@ -8,7 +8,7 @@ export default mergeConfig(
 			include: ["test/**/*.test.ts"],
 		},
 		resolve: {
-			alias: [{ find: /^@earendil-works\/pi-coding-agent$/, replacement: workspaceSourcePaths.codingAgentIndex }],
+			alias: [{ find: /^@at-inc\/pi$/, replacement: workspaceSourcePaths.codingAgentIndex }],
 		},
 	}),
 );

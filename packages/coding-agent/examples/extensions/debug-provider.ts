@@ -6,7 +6,7 @@
  * as expandable custom entries.
  */
 
-import { type ExtensionAPI, keyHint } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, keyHint } from "@at-inc/pi";
 import { Box, Text } from "@earendil-works/pi-tui";
 
 const ENTRY_TYPE = "debug-provider-events";

@@ -23,7 +23,12 @@ function collectPackageJsonFiles(directory) {
 }
 
 function isInternalWorkspaceDependency(name) {
-	return name.startsWith("@earendil-works/pi-") || internalPackageNames.has(name);
+	return (
+		name.startsWith("@earendil-works/pi-") ||
+		name.startsWith("@at-inc/pi-") ||
+		name === "@at-inc/pi" ||
+		internalPackageNames.has(name)
+	);
 }
 
 function isNonRegistrySpecifier(specifier) {

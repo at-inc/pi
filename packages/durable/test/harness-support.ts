@@ -6,8 +6,8 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 	UserMessage,
-} from "@earendil-works/pi-ai";
-import { createModels, Type } from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
+import { createModels, Type } from "@at-inc/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,

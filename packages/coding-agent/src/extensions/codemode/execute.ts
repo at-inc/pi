@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@at-inc/pi-agent-core";
 import type {
 	AnyModel,
 	ClassifierContext,
@@ -17,7 +17,7 @@ import type {
 	ModelTypeMap,
 	TextContent,
 	Usage,
-} from "@earendil-works/pi-ai";
+} from "@at-inc/pi-ai";
 import {
 	type CodemodeResult,
 	CodemodeSandbox,

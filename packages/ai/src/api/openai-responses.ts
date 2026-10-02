@@ -15,6 +15,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic, createProviderErrorDiagnostic } from "../utils/diagnostics.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -223,10 +224,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				normalizeProviderError(error),
 				`${model.provider === "openai" ? "OpenAI" : model.provider} API error`,
 			);
-			// Sign in with ChatGPT shares the subscription's usage limit with other apps.
 			output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
 				? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
 				: errorMessage;
+			if (output.stopReason === "error") {
+				appendAssistantMessageDiagnostic(output, createProviderErrorDiagnostic(error));
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

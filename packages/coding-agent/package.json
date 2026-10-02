@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-coding-agent",
+	"name": "@at-inc/pi",
 	"version": "1.0.0",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
@@ -50,8 +50,8 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "^1.0.0",
-		"@earendil-works/pi-agent-core": "^1.0.0",
-		"@earendil-works/pi-ai": "^1.0.0",
+		"@at-inc/pi-agent-core": "^1.0.0",
+		"@at-inc/pi-ai": "^1.0.0",
 		"@earendil-works/pi-codemode": "^1.0.0",
 		"@earendil-works/pi-mcp": "^1.0.0",
 		"@earendil-works/pi-tui": "^1.0.0",
@@ -59,11 +59,14 @@
 		"chalk": "6.0.0",
 		"cross-spawn": "7.0.6",
 		"diff": "8.0.4",
+		"esbuild": "0.28.2",
+		"get-east-asian-width": "1.6.0",
 		"grok-mermaid": "0.2.3",
 		"highlight.js": "10.7.3",
 		"hosted-git-info": "9.0.3",
 		"ignore": "7.0.8",
 		"jiti": "2.7.0",
+		"marked": "18.0.11",
 		"minimatch": "10.2.6",
 		"proper-lockfile": "4.1.2",
 		"quickjs-wasi": "3.6.2",
@@ -72,6 +75,12 @@
 		"undici": "8.10.2",
 		"yaml": "2.9.0"
 	},
+	"bundleDependencies": [
+		"@earendil-works/chord",
+		"@earendil-works/pi-codemode",
+		"@earendil-works/pi-mcp",
+		"@earendil-works/pi-tui"
+	],
 	"overrides": {
 		"protobufjs": "7.6.6"
 	},
@@ -84,7 +93,6 @@
 		"@types/node": "22.19.19",
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
-		"marked": "18.0.11",
 		"shx": "0.4.0",
 		"vitest": "4.1.11"
 	},
@@ -100,10 +108,13 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/at-inc/pi.git",
 		"directory": "packages/coding-agent"
 	},
 	"engines": {
 		"node": ">=22.19.0"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
 	}
 }

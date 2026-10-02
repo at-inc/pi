@@ -7,9 +7,9 @@
  * The arguments are the command that starts a stdio MCP server.
  */
 
-import { Agent } from "@earendil-works/pi-agent-core";
-import { createModels } from "@earendil-works/pi-ai";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { Agent } from "@at-inc/pi-agent-core";
+import { createModels } from "@at-inc/pi-ai";
+import { anthropicProvider } from "@at-inc/pi-ai/providers/anthropic";
 import { McpClient, StdioTransport } from "@earendil-works/pi-mcp";
 import { createCodemodeTool, createMcpTools, createNestedToolRunner } from "./tools.ts";
 

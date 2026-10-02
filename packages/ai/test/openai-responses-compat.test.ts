@@ -252,42 +252,49 @@ describe("openai-responses provider defaults", () => {
 		});
 	});
 
-	it.each(["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5.2-pro", "gpt-5.4-pro", "gpt-5.5-pro"] as const)(
-		"omits reasoning effort for OpenAI %s when off is unsupported",
-		async (modelId) => {
-			const model = getModel("openai", modelId);
-			let capturedPayload: unknown;
+	it.each([
+		"gpt-5",
+		"gpt-5-mini",
+		"gpt-5-nano",
+		"gpt-5-pro",
+		"gpt-5.2-pro",
+		"gpt-5.4-pro",
+		"gpt-5.5-pro",
+		"gpt-6-astra",
+		"gpt-6.1-sol",
+	] as const)("omits reasoning effort for OpenAI %s when off is unsupported", async (modelId) => {
+		const model = getModel("openai", modelId);
+		let capturedPayload: unknown;
 
-			vi.spyOn(globalThis, "fetch").mockResolvedValue(
-				new Response("data: [DONE]\n\n", {
-					status: 200,
-					headers: { "content-type": "text/event-stream" },
-				}),
-			);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
 
-			const stream = streamOpenAIResponses(
-				model,
-				normalizeContext({
-					systemPrompt: "sys",
-					messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-				}),
-				{
-					apiKey: "sk-test-key",
-					onPayload: (payload) => {
-						capturedPayload = payload;
-					},
+		const stream = streamOpenAIResponses(
+			model,
+			normalizeContext({
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			}),
+			{
+				apiKey: "sk-test-key",
+				onPayload: (payload) => {
+					capturedPayload = payload;
 				},
-			);
+			},
+		);
 
-			for await (const event of stream) {
-				if (event.type === "done" || event.type === "error") break;
-			}
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
 
-			expect(capturedPayload).not.toMatchObject({
-				reasoning: expect.anything(),
-			});
-		},
-	);
+		expect(capturedPayload).not.toMatchObject({
+			reasoning: expect.anything(),
+		});
+	});
 
 	it("sets cache-affinity headers for official OpenAI Responses requests with a sessionId", async () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });

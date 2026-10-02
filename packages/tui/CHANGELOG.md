@@ -45,7 +45,13 @@
 
 ## [0.87.1] - 2026-09-22
 
+## [0.87.0-rev.2] - 2026-09-22
+
+## [0.87.0-rev.1] - 2026-09-22
+
 ## [0.87.0] - 2026-09-21
+
+## [0.86.1-rev.1] - 2026-09-20
 
 ## [0.86.1] - 2026-09-20
 
@@ -66,6 +72,26 @@
 - Fixed fullscreen Kitty images being erased by later row clears in WezTerm ([#9169](https://github.com/earendil-works/pi/issues/9169)).
 - Fixed skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
 - Fixed file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).
+
+## [0.85.7] - 2026-09-18
+
+## [0.85.6] - 2026-09-18
+
+### Fixed
+
+- Fixed fullscreen clipboard failures hiding actionable backend error messages behind a generic notice, and extended failure notices to five seconds ([#9618](https://github.com/earendil-works/pi/issues/9618)).
+
+## [0.85.5] - 2026-09-05
+
+### Added
+
+- Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
+
+### Fixed
+
+- Fixed mouse hover changing selection and recentering autocomplete and settings lists, causing clicks to target a different item.
+
+## [0.85.4] - 2026-09-02
 
 ## [0.85.1] - 2026-09-05
 
@@ -98,7 +124,6 @@
 - Fixed drag selection continuing over an editor.
 - Fixed terminal startup under restricted seccomp policies that reject the `SIGWINCH` self-signal ([#8898](https://github.com/earendil-works/pi/pull/8898) by [@bartlomiejkida](https://github.com/bartlomiejkida)).
 - Fixed Zed terminal image capability detection ([#8828](https://github.com/earendil-works/pi/pull/8828) by [@Perlence](https://github.com/Perlence)).
-
 ## [0.84.4] - 2026-08-28
 
 ### Added
