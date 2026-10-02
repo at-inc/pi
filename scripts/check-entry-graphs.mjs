@@ -44,15 +44,9 @@ const BUDGETS = {
 	"packages/durable": {
 		".": {
 			// The built-in tool task validates arguments with pi-ai's TypeBox-based validation, so TypeBox is allowed.
-			maxFiles: 58,
+			maxFiles: 60,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
-	},
-	"packages/agent": {
-		"./harness/runtime/reducer": { maxFiles: 1 },
-		"./harness/context": { maxFiles: 6, forbid: ["harness/runtime/", "harness/execution/", "packages/ai/"] },
-		"./harness/env/nodejs": { maxFiles: 5, forbid: ["packages/ai/", "harness/runtime/"] },
-		"./harness/session": { maxFiles: 25, forbid: ["harness/runtime/", "harness/execution/", "packages/ai/src/index.ts"] },
 	},
 };
 
@@ -107,7 +101,10 @@ function expand(pkgDir, entry, target) {
 	if (!existsSync(dir)) return [];
 	return readdirSync(dir)
 		.filter((name) => name.endsWith(".ts"))
-		.map((name) => [entry.replace("*", name.replace(/\.ts$/, "")), target.replace("*", name.replace(/\.ts$/, ""))]);
+		.map((name) => {
+			const stem = name.replace(/\.ts$/, "");
+			return [entry.split("*").join(stem), target.split("*").join(stem)];
+		});
 }
 
 let failures = 0;

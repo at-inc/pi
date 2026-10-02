@@ -91,7 +91,7 @@ function readGeneratorOptions(args: string[]): {
 	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
 }
 
-const generatorOptions = readGeneratorOptions(process.argv.slice(2));
+const generatorOptions = readGeneratorOptions(import.meta.main ? process.argv.slice(2) : []);
 
 interface ModelsDevModel {
 	id: string;
@@ -197,7 +197,7 @@ const TOGETHER_REASONING_ONLY_MODELS = new Set([
 	"MiniMaxAI/MiniMax-M2.7",
 ]);
 const TOGETHER_REASONING_EFFORT_MODELS = new Set(["openai/gpt-oss-20b", "openai/gpt-oss-120b"]);
-const TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = new Set(["deepseek-ai/DeepSeek-V4-Pro"]);
+const TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = new Set(["deepseek-ai/DeepSeek-V4-Pro-0813"]);
 const TOGETHER_FIXED_REASONING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -705,45 +705,50 @@ function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessag
 	model.compat = { ...(model.compat as AnthropicMessagesCompat | undefined), ...compat };
 }
 
-function detectOpenAICompletionsCompat(model: Model<"openai-completions">): OpenAICompletionsResolvedCompat {
+export function detectOpenAICompletionsCompat(model: Model<"openai-completions">): OpenAICompletionsResolvedCompat {
 	const provider = model.provider;
-	const baseUrl = model.baseUrl;
+	const hostname = URL.parse(model.baseUrl)?.hostname ?? "";
+	const matchesDomain = (domain: string): boolean => hostname === domain || hostname.endsWith(`.${domain}`);
 
 	const isZai =
 		provider === "zai" ||
 		provider === "zai-coding-cn" ||
-		baseUrl.includes("api.z.ai") ||
-		baseUrl.includes("open.bigmodel.cn");
+		hostname === "api.z.ai" ||
+		hostname === "open.bigmodel.cn";
 	const isTogether =
-		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
-	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
-	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
-	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
-	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
-	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
-	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
-	const isCerebras = provider === "cerebras" || baseUrl.includes("cerebras.ai");
+		provider === "together" || hostname === "api.together.ai" || hostname === "api.together.xyz";
+	const isMoonshot =
+		provider === "moonshotai" ||
+		provider === "moonshotai-cn" ||
+		hostname === "api.moonshot.ai" ||
+		hostname === "api.moonshot.cn";
+	const isOpenRouter = provider === "openrouter" || matchesDomain("openrouter.ai");
+	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || hostname === "api.cloudflare.com";
+	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || hostname === "gateway.ai.cloudflare.com";
+	const isNvidia = provider === "nvidia" || hostname === "integrate.api.nvidia.com";
+	const isAntLing = provider === "ant-ling" || hostname === "api.ant-ling.com";
+	const isCerebras = provider === "cerebras" || matchesDomain("cerebras.ai");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
-	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
+	const isDeepSeek = provider === "deepseek" || matchesDomain("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
 		isCerebras ||
 		provider === "xai" ||
-		baseUrl.includes("api.x.ai") ||
+		hostname === "api.x.ai" ||
 		isTogether ||
-		baseUrl.includes("chutes.ai") ||
+		matchesDomain("chutes.ai") ||
 		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
-		baseUrl.includes("opencode.ai") ||
+		matchesDomain("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
 		isAntLing;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") ||
+		matchesDomain("chutes.ai") ||
 		isDeepSeek ||
 		isMoonshot ||
 		isCloudflareAiGateway ||
@@ -752,7 +757,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		isAntLing ||
 		isZai;
 
-	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
+	const isGrok = provider === "xai" || hostname === "api.x.ai";
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const cacheControlFormat =
@@ -3756,7 +3761,9 @@ async function generateModels() {
 }
 
 // Run the generator
-generateModels().catch((error) => {
-	console.error(error);
-	process.exitCode = 1;
-});
+if (import.meta.main) {
+	generateModels().catch((error) => {
+		console.error(error);
+		process.exitCode = 1;
+	});
+}

@@ -316,10 +316,10 @@ async function main(): Promise<void> {
 	await removeStaleSocket(controlPath);
 	await removeStaleSocket(publicPath);
 	try {
-		await listen(controlServer, controlPath);
-		await restrictSocket(controlPath);
 		await listen(publicServer, publicPath);
 		await restrictSocket(publicPath);
+		await listen(controlServer, controlPath);
+		await restrictSocket(controlPath);
 	} catch (error) {
 		await Promise.all([cleanupSocket(controlPath), cleanupSocket(publicPath)]);
 		throw error;

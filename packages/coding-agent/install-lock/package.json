@@ -1,10 +1,10 @@
 {
 	"name": "@at-inc/pi-install",
-	"version": "0.99.2",
+	"version": "1.0.0-beta.1",
 	"private": true,
 	"description": "Lockfile root used by the Pi installer and updater.",
 	"dependencies": {
-		"@at-inc/pi": "0.99.2"
+		"@at-inc/pi": "1.0.0-beta.1"
 	},
 	"overrides": {
 		"protobufjs": "7.6.6"
