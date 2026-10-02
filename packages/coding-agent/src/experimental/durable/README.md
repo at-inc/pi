@@ -9,8 +9,9 @@ node --import ./packages/coding-agent/src/experimental/source-resolver.ts packag
 node --import ./packages/coding-agent/src/experimental/source-resolver.ts packages/coding-agent/src/experimental/durable/main.ts --continue
 ```
 
-A new session starts with pi's default model and thinking level from `settings.json`. `--continue` opens the newest
-session for the current directory. Sessions live under
+A new session honors the default model and thinking level from `settings.json`. Without a configured model, it
+prefers `openai-codex/gpt-6-sol` when authenticated, retaining the fork's micro default; otherwise it uses pi's
+normal model selection. `--continue` preserves the newest session's model for the current directory. Sessions live under
 `~/.pi/agent/experimental/durable-sessions/<cwd-hash>/<session>/session.sqlite`; a lock keeps a second process out
 (a lock left by a crash goes stale after 10 seconds, and the next start waits for that). Use `/login` or pi itself
 to configure providers; credentials are shared.

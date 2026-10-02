@@ -17,6 +17,7 @@ import {
 	type TaskGraph,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { DEFAULT_THINKING_LEVEL } from "../../core/defaults.ts";
 import { ModelRuntime } from "../../core/model-runtime.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import {
@@ -168,7 +169,26 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			},
 			context,
 		);
-		const initial = location.created ? await findInitialAgentModel(settingsManager, modelRuntime) : undefined;
+		const preferredModel =
+			location.created &&
+			settingsManager.getDefaultProvider() === undefined &&
+			settingsManager.getDefaultModel() === undefined
+				? modelRuntime
+						.getAvailableSnapshot()
+						.find((model) => model.provider === "openai-codex" && model.id === "gpt-6-sol")
+				: undefined;
+		const initial = location.created
+			? preferredModel
+				? {
+						model: { provider: preferredModel.provider, modelId: preferredModel.id },
+						thinkingLevel: clampThinkingLevel(
+							preferredModel,
+							settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL,
+						),
+						fallbackMessage: undefined,
+					}
+				: await findInitialAgentModel(settingsManager, modelRuntime)
+			: undefined;
 		const root = await harness.root(context, {
 			agent: {
 				cwd: location.cwd,
@@ -424,7 +444,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 					} finally {
 						clearPendingAuth(new Error("Login finished"));
 						loginController = undefined;
-						update({ auth: undefined, loginProviders: loginProviders() });
+						update({ auth: undefined, models: models(), loginProviders: loginProviders() });
 					}
 				})();
 				loginOperation = operation;
