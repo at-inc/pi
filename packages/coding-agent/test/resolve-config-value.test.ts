@@ -82,8 +82,12 @@ describe("resolveConfigValue", () => {
 	test("caches successful and failed commands until explicitly cleared", () => {
 		const counterFile = join(tempDir, "counter");
 		writeFileSync(counterFile, "0");
-		const escapedPath = counterFile.replace(/\\/g, "/").replace(/"/g, '\\"');
-		const success = `!sh -c 'count=$(cat "${escapedPath}"); echo $((count + 1)) > "${escapedPath}"; echo value'`;
+		vi.stubEnv(
+			"PI_TEST_COUNTER_FILE",
+			process.platform === "win32" ? counterFile.replaceAll("\\", "/") : counterFile,
+		);
+		const success =
+			'!sh -c \'count=$(cat "$PI_TEST_COUNTER_FILE"); echo $((count + 1)) > "$PI_TEST_COUNTER_FILE"; echo value\'';
 
 		expect(resolveConfigValue(success)).toBe("value");
 		expect(resolveConfigValue(success)).toBe("value");
@@ -93,7 +97,8 @@ describe("resolveConfigValue", () => {
 		expect(resolveConfigValue(success)).toBe("value");
 		expect(readFileSync(counterFile, "utf-8").trim()).toBe("2");
 
-		const failure = `!sh -c 'count=$(cat "${escapedPath}"); echo $((count + 1)) > "${escapedPath}"; exit 1'`;
+		const failure =
+			'!sh -c \'count=$(cat "$PI_TEST_COUNTER_FILE"); echo $((count + 1)) > "$PI_TEST_COUNTER_FILE"; exit 1\'';
 		expect(resolveConfigValue(failure)).toBeUndefined();
 		expect(resolveConfigValue(failure)).toBeUndefined();
 		expect(readFileSync(counterFile, "utf-8").trim()).toBe("3");
@@ -111,10 +116,14 @@ describe("resolveConfigValue", () => {
 	});
 
 	test("uncached resolution executes a command on every call", () => {
-		const counterFile = join(tempDir, "uncached-counter");
+		const counterFile = join(tempDir, "uncached-counter's $literal");
 		writeFileSync(counterFile, "0");
-		const escapedPath = counterFile.replace(/\\/g, "/").replace(/"/g, '\\"');
-		const command = `!sh -c 'count=$(cat "${escapedPath}"); echo $((count + 1)) > "${escapedPath}"; echo value'`;
+		vi.stubEnv(
+			"PI_TEST_COUNTER_FILE",
+			process.platform === "win32" ? counterFile.replaceAll("\\", "/") : counterFile,
+		);
+		const command =
+			'!sh -c \'count=$(cat "$PI_TEST_COUNTER_FILE"); echo $((count + 1)) > "$PI_TEST_COUNTER_FILE"; echo value\'';
 		expect(resolveConfigValueUncached(command)).toBe("value");
 		expect(resolveConfigValueUncached(command)).toBe("value");
 		expect(readFileSync(counterFile, "utf-8").trim()).toBe("2");
