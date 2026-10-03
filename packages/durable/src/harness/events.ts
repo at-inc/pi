@@ -92,7 +92,8 @@ export type AgentEvent =
 export interface AgentEventStream {
 	/** The `snapshot` event at attachment. */
 	readonly snapshot: SnapshotEvent;
-	start(listener: (events: readonly AgentEvent[], context: Context) => Promise<void>): void;
+	readonly snapshotSeq: number;
+	start(listener: (events: readonly AgentEvent[], context: Context, seq: number) => Promise<void>): void;
 	stop(): Promise<WatchEnd>;
 	readonly closed: Promise<WatchEnd>;
 }
@@ -142,8 +143,10 @@ export async function watchEvents(
 	conversationId: ConversationId,
 	context: Context,
 ): Promise<AgentEventStream> {
-	let watch!: CommittedWatch<readonly AgentEvent[]>;
+	type EventFrame = { events: readonly AgentEvent[]; seq: number };
+	let watch!: CommittedWatch<EventFrame>;
 	let snapshot!: SnapshotEvent;
+	let snapshotSeq!: number;
 	await conversationViews(harness).attach(
 		conversationId,
 		async (initial, release, storage) => {
@@ -152,14 +155,20 @@ export async function watchEvents(
 			const completing = await scanAll((cursor) => storage.scanTasks(query, 100, cursor, context));
 			const held = new Set<TaskId>(completing.map((record) => record.id));
 			let current = initial;
+			let currentSeq = await storage.currentSeq(context);
+			snapshotSeq = currentSeq;
 			snapshot = snapshotOf(initial);
 			// Batches are the watch's values; an overflow delivers a snapshot of the newest view instead.
-			watch = new CommittedWatch<readonly AgentEvent[]>([], release, () => [snapshotOf(current)]);
+			watch = new CommittedWatch<EventFrame>({ events: [], seq: currentSeq }, release, () => ({
+				events: [snapshotOf(current)],
+				seq: currentSeq,
+			}));
 			return {
 				publication: (before, after, ops, publication, commitContext) => {
 					current = after;
+					currentSeq = publication.seq;
 					const events = translate(conversationId, before, after, ops, publication, held);
-					if (events.length > 0) watch.advance(events, [], commitContext);
+					if (events.length > 0) watch.advance({ events, seq: publication.seq }, [], commitContext);
 				},
 				closeSession: () => watch.closeSession(),
 			};
@@ -175,7 +184,9 @@ export async function watchEvents(
 	if (signal !== undefined) watch.observeCancellation(signal);
 	return {
 		snapshot,
-		start: (listener) => watch.start((events, _ops, deliveryContext) => listener(events, deliveryContext)),
+		snapshotSeq,
+		start: (listener) =>
+			watch.start((frame, _ops, deliveryContext) => listener(frame.events, deliveryContext, frame.seq)),
 		stop: () => watch.stop(),
 		closed: watch.closed,
 	};

@@ -10,7 +10,7 @@ import type {
 } from "@at-inc/pi-ai";
 import { isContextOverflow } from "@at-inc/pi-ai/utils/overflow";
 import { isRetryableAssistantError, retryDelayMs } from "@at-inc/pi-ai/utils/retry";
-import { getCurrentTools } from "@at-inc/pi-ai/utils/transcript";
+import { getCurrentSystemMessage, getCurrentTools } from "@at-inc/pi-ai/utils/transcript";
 import { type Context, copyJson, type Draft, type JsonValue } from "@earendil-works/chord";
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
@@ -25,8 +25,9 @@ import type {
 	Tx,
 	TypedEntry,
 } from "../types.ts";
-import { addTools } from "./agent.ts";
+import { addTools, requestFits } from "./agent.ts";
 import { createCompaction, estimateContext, selectCut } from "./compaction.ts";
+import { extendContext } from "./context.ts";
 import { applyBoundary, prepareBoundary } from "./inbox.ts";
 import { assignJson } from "./json.ts";
 import { endRun, LiveDoc, type LiveState, type ToolSlot } from "./live.ts";
@@ -137,6 +138,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				}
 			}
 			const view = await runtime.context(conversationId, context);
+			if (view.entries.length === 0) return failModelError(runtime, "No context to continue", context);
 			const shown = replaySections(view.messages);
 			const report = (error: unknown) => runtime.report(error);
 			let env: ExecutionEnv | undefined;
@@ -149,6 +151,11 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const input: PromptInput = { conversationId, agent, env, shown: Object.fromEntries(shown), read: runtime };
 			const desired = await renderSections(agent.sections, input, shown, report, context);
 			const entries = planSystemEntries(view, desired, agent.tools, runtime.now());
+			const system = getCurrentSystemMessage([...view.messages, ...entries.flatMap((entry) => entry.model ?? [])]);
+			const newest = view.messages.findLast((message) => message.role !== "system");
+			const irreducible = [...(newest?.role === "user" ? [newest] : []), ...(system === undefined ? [] : [system])];
+			if (!requestFits(resolved, irreducible, settings))
+				return failModelError(runtime, "Compaction cannot fit the prompt and minimum answer budget", context);
 			const threshold =
 				compacted === undefined
 					? thresholdCompaction(view, entries, resolved.contextWindow, settings.compaction)
@@ -194,15 +201,25 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			if (model === undefined) return failNoModel(runtime, ref, context);
 			const view = await runtime.context(conversationId, context, cutoff);
 			let messages = view.messages;
-			await runtime.hooks.each("beforeRequest", async (hook) => {
-				const replaced = await hook({ messages }, runtime, context);
-				if (replaced !== undefined) messages = replaced.messages;
-			});
-			const options: SimpleStreamOptions = {
-				...streamOptions,
+			let options: SimpleStreamOptions = {
+				...(copyJson(streamOptions, { omitUndefinedProperties: true }) as ConversationStreamOptions),
 				signal: runtime.signal,
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
+			await runtime.hooks.each("beforeRequest", async (hook) => {
+				const replaced = await hook({ messages, model, options }, runtime, context);
+				if (replaced?.messages !== undefined) messages = replaced.messages;
+				if (replaced?.options !== undefined)
+					options = {
+						...options,
+						...replaced.options,
+						headers: { ...options.headers, ...replaced.options.headers },
+						signal: runtime.signal,
+					};
+			});
+			options = { ...options, signal: runtime.signal };
+			if (!requestFits(model, messages, { ...runtime.settings, stream: streamOptions }, options.maxTokens))
+				return failModelError(runtime, "Compaction cannot fit the request and minimum answer budget", context);
 			const message = await streamResponse(runtime, model, messages, options, attempt, context);
 			const request = { attempt, compacted, model: ref, cutoff, messages: view.messages };
 			await classify(runtime, request, message, context);
@@ -516,9 +533,10 @@ async function answer(runtime: Runtime, message: AssistantMessage, context: Cont
 	const conversationId = runtime.conversationId;
 	await runtime.commit(async (tx): Promise<Next> => {
 		// Queue modes are read on the Session line, when the boundary is decided.
-		const boundary = await prepareBoundary(tx, conversationId, runtime.settings);
+		const boundary = await prepareBoundary(tx, conversationId, runtime.settings, runtime.models);
 		const live = await tx.doc(LiveDoc, conversationId);
 		const entry = await appendAssistant(tx, conversationId, message);
+		if (boundary.view !== undefined) boundary.view = extendContext(boundary.view, entry);
 		const result: Next = { status: "terminal", outcome: { status: "completed", result: { entryId: entry.id } } };
 		const { users, reset } = await applyBoundary(tx, boundary, "final", runtime.now());
 		if (continuation !== undefined && users.length === 0 && !reset) {
@@ -614,7 +632,7 @@ async function finishToolRound(
 	// The last handoff in call order wins.
 	const handoff = [...controls.values()].findLast((control) => control?.handoff !== undefined)?.handoff;
 	await runtime.commit(async (tx): Promise<Next> => {
-		const boundary = await prepareBoundary(tx, conversationId, runtime.settings);
+		const boundary = await prepareBoundary(tx, conversationId, runtime.settings, runtime.models);
 		if (added.length > 0) await addTools(tx, conversationId, added);
 		const live = await tx.doc(LiveDoc, conversationId);
 		const now = runtime.now();
@@ -622,6 +640,7 @@ async function finishToolRound(
 			if (handoff !== undefined) {
 				const message = { role: "user", content: handoff, timestamp: now } as const;
 				const entry = await tx.appendEntry(ResetEntry, conversationId, { head: "self", model: [message] });
+				if (boundary.view !== undefined) boundary.view = extendContext(boundary.view, entry);
 				boundary.head = entry.id;
 			}
 			const { users } = await applyBoundary(tx, boundary, "final", now);

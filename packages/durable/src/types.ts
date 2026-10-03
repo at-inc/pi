@@ -357,10 +357,26 @@ type SubmissionRecordBase = {
 	readonly conversationId: ConversationId;
 	/** Host-provided deduplication key, scoped to the conversation. */
 	readonly requestId?: string;
+	readonly identity?: string;
 };
 
 /** Durable lifecycle of one admitted user input or passive entry write. */
 export type SubmissionRecord =
+	| (SubmissionRecordBase & { readonly type: "wake"; readonly entry?: never } & (
+				| {
+						readonly status: "queued" | "placed";
+						readonly answer?: never;
+						readonly reason?: never;
+						readonly detail?: never;
+				  }
+				| { readonly status: "done"; readonly answer: EntryId; readonly reason?: never; readonly detail?: never }
+				| {
+						readonly status: "unanswered";
+						readonly answer?: never;
+						readonly reason: string;
+						readonly detail?: JsonValue;
+				  }
+			))
 	| (SubmissionRecordBase & {
 			readonly type: "input";
 	  } & (
@@ -799,7 +815,7 @@ export interface Tx {
 	 * Place a queued submission at `entry`: an input becomes `placed`, a write `done`. Resolved like
 	 * `settleSubmission()`. Inbox boundaries place the submissions they select.
 	 */
-	placeSubmission(id: SubmissionId, entry: EntryId): void;
+	placeSubmission(id: SubmissionId, entry?: EntryId): void;
 
 	doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<Draft<T>>;
 	doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<Draft<T>>;
@@ -991,6 +1007,8 @@ export interface Session extends DocumentObserver {
  * Session serializes commits.
  */
 export interface Storage {
+	/** Last persisted commit sequence, including record/document-only commits; 0 before the first commit. */
+	currentSeq(context: Context): Promise<number>;
 	/**
 	 * Atomically persist one batch and return its sequence. Once resolved, later reads through this storage observe it.
 	 */

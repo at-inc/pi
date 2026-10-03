@@ -43,11 +43,13 @@ import type {
 	HarnessInspection,
 	HarnessOptions,
 	Harness as HarnessType,
+	QueuedInputChange,
 	RegistrySnapshot,
 	SettledTask,
 	Submission,
 	SubmissionDraft,
 	ToolRegistration,
+	WakeOptions,
 } from "./types.ts";
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts";
 import { scanAll } from "./util.ts";
@@ -98,6 +100,22 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 
 	submit(submission: SubmissionDraft, context: Context): Promise<Submission> {
 		return this.#host.submissions.submit(this.id, submission, context);
+	}
+
+	wake(options: WakeOptions, context: Context): Promise<Submission> {
+		return this.#host.submissions.submit(this.id, { ...options, type: "wake" }, context);
+	}
+
+	editQueuedInput(id: SubmissionId, change: QueuedInputChange, context: Context): Promise<void> {
+		return this.#host.submissions.editInput(this.id, id, change, context);
+	}
+
+	moveQueuedInput(id: SubmissionId, before: SubmissionId | undefined, context: Context): Promise<void> {
+		return this.#host.submissions.moveInput(this.id, id, before, context);
+	}
+
+	promoteQueuedInput(id: SubmissionId, context: Context): Promise<void> {
+		return this.#host.submissions.promoteInput(this.id, id, context);
 	}
 
 	compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
@@ -196,7 +214,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			},
 			context: withoutAbortSignal(context),
 		});
-		this.#submissions = new Submissions(this, storage, now, settings, () => this.#tasks.resume());
+		this.#submissions = new Submissions(this, storage, now, settings, () => this.#tasks.resume(), options.models);
 		this.#taskGraph = new TaskGraphView(this, storage);
 		this.#host = {
 			harness: this,

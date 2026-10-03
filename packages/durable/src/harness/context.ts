@@ -1,7 +1,8 @@
 import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@at-inc/pi-ai";
 import type { Context } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { SessionImpl } from "../session/session.ts";
-import type { ContextEdit, ConversationId, Cursor, EntryId, EntryRecord, Storage } from "../types.ts";
+import type { ContextEdit, ConversationId, Cursor, EntryId, EntryRecord, Storage, Tx } from "../types.ts";
 import type { ContextView } from "./types.ts";
 
 const SCAN_PAGE_SIZE = 256;
@@ -57,7 +58,7 @@ export async function readContext(
  * the newest edit in the range wins. Context entries are H followed by the range's non-head entries.
  */
 export async function deriveContext(
-	storage: Storage,
+	storage: Pick<Storage, "scanEntries">,
 	conversationId: ConversationId,
 	bounds: ContextBounds | undefined,
 	context: Context,
@@ -65,6 +66,10 @@ export async function deriveContext(
 	if (bounds === undefined) return { head: undefined, entries: [], contributions: [], messages: [] };
 	const head = bounds.head;
 	const range = await scanRange(storage, conversationId, bounds, context);
+	return contextFromEntries(head, range);
+}
+
+function contextFromEntries(head: ContextView["head"], range: readonly EntryRecord[]): ContextView {
 	const edits = new Map<EntryId, ContextEdit>();
 	// Edits of every entry in the range count, including older head markers that `selectActive()` drops.
 	for (const entry of range) for (const edit of entry.edits ?? []) edits.set(edit.target, edit);
@@ -81,6 +86,21 @@ export async function deriveContext(
 	return { head, entries, contributions, messages: orderToolResults(contributions.flat()) };
 }
 
+export type CommitContext = ContextView & { readonly range: readonly EntryRecord[] };
+
+export async function readTxContext(tx: Tx, conversationId: ConversationId): Promise<CommitContext> {
+	const tail = (await tx.scanEntries({ conversationId }, 1)).items[0]?.id;
+	const head = await tx.latestHeadMarker(conversationId);
+	const range = tail === undefined ? [] : await scanRange(tx, conversationId, { head, tail }, BACKGROUND_CONTEXT);
+	return { ...contextFromEntries(head, range), range };
+}
+
+export function extendContext(view: CommitContext, entry: EntryRecord): CommitContext {
+	const head = entry.head === undefined ? view.head : entry;
+	const range = [...view.range, entry].filter((record) => head?.head === undefined || record.id >= head.head);
+	return { ...contextFromEntries(head, range), range };
+}
+
 /** The raw active entries within captured bounds, without deriving model context. */
 export async function activeEntries(
 	storage: Storage,
@@ -94,7 +114,7 @@ export async function activeEntries(
 
 /** Visible entries from the head marker's head, or transcript start, through the tail, oldest first. */
 async function scanRange(
-	storage: Storage,
+	storage: Pick<Storage, "scanEntries">,
 	conversationId: ConversationId,
 	bounds: ContextBounds,
 	context: Context,
@@ -118,8 +138,8 @@ async function scanRange(
 }
 
 /** The head marker followed by the range's non-head entries, or the whole range without a marker. */
-function selectActive(head: ContextBounds["head"], range: EntryRecord[]): EntryRecord[] {
-	return head === undefined ? range : [head, ...range.filter((entry) => entry.head === undefined)];
+function selectActive(head: ContextView["head"], range: readonly EntryRecord[]): EntryRecord[] {
+	return head === undefined ? [...range] : [head, ...range.filter((entry) => entry.head === undefined)];
 }
 
 /**

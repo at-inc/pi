@@ -71,8 +71,10 @@ export type {
 	HooksOf,
 	InputSubmissionDraft,
 	ModelRef,
+	PreparedInputEntry,
 	PromptInput,
 	PromptSection,
+	QueuedInputChange,
 	QueueMode,
 	Registry,
 	RegistryReader,
@@ -91,6 +93,7 @@ export type {
 	ToolHooks,
 	ToolRegistration,
 	UserInput,
+	WakeOptions,
 	Wrap,
 } from "./harness/types.ts";
 export { UsageDoc, type UsageState } from "./harness/usage.ts";

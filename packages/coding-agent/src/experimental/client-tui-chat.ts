@@ -98,6 +98,7 @@ export class ExperimentalChatView {
 	#syncQueue(inbox: InboxState): void {
 		this.pendingMessages.clear();
 		for (const item of inbox.items) {
+			if ("wake" in item) continue;
 			const text =
 				item.mode === "write"
 					? `<${String(item.entry.kind)}>`

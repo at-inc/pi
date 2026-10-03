@@ -2,8 +2,10 @@ import type {
 	AssistantMessage,
 	CacheRetention,
 	Message,
+	Model,
 	Models,
 	ModelThinkingLevel,
+	SimpleStreamOptions,
 	Static,
 	Tool,
 	ToolCall,
@@ -51,14 +53,27 @@ export type ModelRef = {
 
 export type UserInput = UserMessage["content"];
 
+export type PreparedInputEntry = Pick<EntryDraft, "kind" | "data"> & {
+	readonly model: readonly Message[];
+	readonly head?: never;
+	readonly edits?: never;
+};
+
 /** Host submission: user input that may start a run, or a passive entry write. */
 export type SubmissionDraft = {
 	readonly requestId?: string;
+	readonly identity?: string;
 } & (
 	| {
 			readonly type: "input";
 			readonly content: UserInput;
 			readonly whenBusy?: "steer" | "followUp" | "reject";
+			readonly entry?: PreparedInputEntry;
+	  }
+	| {
+			readonly type: "wake";
+			readonly whenBusy?: "steer" | "followUp" | "reject";
+			readonly content?: never;
 			readonly entry?: never;
 	  }
 	| {
@@ -70,6 +85,8 @@ export type SubmissionDraft = {
 );
 
 export type InputSubmissionDraft = Extract<SubmissionDraft, { readonly type: "input" }>;
+export type WakeOptions = Omit<Extract<SubmissionDraft, { readonly type: "wake" }>, "type">;
+export type QueuedInputChange = Pick<InputSubmissionDraft, "content" | "entry">;
 
 export type SettledSubmissionRecord = SubmissionRecord & {
 	readonly status: "done" | "unanswered";
@@ -395,6 +412,8 @@ export type HarnessSettings = {
 	readonly stream?: ConversationStreamOptions;
 	readonly retry?: Partial<ConversationRetryPolicy>;
 	readonly compaction?: Partial<CompactionPolicy>;
+	/** Minimum usable clamped output before requesting a model or placing a summary; 0 disables the floor. Capped by smaller caller/model output limits. */
+	readonly minimumAnswerTokens?: number;
 	readonly toolExecution?: ToolExecutionMode;
 	readonly steeringMode?: QueueMode;
 	readonly followUpMode?: QueueMode;
@@ -407,6 +426,7 @@ export type Settings = {
 	readonly stream: ConversationStreamOptions;
 	readonly retry: ConversationRetryPolicy;
 	readonly compaction: CompactionPolicy;
+	readonly minimumAnswerTokens?: number;
 	readonly toolExecution: ToolExecutionMode;
 	readonly steeringMode: QueueMode;
 	readonly followUpMode: QueueMode;
@@ -494,6 +514,10 @@ export interface Conversation {
 	 * `pi.inbox`; `whenBusy: "reject"` rejects with `ConversationBusy` instead and writes nothing.
 	 */
 	submit(submission: SubmissionDraft, context: Context): Promise<Submission>;
+	wake(options: WakeOptions, context: Context): Promise<Submission>;
+	editQueuedInput(id: SubmissionId, change: QueuedInputChange, context: Context): Promise<void>;
+	moveQueuedInput(id: SubmissionId, before: SubmissionId | undefined, context: Context): Promise<void>;
+	promoteQueuedInput(id: SubmissionId, context: Context): Promise<void>;
 	/**
 	 * Admit a write of a `pi.reset` entry that starts a new context, carrying `handoff` as a user message when given.
 	 * Resolves after admission; while busy, it is placed at the next boundary.
@@ -593,10 +617,14 @@ export type HookResult<T> = T | undefined | Promise<T | undefined>;
 export interface GenerationHooks {
 	/** Before every request attempt, including recovery; the result is used for that request only. */
 	beforeRequest(
-		request: { readonly messages: readonly Message[] },
+		request: {
+			readonly messages: readonly Message[];
+			readonly model: Model<string>;
+			readonly options: Readonly<SimpleStreamOptions>;
+		},
 		api: HookApi,
 		context: Context,
-	): HookResult<{ readonly messages: readonly Message[] }>;
+	): HookResult<{ readonly messages?: readonly Message[]; readonly options?: Omit<SimpleStreamOptions, "signal"> }>;
 	/** Every terminal provider message, before classification. */
 	afterResponse(message: AssistantMessage, api: HookApi, context: Context): void | Promise<void>;
 	/** A final answer; the first `continue` appends a user message and continues the run. */

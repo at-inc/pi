@@ -58,7 +58,7 @@ import { prepareForkDocumentCopies } from "./forks.ts";
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
 /** A staged submission change: a settlement, or the placement of a queued submission at its entry. */
-type SubmissionChange = SubmissionSettlement | { readonly status: "placed"; readonly entry: EntryId };
+type SubmissionChange = SubmissionSettlement | { readonly status: "placed"; readonly entry?: EntryId };
 
 /**
  * Complete record after applying one change. Placement turns a queued input `placed` and a queued write `done`; only a
@@ -68,8 +68,10 @@ function applySubmissionChange(current: SubmissionRecord, change: SubmissionChan
 	if (current.status === "done" || current.status === "unanswered") return current;
 	if (change.status === "placed") {
 		if (current.status !== "queued") throw new Error(`Submission ${current.id} is not queued`);
-		const status = current.type === "input" ? "placed" : "done";
-		return { ...current, status, entry: change.entry } as SubmissionRecord;
+		if ((current.type === "wake") !== (change.entry === undefined))
+			throw new Error(`Submission ${current.id} has an invalid placement entry`);
+		const status = current.type === "write" ? "done" : "placed";
+		return { ...current, status, ...(change.entry === undefined ? {} : { entry: change.entry }) } as SubmissionRecord;
 	}
 	if (change.status === "done" && current.status !== "placed") {
 		throw new Error(`Submission ${current.id} is not a placed input`);
@@ -447,10 +449,10 @@ export class Transaction implements Tx {
 	}
 
 	/** Place a queued submission at `entry`; resolved during assembly like `settleSubmission()`. */
-	placeSubmission(id: SubmissionId, entry: EntryId): void {
+	placeSubmission(id: SubmissionId, entry?: EntryId): void {
 		this.#assertOpen();
 		this.#hasTableWrite = true;
-		this.#submissionChanges.push({ id, change: { status: "placed", entry } });
+		this.#submissionChanges.push({ id, change: { status: "placed", ...(entry === undefined ? {} : { entry }) } });
 	}
 
 	/** Internal: replace one task record completely. Tasks change their own state through their runtime. */

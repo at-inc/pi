@@ -17,6 +17,10 @@ export default defineConfig({
 			{ find: /^@at-inc\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
 			{ find: /^@at-inc\/pi-ai\/models$/, replacement: workspaceSourcePaths.aiModels },
 			{
+				find: /^@at-inc\/pi-ai\/api\/(.+)$/,
+				replacement: `${fileURLToPath(new URL("../ai/src/api", import.meta.url))}/$1.ts`,
+			},
+			{
 				find: /^@at-inc\/pi-ai\/utils\/(.+)$/,
 				replacement: `${workspaceSourcePaths.aiUtils}/$1.ts`,
 			},

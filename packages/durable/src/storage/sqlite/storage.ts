@@ -190,6 +190,13 @@ export class SqliteStorage implements Storage {
 		return idFromNumber<I>(this.nextId++);
 	}
 
+	async currentSeq(_context: Context): Promise<number> {
+		this.assertOpen();
+		const metadata = await this.db.get<MetadataRow>("SELECT next_seq FROM durable_metadata WHERE singleton = 1");
+		if (metadata === undefined) throw new Error("Durable SQLite metadata is missing");
+		return metadata.next_seq - 1;
+	}
+
 	async conversation(id: ConversationId, _context: Context): Promise<ConversationRecord | undefined> {
 		this.assertOpen();
 		const row = await this.db.get<JsonRow>("SELECT record FROM conversations WHERE id = ?", id);

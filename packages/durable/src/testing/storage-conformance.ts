@@ -91,6 +91,25 @@ function createCase(options: StorageConformanceOptions, name: string, test: Conf
 export function createStorageConformance(options: StorageConformanceOptions): readonly StorageConformanceCase[] {
 	const expect = assertionFacade(options.assertions);
 	return [
+		createCase(
+			options,
+			"reports the last successful persisted sequence without counting failed commits",
+			async (storage) => {
+				expect(await storage.currentSeq(context)).toBe(0);
+				const initial = await storage.commit(
+					[{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }],
+					context,
+				);
+				expect(await storage.currentSeq(context)).toBe(initial);
+				const empty = await storage.commit([], context);
+				expect(empty).toBeGreaterThan(initial);
+				expect(await storage.currentSeq(context)).toBe(empty);
+				await expect(createRoot(storage)).rejects.toThrow(
+					`ID ${ROOT_CONVERSATION_ID} already belongs to conversation`,
+				);
+				expect(await storage.currentSeq(context)).toBe(empty);
+			},
+		),
 		createCase(options, "reserves ID 1 for the immutable root conversation", async (storage) => {
 			expect(await storage.mintId<ConversationId>()).toBe(2);
 			await expect(createRoot(storage)).resolves.toBe(ROOT_CONVERSATION_ID);
@@ -1575,6 +1594,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 		createCase(options, "rejects every operation after close", async (storage) => {
 			await createRoot(storage);
 			await storage.close(context);
+			await expect(storage.currentSeq(context)).rejects.toThrow("closed");
 			await expect(storage.conversation(ROOT_CONVERSATION_ID, context)).rejects.toThrow("closed");
 			await expect(storage.commit([] satisfies StorageWrite[], context)).rejects.toThrow("closed");
 			await expect(storage.mintId<ConversationId>()).rejects.toThrow("closed");

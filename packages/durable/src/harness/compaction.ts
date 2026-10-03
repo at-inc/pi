@@ -19,7 +19,8 @@ import type {
 	TaskRuntime,
 	Tx,
 } from "../types.ts";
-import { orderToolResults } from "./context.ts";
+import { AgentDoc, compactionFits, summaryAtBoundary } from "./agent.ts";
+import { orderToolResults, readTxContext } from "./context.ts";
 import { addCompactionStatus, compactionStatus, LiveDoc, type LiveState, removeCompactionStatus } from "./live.ts";
 import { admitSubmission } from "./submissions.ts";
 import type {
@@ -170,7 +171,8 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				if (decision === undefined) decision = await hook(compaction, runtime, context);
 			});
 			if (decision !== undefined && "decline" in decision) return complete(runtime, context);
-			if (decision !== undefined) return place(runtime, firstKept, decision.summary, maxTokens, context);
+			if (decision !== undefined)
+				return place(runtime, firstKept, decision.summary, maxTokens, compaction.messages, context);
 			const request: SummaryRequest = {
 				attempt: 1,
 				model: ref,
@@ -240,7 +242,17 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				);
 				const live = await tx.doc(LiveDoc, runtime.conversationId);
 				if (summary !== undefined)
-					return placeSummary(tx, runtime, current, live, firstKept, summary, maxTokens, message.usage.output);
+					return placeSummary(
+						tx,
+						runtime,
+						current,
+						live,
+						firstKept,
+						summary,
+						maxTokens,
+						summarizedMessages(view, cut),
+						message.usage.output,
+					);
 				if (retry) {
 					const status = compactionStatus(live, runtime.taskId);
 					if (status !== undefined) status.retry = { at: until, error: message.errorMessage ?? "" };
@@ -451,6 +463,7 @@ async function place(
 	firstKept: EntryId,
 	summary: string,
 	maxTokens: number,
+	source: readonly Message[],
 	context: Context,
 ): Promise<void> {
 	await runtime.commit(
@@ -463,6 +476,7 @@ async function place(
 				firstKept,
 				summary,
 				maxTokens,
+				source,
 			),
 		context,
 	);
@@ -482,6 +496,7 @@ async function placeSummary(
 	firstKept: EntryId,
 	summary: string,
 	maxTokens: number,
+	source: readonly Message[],
 	outputTokens = 0,
 ): Promise<Next> {
 	removeCompactionStatus(live, runtime.taskId);
@@ -495,12 +510,49 @@ async function placeSummary(
 		};
 	}
 	const text = `${SUMMARY_PREFIX}${summary}${SUMMARY_SUFFIX}`;
-	const entry = {
+	if (
+		estimateTextTokens(text) >
+		source
+			.filter((message) => message.role !== "system")
+			.reduce((tokens, message) => tokens + estimateMessageTokens(message), 0)
+	) {
+		return {
+			status: "terminal",
+			outcome: {
+				status: "failed",
+				error: {
+					message: "Summarization output expands the selected conversation",
+					detail: { reason: "summary_budget" },
+				},
+			},
+		};
+	}
+	let entry: EntryDraft = {
 		kind: CompactionEntry.kind,
 		head: firstKept,
 		model: [{ role: "user", content: [{ type: "text", text }], timestamp: runtime.now() }],
 		data: { reason: current.input.reason },
 	} satisfies EntryDraft;
+	const settings = runtime.settings;
+	if ((settings.minimumAnswerTokens ?? 0) > 0) {
+		const view = await readTxContext(tx, runtime.conversationId);
+		entry = summaryAtBoundary(view, entry, runtime.now());
+		const stale = typeof view.head?.head === "number" && firstKept < view.head.head;
+		if (
+			!stale &&
+			!compactionFits(view, entry, await tx.doc(AgentDoc, runtime.conversationId), runtime.models, settings)
+		)
+			return {
+				status: "terminal",
+				outcome: {
+					status: "failed",
+					error: {
+						message: "Compaction cannot fit the request and minimum answer budget",
+						detail: { reason: "summary_budget" },
+					},
+				},
+			};
+	}
 	const result: CompactionResult =
 		current.owner === undefined
 			? {
@@ -510,6 +562,7 @@ async function placeSummary(
 						{ type: "write", requestId: `compaction:${runtime.taskId}`, entry },
 						runtime.now(),
 						runtime.settings,
+						runtime.models,
 					),
 				}
 			: { entryId: (await tx.appendEntry(runtime.conversationId, entry)).id };

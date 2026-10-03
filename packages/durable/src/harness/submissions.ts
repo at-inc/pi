@@ -1,7 +1,9 @@
-import { type Context, copyJson, type JsonRepresentation } from "@earendil-works/chord";
-import { UserEntry } from "../entries.ts";
+import type { Models } from "@at-inc/pi-ai";
+import { type Context, copyJson, type Draft, type JsonRepresentation } from "@earendil-works/chord";
+import { CompactionEntry, UserEntry } from "../entries.ts";
 import { ConversationBusy } from "../errors.ts";
 import type { SessionImpl } from "../session/session.ts";
+import type { Transaction } from "../session/transaction.ts";
 import type {
 	CommitPublication,
 	ConversationId,
@@ -11,10 +13,20 @@ import type {
 	SubmissionRecord,
 	Tx,
 } from "../types.ts";
+import { AgentDoc, compactionFits, summaryAtBoundary } from "./agent.ts";
+import { readTxContext } from "./context.ts";
 import { startRun } from "./generation.ts";
-import { applyBoundary, InboxDoc, isStale, prepareBoundary, type QueueModes, removeInboxItem } from "./inbox.ts";
+import { applyBoundary, InboxDoc, type InboxItem, isStale, prepareBoundary, removeInboxItem } from "./inbox.ts";
 import { LiveDoc } from "./live.ts";
-import type { SettledSubmissionRecord, Submission, SubmissionDraft, UserInput } from "./types.ts";
+import type {
+	PreparedInputEntry,
+	QueuedInputChange,
+	Settings,
+	SettledSubmissionRecord,
+	Submission,
+	SubmissionDraft,
+	UserInput,
+} from "./types.ts";
 import { closedError, Waiters } from "./util.ts";
 
 type AbortResult = "aborted" | "already_placed" | "settled";
@@ -25,7 +37,8 @@ export class Submissions {
 	readonly #storage: Storage;
 	readonly #now: () => number;
 	/** Read at each admission, on the Session line. */
-	readonly #queueModes: () => QueueModes;
+	readonly #queueModes: () => Settings;
+	readonly #models: Models;
 	/** Enable task scheduling; submitting or waiting asks for progress. */
 	readonly #resume: () => void;
 	readonly #waiters = new Waiters<SubmissionId, SettledSubmissionRecord>();
@@ -35,13 +48,15 @@ export class Submissions {
 		session: SessionImpl,
 		storage: Storage,
 		now: () => number,
-		queueModes: () => QueueModes,
+		queueModes: () => Settings,
 		resume: () => void,
+		models: Models,
 	) {
 		this.#session = session;
 		this.#storage = storage;
 		this.#now = now;
 		this.#queueModes = queueModes;
+		this.#models = models;
 		this.#resume = resume;
 		session.subscribeCommits((publication) => this.#observe(publication));
 		session.subscribeClose(() => {
@@ -54,7 +69,7 @@ export class Submissions {
 	async submit(conversationId: ConversationId, draft: SubmissionDraft, context: Context): Promise<Submission> {
 		this.#resume();
 		const id = await this.#session.commitWith(
-			(tx) => admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes()),
+			(tx) => admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), this.#models),
 			context,
 		);
 		return new SubmissionHandle(id, this);
@@ -108,6 +123,78 @@ export class Submissions {
 			this.#waiters.resolve(change.value.id, change.value);
 		}
 	}
+
+	editInput(
+		conversationId: ConversationId,
+		id: SubmissionId,
+		change: QueuedInputChange,
+		context: Context,
+	): Promise<void> {
+		return this.#session.commitWith(async (tx) => {
+			const { item } = await queuedInput(tx, conversationId, id);
+			validatePreparedInput(change.entry);
+			const copied = copyJson(change, { omitUndefinedProperties: true }) as JsonObject;
+			item.content = copied.content as JsonRepresentation<UserInput>;
+			if (copied.entry === undefined) delete item.entry;
+			else item.entry = copied.entry as JsonObject;
+		}, context);
+	}
+
+	moveInput(
+		conversationId: ConversationId,
+		id: SubmissionId,
+		before: SubmissionId | undefined,
+		context: Context,
+	): Promise<void> {
+		return this.#session.commitWith(async (tx) => {
+			const { items, index, item } = await queuedInput(tx, conversationId, id);
+			if (before !== undefined) await queuedInput(tx, conversationId, before);
+			if (before === id) return;
+			const moved = copyJson(item) as Draft<InboxItem>;
+			items.splice(index, 1);
+			const target = before === undefined ? items.length : items.findIndex((candidate) => candidate.id === before);
+			items.splice(target, 0, moved);
+		}, context);
+	}
+
+	promoteInput(conversationId: ConversationId, id: SubmissionId, context: Context): Promise<void> {
+		return this.#session.commitWith(async (tx) => {
+			const { items, index, item } = await queuedInput(tx, conversationId, id);
+			const moved = copyJson(item) as Draft<Extract<InboxItem, { content: JsonRepresentation<UserInput> }>>;
+			moved.mode = "steer";
+			items.splice(index, 1);
+			items.unshift(moved);
+		}, context);
+	}
+}
+
+async function queuedInput(
+	tx: Transaction,
+	conversationId: ConversationId,
+	id: SubmissionId,
+): Promise<{
+	items: Draft<InboxItem[]>;
+	index: number;
+	item: Draft<Extract<InboxItem, { content: JsonRepresentation<UserInput> }>>;
+}> {
+	const receipt = await tx.submission(id);
+	if (receipt?.conversationId !== conversationId || receipt.type !== "input" || receipt.status !== "queued")
+		throw new Error(`Input submission ${id} is not queued in conversation ${conversationId}`);
+	const items = (await tx.doc(InboxDoc, conversationId)).items;
+	const index = items.findIndex((item) => item.id === id);
+	const item = items[index];
+	if (item === undefined || item.mode === "write" || "wake" in item)
+		throw new Error(`Input submission ${id} has no queued input`);
+	return { items, index, item };
+}
+
+function validatePreparedInput(entry: PreparedInputEntry | undefined): void {
+	if (entry === undefined) return;
+	for (const key of Object.keys(entry))
+		if (key !== "kind" && key !== "model" && key !== "data")
+			throw new Error(`Prepared input entry cannot set ${key}`);
+	if (!Array.isArray(entry.model) || entry.model.length === 0)
+		throw new Error("Prepared input entry requires a non-empty model projection");
 }
 
 class SubmissionHandle implements Submission {
@@ -150,23 +237,56 @@ export async function admitSubmission(
 	conversationId: ConversationId,
 	draft: SubmissionDraft,
 	now: number,
-	queueModes: QueueModes,
+	queueModes: Settings,
+	models: Models,
 ): Promise<SubmissionId> {
+	if (draft.identity !== undefined && typeof draft.identity !== "string")
+		throw new Error("Submission identity must be a string");
 	if (draft.requestId !== undefined) {
 		const existing = await tx.submissionByRequest(conversationId, draft.requestId);
 		if (existing !== undefined) {
 			if (existing.type !== draft.type) {
 				throw new Error(`Request ${draft.requestId} already identifies a submission of type ${existing.type}`);
 			}
+			if (existing.identity !== draft.identity)
+				throw new Error(`Request ${draft.requestId} has a different submission identity`);
 			return existing.id;
 		}
 	}
+	if (draft.type === "input") validatePreparedInput(draft.entry);
 	const live = await tx.doc(LiveDoc, conversationId);
 	const busy = live.run !== undefined;
-	if (busy && draft.type === "input" && draft.whenBusy === "reject") throw new ConversationBusy(conversationId);
-	const requestId = draft.requestId === undefined ? {} : { requestId: draft.requestId };
+	if (busy && draft.type !== "write" && draft.whenBusy === "reject") throw new ConversationBusy(conversationId);
+	const requestId = {
+		...(draft.requestId === undefined ? {} : { requestId: draft.requestId }),
+		...(draft.identity === undefined ? {} : { identity: draft.identity }),
+	};
 	// A boundary reads the table, so it is prepared before the first table write; a busy one needs none.
-	const boundary = busy ? undefined : await prepareBoundary(tx, conversationId, queueModes);
+	const boundary = busy ? undefined : await prepareBoundary(tx, conversationId, queueModes, models);
+	const view =
+		draft.type === "write" && draft.entry.kind === CompactionEntry.kind && (queueModes.minimumAnswerTokens ?? 0) > 0
+			? (boundary?.view ?? (await readTxContext(tx, conversationId)))
+			: undefined;
+	if (draft.type === "write" && view !== undefined)
+		draft = { ...draft, entry: summaryAtBoundary(view, draft.entry, now) };
+	if (
+		draft.type === "write" &&
+		draft.entry.kind === CompactionEntry.kind &&
+		view !== undefined &&
+		!(boundary !== undefined && isStale(boundary, draft.entry)) &&
+		!compactionFits(view, draft.entry, await tx.doc(AgentDoc, conversationId), models, queueModes)
+	) {
+		return (
+			await tx.createSubmission({
+				conversationId,
+				...requestId,
+				type: "write",
+				status: "unanswered",
+				reason: "context_budget",
+				detail: "Compaction cannot fit the request and minimum answer budget",
+			})
+		).id;
+	}
 	if (boundary === undefined || boundary.inbox.items.length > 0) {
 		const { id } = await tx.createSubmission({
 			conversationId,
@@ -175,14 +295,23 @@ export async function admitSubmission(
 			status: "queued",
 		});
 		// Hosts may leave optional fields `undefined`; drafts take strict JSON.
-		const value = copyJson(draft.type === "write" ? draft.entry : draft.content, {
+		const value = copyJson(draft.type === "write" ? draft.entry : draft.type === "input" ? draft.content : {}, {
 			omitUndefinedProperties: true,
 		});
 		const items = (boundary?.inbox ?? (await tx.doc(InboxDoc, conversationId))).items;
 		if (draft.type === "write") items.push({ id, mode: "write", entry: value as JsonObject });
+		else if (draft.type === "wake")
+			items.push({ id, mode: draft.whenBusy === "steer" ? "steer" : "followUp", wake: true });
 		else {
 			const mode = draft.whenBusy === "steer" ? "steer" : "followUp";
-			items.push({ id, mode, content: value as JsonRepresentation<UserInput> });
+			items.push({
+				id,
+				mode,
+				content: value as JsonRepresentation<UserInput>,
+				...(draft.entry === undefined
+					? {}
+					: { entry: copyJson(draft.entry, { omitUndefinedProperties: true }) as JsonObject }),
+			});
 		}
 		if (boundary === undefined) return id;
 		const { users } = await applyBoundary(tx, boundary, "final", now);
@@ -198,8 +327,13 @@ export async function admitSubmission(
 		const write = { conversationId, ...requestId, type: "write", status: "done", entry: entry.id } as const;
 		return (await tx.createSubmission(write)).id;
 	}
+	if (draft.type === "wake") {
+		const { id } = await tx.createSubmission({ conversationId, ...requestId, type: "wake", status: "placed" });
+		await startRun(tx, conversationId, live, [id]);
+		return id;
+	}
 	const message = { role: "user", content: draft.content, timestamp: now } as const;
-	const entry = await tx.appendEntry(UserEntry, conversationId, { model: [message] });
+	const entry = await tx.appendEntry(conversationId, draft.entry ?? { kind: UserEntry.kind, model: [message] });
 	const input = { conversationId, ...requestId, type: "input", status: "placed", entry: entry.id } as const;
 	const { id } = await tx.createSubmission(input);
 	await startRun(tx, conversationId, live, [id]);

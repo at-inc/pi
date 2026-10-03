@@ -360,6 +360,7 @@ class DurableTui {
 	#syncQueue(inbox: InboxState): void {
 		this.#queue.clear();
 		for (const item of inbox.items) {
+			if ("wake" in item) continue;
 			const text =
 				item.mode === "write" ? `<${String(item.entry.kind)}>` : userText(item.content as UserMessage["content"]);
 			this.#queue.addChild(new TruncatedText(theme.fg("muted", `[${item.mode}] ${text}`), 1, 0));

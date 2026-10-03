@@ -1,16 +1,20 @@
+import type { Models } from "@at-inc/pi-ai";
 import type { Draft, JsonRepresentation } from "@earendil-works/chord";
 import { defineDoc } from "../documents.ts";
-import { UserEntry } from "../entries.ts";
+import { CompactionEntry, UserEntry } from "../entries.ts";
 import type { ConversationId, EntryDraft, EntryId, JsonObject, SubmissionId, Tx } from "../types.ts";
+import { AgentDoc, compactionFits, summaryAtBoundary } from "./agent.ts";
+import { type CommitContext, extendContext, readTxContext } from "./context.ts";
 import type { QueueMode, Settings, UserInput } from "./types.ts";
 
 /** A queued submission: user input for a run, or a passive entry write. */
 export type InboxItem =
-	| { id: SubmissionId; mode: "steer" | "followUp"; content: JsonRepresentation<UserInput> }
+	| { id: SubmissionId; mode: "steer" | "followUp"; content: JsonRepresentation<UserInput>; entry?: JsonObject }
+	| { id: SubmissionId; mode: "steer" | "followUp"; wake: true }
 	/** `entry` is an `EntryDraft`, stored as plain JSON. */
 	| { id: SubmissionId; mode: "write"; entry: JsonObject };
 
-/** Built-in queue of one conversation's submissions waiting for a boundary, in ID order. */
+/** Built-in queue of one conversation's submissions waiting for a boundary, in placement order. */
 export type InboxState = { items: InboxItem[] };
 
 export const InboxDoc = defineDoc<InboxState>({
@@ -32,6 +36,9 @@ export type Boundary = {
 	readonly inbox: Draft<InboxState>;
 	readonly steeringMode: QueueMode;
 	readonly followUpMode: QueueMode;
+	readonly settings: Settings;
+	readonly models: Models;
+	view?: CommitContext;
 	/** Start of the active range, the newest head marker's `head`; advanced by heads written in this commit. */
 	head: EntryId | undefined;
 };
@@ -43,7 +50,12 @@ export type BoundaryResult = { readonly users: SubmissionId[]; readonly reset: b
  * Read what a boundary needs. Table reads must precede the commit's first table write, so callers prepare the
  * boundary at the start of their commit.
  */
-export async function prepareBoundary(tx: Tx, conversationId: ConversationId, modes: QueueModes): Promise<Boundary> {
+export async function prepareBoundary(
+	tx: Tx,
+	conversationId: ConversationId,
+	modes: Settings,
+	models: Models,
+): Promise<Boundary> {
 	const head = (await tx.latestHeadMarker(conversationId))?.head;
 	const inbox = await tx.doc(InboxDoc, conversationId);
 	return {
@@ -51,6 +63,9 @@ export async function prepareBoundary(tx: Tx, conversationId: ConversationId, mo
 		inbox,
 		steeringMode: modes.steeringMode,
 		followUpMode: modes.followUpMode,
+		settings: modes,
+		models,
+		...((modes.minimumAnswerTokens ?? 0) > 0 ? { view: await readTxContext(tx, conversationId) } : {}),
 		head,
 	};
 }
@@ -83,20 +98,81 @@ export async function applyBoundary(
 	// `appendEntry()` copies the drafts' values; the items are removed only afterwards.
 	for (const index of writes) {
 		const item = items[index] as Draft<Extract<InboxItem, { mode: "write" }>>;
-		const draft = item.entry as unknown as EntryDraft;
+		let draft = item.entry as unknown as EntryDraft;
 		if (isStale(boundary, draft)) {
 			tx.settleSubmission(item.id, { status: "unanswered", reason: "stale" });
 			continue;
 		}
+		const following: EntryDraft[] =
+			draft.kind === CompactionEntry.kind && boundary.view !== undefined
+				? [
+						...writes
+							.filter((later) => later > index)
+							.map(
+								(later) =>
+									(items[later] as Extract<InboxItem, { mode: "write" }>).entry as unknown as EntryDraft,
+							),
+						...users
+							.filter((user) => !("wake" in items[user]!))
+							.map(
+								(user) =>
+									((items[user] as Extract<InboxItem, { content: JsonRepresentation<UserInput> }>)
+										.entry as unknown as EntryDraft | undefined) ??
+									({
+										kind: UserEntry.kind,
+										model: [
+											{
+												role: "user",
+												content: (
+													items[user] as Extract<InboxItem, { content: JsonRepresentation<UserInput> }>
+												).content as UserInput,
+												timestamp: now,
+											},
+										],
+									} satisfies EntryDraft),
+							),
+					]
+				: [];
+		if (draft.kind === CompactionEntry.kind && boundary.view !== undefined)
+			draft = summaryAtBoundary(boundary.view, draft, now, following);
+		if (
+			draft.kind === CompactionEntry.kind &&
+			boundary.view !== undefined &&
+			!compactionFits(
+				boundary.view,
+				draft,
+				await tx.doc(AgentDoc, conversationId),
+				boundary.models,
+				boundary.settings,
+				following,
+			)
+		) {
+			tx.settleSubmission(item.id, {
+				status: "unanswered",
+				reason: "context_budget",
+				detail: "Compaction cannot fit the request and minimum answer budget",
+			});
+			continue;
+		}
 		const entry = await tx.appendEntry(conversationId, draft);
+		if (boundary.view !== undefined) boundary.view = extendContext(boundary.view, entry);
 		if (draft.head !== undefined) boundary.head = draft.head === "self" ? entry.id : draft.head;
 		tx.placeSubmission(item.id, entry.id);
 	}
 	const placed: SubmissionId[] = [];
 	for (const index of users) {
 		const item = items[index] as Draft<Extract<InboxItem, { mode: "steer" | "followUp" }>>;
+		if ("wake" in item) {
+			tx.placeSubmission(item.id);
+			placed.push(item.id);
+			continue;
+		}
 		const message = { role: "user", content: item.content as UserInput, timestamp: now } as const;
-		const entry = await tx.appendEntry(UserEntry, conversationId, { model: [message] });
+		const entry = await tx.appendEntry(
+			conversationId,
+			(item.entry as unknown as EntryDraft | undefined) ?? { kind: UserEntry.kind, model: [message] },
+		);
+		if (boundary.view !== undefined) boundary.view = extendContext(boundary.view, entry);
 		tx.placeSubmission(item.id, entry.id);
 		placed.push(item.id);
 	}

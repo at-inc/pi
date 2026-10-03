@@ -1,6 +1,11 @@
+import type { Message, Model, Models } from "@at-inc/pi-ai";
+import { clampMaxTokensToContext } from "@at-inc/pi-ai/api/simple-options";
+import { estimateContextTokens } from "@at-inc/pi-ai/utils/estimate";
+import { getCurrentSystemMessage, normalizeContext } from "@at-inc/pi-ai/utils/transcript";
 import { copyJson, type Draft } from "@earendil-works/chord";
 import { defineDoc } from "../documents.ts";
-import type { ConversationId, ConversationRecord, Tx } from "../types.ts";
+import type { ConversationId, ConversationRecord, EntryDraft, EntryId, EntryRecord, Tx } from "../types.ts";
+import { type CommitContext, extendContext } from "./context.ts";
 import type {
 	Agent,
 	AgentChange,
@@ -51,10 +56,96 @@ export function resolveSettings(settings: HarnessSettings | undefined): Settings
 		stream: { ...settings?.stream },
 		retry: { ...DEFAULT_RETRY_POLICY, ...settings?.retry },
 		compaction: { ...DEFAULT_COMPACTION_POLICY, ...settings?.compaction },
+		...(settings?.minimumAnswerTokens === undefined
+			? {}
+			: { minimumAnswerTokens: Math.max(0, settings.minimumAnswerTokens) }),
 		toolExecution: settings?.toolExecution ?? "parallel",
 		steeringMode: settings?.steeringMode ?? "one-at-a-time",
 		followUpMode: settings?.followUpMode ?? "one-at-a-time",
 	};
+}
+
+export function requestFits(
+	model: Model<string>,
+	messages: readonly Message[],
+	settings: Settings,
+	maxTokens?: number,
+): boolean {
+	const floor = settings.minimumAnswerTokens ?? 0;
+	if (floor <= 0) return true;
+	const requested =
+		maxTokens ??
+		("maxTokens" in settings.stream && typeof settings.stream.maxTokens === "number"
+			? settings.stream.maxTokens
+			: model.maxTokens);
+	const ceilings = [floor, requested, model.maxTokens].filter((tokens) => tokens > 0);
+	const minimum = Math.min(...ceilings);
+	const transcript = normalizeContext({ messages: [...messages] });
+	return (
+		clampMaxTokensToContext(model, transcript, requested > 0 ? requested : Number.POSITIVE_INFINITY) >= minimum &&
+		(model.contextWindow <= 0 || estimateContextTokens(transcript).tokens + minimum < model.contextWindow)
+	);
+}
+
+export function compactionFits(
+	view: CommitContext,
+	entry: EntryDraft,
+	agent: Readonly<AgentState>,
+	models: Models,
+	settings: Settings,
+	following: readonly EntryDraft[] = [],
+): boolean {
+	if ((settings.minimumAnswerTokens ?? 0) <= 0) return true;
+	const ref = agent.model;
+	const model = ref === undefined ? undefined : models.getModel(ref.provider, ref.modelId);
+	if (model === undefined || typeof entry.head !== "number") return false;
+	const latest = view.range.at(-1);
+	if (latest === undefined) return false;
+	const marker = {
+		...summaryAtBoundary(view, entry, entry.model?.[0]?.timestamp ?? 0, following),
+		head: entry.head,
+		id: (latest.id + 1) as EntryId,
+		conversationId: latest.conversationId,
+	} satisfies EntryRecord;
+	let projected = extendContext(view, marker);
+	for (const draft of following) {
+		if (typeof draft.head === "number" && projected.head?.head !== undefined && draft.head < projected.head.head)
+			continue;
+		const id = (projected.range.at(-1)!.id + 1) as EntryId;
+		projected = extendContext(projected, {
+			...draft,
+			id,
+			conversationId: latest.conversationId,
+			head: draft.head === "self" ? id : draft.head,
+		});
+	}
+	const messages: Message[] = projected.messages.filter((message) => message.role !== "system");
+	const system = getCurrentSystemMessage([...view.messages, ...following.flatMap((draft) => draft.model ?? [])]);
+	const sections = { ...system?.sections };
+	if (agent.instructions === undefined) delete sections[INSTRUCTIONS_KEY];
+	else sections[INSTRUCTIONS_KEY] = `<${INSTRUCTIONS_KEY}>\n${agent.instructions}\n</${INSTRUCTIONS_KEY}>`;
+	if (system !== undefined || Object.keys(sections).length > 0)
+		messages.push({
+			...system,
+			role: "system",
+			content: system?.content ?? "",
+			sections,
+			timestamp: entry.model?.[0]?.timestamp ?? 0,
+		});
+	return requestFits(model, messages, settings);
+}
+
+export function summaryAtBoundary(
+	view: CommitContext,
+	entry: EntryDraft,
+	now: number,
+	following: readonly EntryDraft[] = [],
+): EntryDraft {
+	const timestamp = [...view.messages, ...following.flatMap((draft) => draft.model ?? [])].reduce(
+		(latest, message) => Math.max(latest, message.timestamp + 1),
+		now,
+	);
+	return { ...entry, model: entry.model?.map((message) => ({ ...message, timestamp })) };
 }
 
 /** Apply one change to `pi.agent`: a given field replaces the stored one, `null` clears it, `undefined` changes nothing. */

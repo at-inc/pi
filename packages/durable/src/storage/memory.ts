@@ -242,6 +242,11 @@ export class MemoryStorage implements Storage {
 	private nextSeq = 1;
 	private closed = false;
 
+	async currentSeq(_context: Context): Promise<number> {
+		this.assertOpen();
+		return this.nextSeq - 1;
+	}
+
 	async commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
 		return this.prepareCommit(writes).apply();
 	}

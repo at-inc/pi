@@ -305,6 +305,10 @@ export class JsonlStorage implements Storage {
 		return seq;
 	}
 
+	async currentSeq(context: Context): Promise<number> {
+		return this.store.currentSeq(context);
+	}
+
 	async mintId<I extends Id<string>>(): Promise<I> {
 		return this.store.mintId<I>();
 	}
