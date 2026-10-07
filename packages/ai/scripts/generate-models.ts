@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
+import { applyForkModelMetadata, applyImageInputMetadata, getForkImageModels } from "./fork-model-data.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
 import {
@@ -30,6 +31,7 @@ import type {
 import {
 	assertExactModelIds,
 	createModelDataManifest,
+	groupProviderModelData,
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
@@ -289,6 +291,15 @@ const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
 	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
 	low: "low",
 } as const;
+// Azure Foundry rejects DeepSeek's own max effort.
+const AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP = {
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: null,
+	max: null,
+} as const;
 // Verified against Fireworks Messages raw_output on 2026-09-10 (#9323).
 // Fall back to verified support when models.dev omits effort metadata; this is
 // not an allowlist. Any Fireworks Messages model advertising effort uses adaptive thinking.
@@ -371,25 +382,6 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-6.1-sol",
 	"gpt-6-luna",
 ]);
-// Provider-specific fast inference support is catalog metadata, not a client-side model-name heuristic.
-// Keep exact IDs: new families and gateway transports need explicit confirmation.
-const OPENAI_FAST_MODE_MODEL_IDS = new Set([
-	"gpt-6-astra",
-	"gpt-6-sol",
-	"gpt-6.1-sol",
-	"gpt-6-luna",
-	"gpt-5.6-sol",
-	"gpt-5.6-terra",
-	"gpt-5.6-luna",
-	"gpt-5.5",
-	"gpt-5.4",
-]);
-const ANTHROPIC_FAST_MODE_MODEL_IDS = new Set([
-	"claude-opus-5-5",
-	"claude-sonnet-5",
-	"claude-opus-4-8",
-	"claude-opus-4-6",
-]);
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
@@ -426,16 +418,6 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-6.1-sol",
 	"gpt-6-luna",
 ]);
-
-// Keep the generated default no less restrictive than coding-agent's historical
-// image preprocessing. Provider limits can narrow this profile, but unknown
-// providers retain the cache-safe 2000px / 4.5 MiB behavior.
-const DEFAULT_IMAGE_RESIZE = {
-	maxWidth: 2000,
-	maxHeight: 2000,
-	maxBytes: 4.5 * 1024 * 1024,
-	jpegQuality: 80,
-} as const;
 
 function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cost"] {
 	return {
@@ -893,7 +875,7 @@ function applyStrictToolCompatMetadata(model: Model<Api>): void {
 const OPENAI_GRAMMAR_TOOL_PROVIDERS = new Set([
 	"openai",
 	"openai-codex",
-	"azure-openai-responses",
+	"azure",
 	"github-copilot",
 	"opencode",
 	"cloudflare-ai-gateway",
@@ -1005,34 +987,6 @@ function applyPromptCacheMetadata(model: Model<Api>): void {
 	// behavior; a documented TTL alone does not establish full cache loss.
 }
 
-function applyImageInputMetadata(model: AnyModel): void {
-	if (!model.input.includes("image")) return;
-
-	const providerLimits: AnyModel["inputLimits"] =
-		model.provider === "anthropic"
-			? {
-					maxRequestBytes: 32 * 1024 * 1024,
-					images: { maxPerRequest: model.type !== "image" && model.contextWindow === 200000 ? 100 : 600 },
-				}
-			: model.provider === "amazon-bedrock"
-				? { images: { maxPerMessage: 20 } }
-				: model.provider === "openai"
-					? { maxRequestBytes: 512 * 1024 * 1024, images: { maxPerRequest: 1500 } }
-					: model.provider === "google"
-						? { maxRequestBytes: 20 * 1024 * 1024, images: { maxPerRequest: 3600 } }
-						: undefined;
-	const configuredImages = model.inputLimits?.images;
-	model.inputLimits = {
-		...providerLimits,
-		...model.inputLimits,
-		images: {
-			...providerLimits?.images,
-			...configuredImages,
-			resize: { ...DEFAULT_IMAGE_RESIZE, ...configuredImages?.resize },
-		},
-	};
-}
-
 function isGemma4Model(modelId: string): boolean {
 	return /gemma-?4/.test(modelId.toLowerCase());
 }
@@ -1126,9 +1080,6 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh", max: "max" });
 	}
-	if (model.id.includes("opus-5-5") || model.id.includes("opus.5.5")) {
-		mergeThinkingLevelMap(model, { off: null, minimal: null });
-	}
 	if (model.id.includes("fable-5")) {
 		mergeThinkingLevelMap(model, { off: null, xhigh: "xhigh", max: "max" });
 	}
@@ -1147,10 +1098,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			model,
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
-				: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
-					model.id.includes("deepseek-v4-flash")
-					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
-					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
+				: model.provider === "azure"
+					? AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP
+					: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
+						model.id.includes("deepseek-v4-flash")
+						? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
+						: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}
 	if (model.provider === "groq" && model.id === "qwen/qwen3.6-27b") {
@@ -1158,36 +1111,6 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.provider === "openai-codex" && supportsOpenAiXhigh(model.id)) {
 		mergeThinkingLevelMap(model, { minimal: "low" });
-	}
-	if (
-		model.id === "gpt-6-astra" &&
-		(model.api === "openai-responses" ||
-			model.api === "azure-openai-responses" ||
-			model.api === "openai-codex-responses")
-	) {
-		mergeThinkingLevelMap(model, {
-			off: null,
-			minimal: null,
-			low: "low",
-			medium: "medium",
-			high: "high",
-			xhigh: "xhigh",
-			max: "max",
-		});
-	} else if (
-		(model.id.includes("gpt-6-astra") || model.id.includes("gpt-6.1-sol")) &&
-		model.api !== "openai-responses" &&
-		model.api !== "azure-openai-responses" &&
-		model.api !== "openai-codex-responses"
-	) {
-		// Passthrough catalogs also must not advertise unsupported none/minimal efforts.
-		mergeThinkingLevelMap(model, { off: null, minimal: null });
-	}
-	if (
-		(model.id.includes("gpt-6-sol") || model.id.includes("gpt-6-luna")) &&
-		model.provider !== "openai-codex"
-	) {
-		mergeThinkingLevelMap(model, { minimal: null });
 	}
 	if (
 		(model.provider === "moonshotai" || model.provider === "moonshotai-cn") &&
@@ -1847,12 +1770,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl: getBedrockBaseUrl(id),
 					reasoning: m.reasoning === true,
 					input: (m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"]) as ("text" | "image")[],
-					cost: {
-						input: m.cost?.input || 0,
-						output: m.cost?.output || 0,
-						cacheRead: m.cost?.cache_read || 0,
-						cacheWrite: m.cost?.cache_write || 0,
-					},
+					// Includes models.dev pricing tiers, e.g. the long-context tier for OpenAI models (#10326).
+					cost: getModelsDevCost(m.cost),
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					...(m.structured_output === true && { compat: { supportsStrictMode: true } }),
@@ -2023,7 +1942,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				} else if (upstream === "anthropic") {
 					api = "anthropic-messages";
 					baseUrl = CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL;
-					id = nativeId;
+					// The /anthropic passthrough forwards the model ID to Anthropic unchanged.
+					// models.dev lists dotted versions (claude-opus-5.5), but Anthropic only
+					// accepts dashed IDs (claude-opus-5-5).
+					id = nativeId.replaceAll(".", "-");
 				} else if (upstream === "workers-ai") {
 					api = "openai-completions";
 					baseUrl = CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL;
@@ -2792,6 +2714,32 @@ const OPENCODE_CLASSIFIER_MODELS: ClassifierModel<"typesafe-system-one">[] = [
 ];
 
 const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-workers-ai-system-one">[] = [
+	// Cloudflare-hosted Clef decision models. They accept images, but classifier
+	// contexts carry text or JSON state only, so the catalog advertises text.
+	// Pricing: https://developers.cloudflare.com/workers-ai/models/clef/
+	// and https://developers.cloudflare.com/workers-ai/models/clef-flash/
+	{
+		type: "classifier",
+		id: "@cf/cloudflare/clef",
+		name: "Clef",
+		api: "cloudflare-workers-ai-system-one",
+		provider: "cloudflare-workers-ai",
+		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+		input: ["text"],
+		cost: { input: 0.24, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 65536,
+	},
+	{
+		type: "classifier",
+		id: "@cf/cloudflare/clef-flash",
+		name: "Clef Flash",
+		api: "cloudflare-workers-ai-system-one",
+		provider: "cloudflare-workers-ai",
+		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+		input: ["text"],
+		cost: { input: 0.09, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 65536,
+	},
 	{
 		type: "classifier",
 		id: "typesafe/jev",
@@ -2802,20 +2750,6 @@ const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-worke
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 32000,
-	},
-];
-
-const OPENAI_CODEX_IMAGE_MODELS: ImageModel<"openai-codex-images">[] = [
-	{
-		type: "image",
-		id: "chatgpt-image-generation",
-		name: "ChatGPT Image Generation",
-		api: "openai-codex-images",
-		provider: "openai-codex",
-		baseUrl: "https://chatgpt.com/backend-api",
-		input: ["text", "image"],
-		output: ["image"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	},
 ];
 
@@ -3466,17 +3400,13 @@ async function generateModels() {
 		"gpt-5.6-luna": 1050000,
 		"gpt-5.6-sol": 1050000,
 		"gpt-5.6-terra": 1050000,
-		"gpt-6-astra": 1050000,
-		"gpt-6-luna": 1050000,
-		"gpt-6-sol": 1050000,
-		"gpt-6.1-sol": 1050000,
 	};
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
 		.map((model) => ({
 			...model,
 			api: "azure-openai-responses",
-			provider: "azure-openai-responses",
+			provider: "azure",
 			baseUrl: "",
 			cost: {
 				input: model.cost.input,
@@ -3488,23 +3418,34 @@ async function generateModels() {
 		}));
 	allModels.push(...azureOpenAiModels);
 
+	// Azure resells DeepSeek at its own rates. US data zone, checked 2026-09-16.
+	// https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/deepseek/
+	const AZURE_DEEPSEEK_V4_PRO_COST: ModelCost = { input: 1.925, output: 3.828, cacheRead: 0.165, cacheWrite: 0 };
+	// Azure 400s on DeepSeek's `thinking` field and on every prompt cache parameter, discards a
+	// `developer` system message unbilled once reasoning_effort is set, and honours mid-convo ones (#9645).
+	const azureDeepSeekModels: Model<Api>[] = allModels
+		.filter((model) => model.provider === "deepseek" && model.id === "deepseek-v4-pro")
+		.map((model) => ({
+			...model,
+			provider: "azure",
+			baseUrl: "",
+			cost: AZURE_DEEPSEEK_V4_PRO_COST,
+			compat: {
+				...(model.compat as OpenAICompletionsCompat),
+				supportsDeveloperRole: false,
+				supportsMidConvoSystemMessages: true,
+				thinkingFormat: "openai",
+				supportsLongCacheRetention: false,
+			},
+		}));
+	allModels.push(...azureDeepSeekModels);
+
 	for (const model of allModels) {
-		// Cloudflare's OpenAI endpoint forwards the priority service tier unchanged.
-		// Apply after Azure cloning so support does not leak to unverified providers.
-		if (
-			((model.provider === "openai" || model.provider === "cloudflare-ai-gateway") &&
-				model.api === "openai-responses" && OPENAI_FAST_MODE_MODEL_IDS.has(model.id)) ||
-			(model.provider === "openai-codex" && model.api === "openai-codex-responses" &&
-				OPENAI_FAST_MODE_MODEL_IDS.has(model.id)) ||
-			(model.provider === "anthropic" && model.api === "anthropic-messages" &&
-				ANTHROPIC_FAST_MODE_MODEL_IDS.has(model.id))
-		) {
-			model.supportsFastMode = true;
-		}
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
 		applyThinkingLevelMetadata(model);
+		applyForkModelMetadata(model);
 		applyStrictToolCompatMetadata(model);
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
@@ -3529,7 +3470,7 @@ async function generateModels() {
 		// Only add if not already present (models.dev takes priority over OpenRouter).
 		providers[model.provider].chat[model.id] ??= { ...model, type: "chat" };
 	}
-	for (const model of [...openRouterCatalog.images, ...OPENAI_CODEX_IMAGE_MODELS]) {
+	for (const model of [...openRouterCatalog.images, ...getForkImageModels("openai-codex")]) {
 		applyImageInputMetadata(model);
 		providers[model.provider] ??= { chat: {}, image: {}, classifier: {} };
 		providers[model.provider].image[model.id] ??= model;
@@ -3582,22 +3523,9 @@ async function generateModels() {
 	const generatedDataProviders: Record<string, Record<string, Record<string, AnyModel>>> = {};
 	const modelDataStructure: ModelDataStructure = {};
 	for (const providerId of generatedDataProviderIds) {
-		const models = jsonAllProviders[providerId];
-		generatedDataProviders[providerId] = {};
-		modelDataStructure[providerId] = {};
-		const apiIds = Array.from(new Set(models.map((model) => model.api))).sort();
-		for (const api of apiIds) {
-			generatedDataProviders[providerId][api] = {};
-			for (const model of models) {
-				if (model.api !== api) continue;
-				const identity = `${model.type}:${model.id}`;
-				if (generatedDataProviders[providerId][api][identity]) {
-					throw new Error(`${providerId}/${identity} has duplicate ${api} catalog entries`);
-				}
-				generatedDataProviders[providerId][api][identity] = model;
-				modelDataStructure[providerId][identity] = api;
-			}
-		}
+		const { groups, structure } = groupProviderModelData(providerId, jsonAllProviders[providerId]);
+		generatedDataProviders[providerId] = groups;
+		modelDataStructure[providerId] = structure;
 	}
 
 	const generatedAt = new Date().toISOString();
