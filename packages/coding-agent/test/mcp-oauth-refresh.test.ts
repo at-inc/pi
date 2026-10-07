@@ -213,7 +213,11 @@ describe("MCP OAuth client ID metadata documents", () => {
 		const { server, signIn } = await startServer({ cimd: true });
 		await signIn(cimd);
 		// Computed like Codex: the first 9 bytes of the SHA-256 of the MCP server URL.
-		const id = createHash("sha256").update(server.url).digest().subarray(0, 9).toString("base64url");
+		const port = Number(new URL(server.url).port);
+		expect(Number.isInteger(port) && port > 0 && port <= 65535).toBe(true);
+		const publicMcpUrl = `http://127.0.0.1:${port}/mcp`;
+		expect(publicMcpUrl).toBe(server.url);
+		const id = createHash("sha256").update(publicMcpUrl).digest().subarray(0, 9).toString("base64url");
 		const [authorization] = server.authorizations;
 		expect(authorization.get("client_id")).toBe(`https://pi.dev/oauth/${id}/client.json`);
 		const redirect = new URL(authorization.get("redirect_uri") ?? "");

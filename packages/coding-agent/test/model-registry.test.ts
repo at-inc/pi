@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +62,10 @@ describe("ModelRegistry", () => {
 	}
 
 	function toShPath(value: string): string {
-		return value.replace(/\\/g, "/").replace(/"/g, '\\"');
+		return value
+			.replace(/\\/g, "/")
+			.replace(/[\\"$`]/g, "\\$&")
+			.replace(/'/g, "'\"'\"'");
 	}
 
 	/** Create a baseUrl-only override (no custom models) */
@@ -89,6 +93,27 @@ describe("ModelRegistry", () => {
 
 	const emptyContext = normalizeContext({
 		messages: [],
+	});
+
+	describe("shell path fixture encoding", () => {
+		test.each([
+			["C:\\fixture\\with spaces\\file", "C:/fixture/with spaces/file"],
+			["C:\\fixture\\\"double\"\\'single'", "C:/fixture/\"double\"/'single'"],
+			['/tmp/double""quotes"', '/tmp/double""quotes"'],
+			["/tmp/single''quotes'", "/tmp/single''quotes'"],
+			[
+				`/tmp/$HOME/\${HOME}/$$/$(printf injected)/$((1 + 1))`,
+				`/tmp/$HOME/\${HOME}/$$/$(printf injected)/$((1 + 1))`,
+			],
+			["/tmp/`printf injected`", "/tmp/`printf injected`"],
+			['/tmp/\'"$HOME"`printf injected`', '/tmp/\'"$HOME"`printf injected`'],
+			["/tmp/line\nbreak\twith space", "/tmp/line\nbreak\twith space"],
+		])("preserves normalized path %j through both shells", (value, expected) => {
+			const output = execFileSync("sh", ["-c", `sh -c 'printf "%s" "${toShPath(value)}"'`], {
+				encoding: "utf8",
+			});
+			expect(output).toBe(expected);
+		});
 	});
 
 	describe("baseUrl override (no custom models)", () => {
