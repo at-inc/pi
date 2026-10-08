@@ -44,6 +44,7 @@ let
 
     buildPhase = ''
       runHook preBuild
+      patchShebangs --build packages/*/node_modules
       node packages/ai/scripts/hydrate-model-catalog.ts ${modelCatalog}
       npm run build:offline
       runHook postBuild
