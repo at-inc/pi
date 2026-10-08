@@ -63,7 +63,12 @@ import {
 } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { buildBaseOptions, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from "./simple-options.ts";
+import {
+	buildBaseOptions,
+	clampThinkingBudgetToAnswerRoom,
+	resolveSamplingParams,
+	thinkingBudgetForLevel,
+} from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -823,7 +828,7 @@ function buildParams(
 		messages,
 		stream: true,
 		prompt_cache_key:
-			(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
+			(URL.parse(model.baseUrl)?.hostname === "api.openai.com" && cacheRetention !== "none") ||
 			(cacheRetention === "long" && compat.supportsLongCacheRetention)
 				? clampOpenAIPromptCacheKey(options?.sessionId)
 				: undefined,
@@ -999,8 +1004,11 @@ function buildParams(
 		}
 	}
 
-	// Last so custom keys override the named request fields. Per-request keys override model defaults.
-	Object.assign(params, model.samplingParams, options?.samplingParams);
+	// Last so model and request sampling parameters override named request fields.
+	const samplingParams = resolveSamplingParams(model, options?.reasoningEffort ?? "off", options?.samplingParams);
+	if (samplingParams) {
+		Object.assign(params, samplingParams);
+	}
 
 	return params;
 }
@@ -1588,42 +1596,43 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | str
  */
 function detectCompat(model: Model<"openai-completions">): ResolvedOpenAICompletionsCompat {
 	const provider = model.provider;
-	const baseUrl = model.baseUrl;
+	const hostname = URL.parse(model.baseUrl)?.hostname ?? "";
+	const matchesDomain = (domain: string): boolean => hostname === domain || hostname.endsWith(`.${domain}`);
 
 	const isZai =
-		provider === "zai" ||
-		provider === "zai-coding-cn" ||
-		baseUrl.includes("api.z.ai") ||
-		baseUrl.includes("open.bigmodel.cn");
-	const isTogether =
-		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
-	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
-	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
-	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
-	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
-	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
-	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
-	const isCerebras = provider === "cerebras" || baseUrl.includes("cerebras.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
+		provider === "zai" || provider === "zai-coding-cn" || hostname === "api.z.ai" || hostname === "open.bigmodel.cn";
+	const isTogether = provider === "together" || hostname === "api.together.ai" || hostname === "api.together.xyz";
+	const isMoonshot =
+		provider === "moonshotai" ||
+		provider === "moonshotai-cn" ||
+		hostname === "api.moonshot.ai" ||
+		hostname === "api.moonshot.cn";
+	const isOpenRouter = provider === "openrouter" || matchesDomain("openrouter.ai");
+	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || hostname === "api.cloudflare.com";
+	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || hostname === "gateway.ai.cloudflare.com";
+	const isNvidia = provider === "nvidia" || hostname === "integrate.api.nvidia.com";
+	const isAntLing = provider === "ant-ling" || hostname === "api.ant-ling.com";
+	const isCerebras = provider === "cerebras" || matchesDomain("cerebras.ai");
+	const isDeepSeek = provider === "deepseek" || matchesDomain("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
 		isCerebras ||
 		provider === "xai" ||
-		baseUrl.includes("api.x.ai") ||
+		hostname === "api.x.ai" ||
 		isTogether ||
-		baseUrl.includes("chutes.ai") ||
+		matchesDomain("chutes.ai") ||
 		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
-		baseUrl.includes("opencode.ai") ||
+		matchesDomain("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
 		isAntLing;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") ||
+		matchesDomain("chutes.ai") ||
 		isDeepSeek ||
 		isMoonshot ||
 		isCloudflareAiGateway ||
@@ -1632,7 +1641,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		isAntLing ||
 		isZai;
 
-	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
+	const isGrok = provider === "xai" || hostname === "api.x.ai";
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;

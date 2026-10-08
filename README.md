@@ -10,29 +10,67 @@
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-# Pi Agent Harness
+# Pi
 
-This is the home of the Pi agent harness project including our self extensible coding agent.
+Pi is a minimal, extensible agent harness that you can make your own.
 
-* **[@at-inc/pi](packages/coding-agent)**: Interactive coding agent CLI
-* **[@at-inc/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
-* **[@at-inc/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
+Adapt Pi to your workflows, not the other way around. Customize Pi with [extensions](packages/coding-agent/docs/extensions.md), [skills](packages/coding-agent/docs/skills.md), [prompt templates](packages/coding-agent/docs/prompt-templates.md), and [themes](packages/coding-agent/docs/themes.md). Bundle them as [Pi packages](packages/coding-agent/docs/packages.md) and share via npm or git.
 
-To learn more about Pi:
+Pi ships with powerful defaults but skips features like sub-agents and plan mode. Ask Pi to build what you want, or install a package that does it your way.
 
-* [Visit pi.dev](https://pi.dev), the project website with demos
-* [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
+Use Pi [interactively](packages/coding-agent/docs/usage.md), automate it in [print or JSON mode](packages/coding-agent/docs/cli.md), control it over [RPC](packages/coding-agent/docs/rpc.md), or build apps with the [Pi TypeScript SDK](packages/coding-agent/docs/sdk.md). See [OpenClaw](https://github.com/OpenClaw/OpenClaw) for a real-world integration.
 
 ## GitHub Packages
 
-`@at-inc/pi` and `@at-inc/pi-agent-core` are published to GitHub Packages. Configure npm once, then authenticate with a GitHub token that has package read access:
+The fork publishes `@at-inc/pi`, `@at-inc/pi-agent-core`, and `@at-inc/pi-ai` to GitHub Packages. Durable and Chord are distributed as `@at-inc/pi-durable` and `@at-inc/chord`; npm aliases can retain their upstream import names. Configure npm once, then authenticate with a GitHub token that has package read access:
 
 ```bash
 npm config set @at-inc:registry https://npm.pkg.github.com
 npm login --scope=@at-inc --registry=https://npm.pkg.github.com
 ```
 
-## All Packages
+## Getting started
+
+Install the fork command-line interface after configuring GitHub Packages:
+
+```bash
+npm install -g --ignore-scripts @at-inc/pi
+```
+
+The fork's published CLI retains its transitive dependency shrinkwrap. The pi.dev managed installers install upstream, not this fork.
+
+Pi requires Node.js 22.19 or newer. Pi does not require dependency lifecycle scripts for a normal npm installation.
+
+Start Pi in the directory where you want it to work:
+
+```bash
+cd /path/to/project
+pi
+```
+
+For a built-in AI provider, run `/login` inside Pi to connect a subscription or API key. Then give Pi a task.
+
+See the [documentation](https://pi.dev/docs/latest) for full setup and usage instructions, or [visit pi.dev](https://pi.dev) for demos.
+
+## Run with Nix
+
+```bash
+nix run .
+```
+
+Nix builds this checkout from source with the fork package identities. The upstream `github:earendil-works/pi/stable` target runs upstream, not this fork.
+
+Supports ARM64 and x86-64 on Linux and macOS. Use `nix build .` or `nix run .` to build or run your checkout.
+
+Nix builds are offline, so the bundled model data comes from a pi.dev model catalog revision pinned in `nix/model-catalog.json`. At runtime, Pi still overlays newer catalog data from pi.dev as usual. The Nix workflow replaces the pin on `main` when it no longer matches the checkout, for example after a provider is added or gains a new model type. To refresh it by hand:
+
+```bash
+npm run update:model-catalog-pin
+```
+
+## Packages
+
+This monorepo contains the Pi CLI and its supporting libraries.
 
 | Package | Description |
 |---------|-------------|
@@ -71,6 +109,48 @@ npm run check         # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
+### Using local packages outside the monorepo
+
+Build every public package into one coherent local artifact set:
+
+```bash
+npm run pack:packages -- --out .artifacts/pi-packages
+```
+
+This refreshes model data before building `pi-ai`. To avoid network access when
+model data is already hydrated, pass `--offline-model-data`.
+
+Then configure an external project to consume one package and resolve all of
+its Pi dependencies from the same artifact set. npm is the default:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @earendil-works/pi-durable \
+  --package @at-inc/pi-agent-core
+cd ../my-project
+npm install --ignore-scripts
+```
+
+For a pnpm project, point `--consumer` at the workspace root:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @at-inc/pi-agent-core \
+  --package-manager pnpm
+cd ../my-project
+pnpm install --ignore-scripts
+```
+
+Repeat `--package` for each direct dependency. The command updates the
+consumer's `package.json` with content-addressed local `file:` references. It
+writes transitive overrides to `package.json` for npm or `pnpm-workspace.yaml`
+for pnpm. Keep the artifact directory available while installing or updating
+the consumer. Re-run both commands after changing Pi source.
+
 ## Building standalone binaries from release source
 
 GitHub releases include a versioned source archive covered by the release's `SHA256SUMS` file. Extract it and run the same build script used for the official standalone binaries:
@@ -91,12 +171,12 @@ We treat npm dependency changes as reviewed code changes.
 - Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
 - `.npmrc` sets `save-exact=true`; dependency release age is not restricted during npm resolution.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
-- `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent shrinkwrap.
-- The published CLI package includes `packages/coding-agent/npm-shrinkwrap.json`, generated from the root lockfile, to pin transitive deps for npm users.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
+- `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent shrinkwrap and install lock.
+- The fork's published CLI includes `packages/coding-agent/npm-shrinkwrap.json` to pin transitive dependencies. The generated `packages/coding-agent/install-lock/` also pins the installer and Nix dependency tree; pi.dev's managed installer remains an upstream distribution.
+- Local release smoke tests and npm publication use the same tarball packer; npm publishes the validated tarballs rather than repacking workspace directories.
 - Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
-- Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
+- Install lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 
 ## Share your OSS coding agent sessions
 

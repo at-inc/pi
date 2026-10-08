@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +62,10 @@ describe("ModelRegistry", () => {
 	}
 
 	function toShPath(value: string): string {
-		return value.replace(/\\/g, "/").replace(/"/g, '\\"');
+		return value
+			.replace(/\\/g, "/")
+			.replace(/[\\"$`]/g, "\\$&")
+			.replace(/'/g, "'\"'\"'");
 	}
 
 	/** Create a baseUrl-only override (no custom models) */
@@ -89,6 +93,27 @@ describe("ModelRegistry", () => {
 
 	const emptyContext = normalizeContext({
 		messages: [],
+	});
+
+	describe("shell path fixture encoding", () => {
+		test.each([
+			["C:\\fixture\\with spaces\\file", "C:/fixture/with spaces/file"],
+			["C:\\fixture\\\"double\"\\'single'", "C:/fixture/\"double\"/'single'"],
+			['/tmp/double""quotes"', '/tmp/double""quotes"'],
+			["/tmp/single''quotes'", "/tmp/single''quotes'"],
+			[
+				`/tmp/$HOME/\${HOME}/$$/$(printf injected)/$((1 + 1))`,
+				`/tmp/$HOME/\${HOME}/$$/$(printf injected)/$((1 + 1))`,
+			],
+			["/tmp/`printf injected`", "/tmp/`printf injected`"],
+			['/tmp/\'"$HOME"`printf injected`', '/tmp/\'"$HOME"`printf injected`'],
+			["/tmp/line\nbreak\twith space", "/tmp/line\nbreak\twith space"],
+		])("preserves normalized path %j through both shells", (value, expected) => {
+			const output = execFileSync("sh", ["-c", `sh -c 'printf "%s" "${toShPath(value)}"'`], {
+				encoding: "utf8",
+			});
+			expect(output).toBe(expected);
+		});
 	});
 
 	describe("baseUrl override (no custom models)", () => {
@@ -754,7 +779,7 @@ describe("ModelRegistry", () => {
 			expect(compat?.allowedFallbackModels).toEqual([]);
 		});
 
-		test("custom model and model override carry sampling params", async () => {
+		test("custom models and model overrides carry sampling params", async () => {
 			writeRawModelsJson({
 				openrouter: {
 					baseUrl: "https://my-proxy.example.com/v1",
@@ -763,11 +788,22 @@ describe("ModelRegistry", () => {
 						{
 							id: "custom/sampling-model",
 							samplingParams: { temperature: 1, top_p: 0.95, top_k: 0 },
+							samplingParamsByThinkingLevel: {
+								low: { temperature: 0.6, top_p: 0.95 },
+								high: { temperature: 0.8 },
+							},
 						},
 					],
 					modelOverrides: {
+						"custom/sampling-model": {
+							samplingParamsByThinkingLevel: {
+								low: { temperature: 0.5, top_k: 20 },
+								max: { temperature: 1 },
+							},
+						},
 						"anthropic/claude-sonnet-4": {
 							samplingParams: { top_p: 0.9 },
+							samplingParamsByThinkingLevel: { high: { temperature: 0.8 } },
 						},
 					},
 				},
@@ -778,13 +814,20 @@ describe("ModelRegistry", () => {
 
 			const custom = models.find((m) => m.id === "custom/sampling-model");
 			expect(custom?.samplingParams).toEqual({ temperature: 1, top_p: 0.95, top_k: 0 });
+			expect(custom?.samplingParamsByThinkingLevel).toEqual({
+				low: { temperature: 0.5, top_p: 0.95, top_k: 20 },
+				high: { temperature: 0.8 },
+				max: { temperature: 1 },
+			});
 
 			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
 			expect(sonnet?.samplingParams).toEqual({ top_p: 0.9 });
+			expect(sonnet?.samplingParamsByThinkingLevel).toEqual({ high: { temperature: 0.8 } });
 
 			// Models without sampling config keep it unset.
 			const opus = models.find((m) => m.id === "anthropic/claude-opus-4.1");
 			expect(opus?.samplingParams).toBeUndefined();
+			expect(opus?.samplingParamsByThinkingLevel).toBeUndefined();
 		});
 
 		test("custom model and model override carry prompt cache lifetimes", async () => {

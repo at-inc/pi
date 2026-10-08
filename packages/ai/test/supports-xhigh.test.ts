@@ -145,7 +145,7 @@ describe("getSupportedThinkingLevels", () => {
 			},
 		});
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-		const azureModel = getModel("azure-openai-responses", "gpt-6-astra");
+		const azureModel = getModel("azure", "gpt-6-astra");
 		expect(azureModel?.contextWindow).toBe(1050000);
 		expect(getSupportedThinkingLevels(azureModel!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
 	});
@@ -176,7 +176,7 @@ describe("getSupportedThinkingLevels", () => {
 	it("does not support off for GPT-6.1 Sol", () => {
 		const expected = {
 			openai: ["low", "medium", "high", "xhigh", "max"],
-			"azure-openai-responses": ["low", "medium", "high", "xhigh", "max"],
+			azure: ["low", "medium", "high", "xhigh", "max"],
 			"openai-codex": ["minimal", "low", "medium", "high", "xhigh", "max"],
 		} as const;
 		for (const [provider, levels] of Object.entries(expected)) {

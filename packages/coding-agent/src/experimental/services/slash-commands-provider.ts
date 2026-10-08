@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@at-inc/pi-agent-core";
+import type { ModelThinkingLevel } from "@at-inc/pi-ai";
 import { defineFacet, type Facet, type JsonValue } from "@earendil-works/chord";
 import { AgentController } from "./agent-controller.ts";
 import { type ModelSummary, Models, type Models as ModelsService } from "./models.ts";
@@ -6,7 +6,7 @@ import { PresentationPlugins, SessionPlugins } from "./plugins.ts";
 import { PresentationUI } from "./presentation-ui.ts";
 import { type SlashCommandContribution, SlashCommands } from "./slash-commands.ts";
 
-const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
+const THINKING_DESCRIPTIONS: Record<ModelThinkingLevel, string> = {
 	off: "No reasoning",
 	minimal: "Very brief reasoning",
 	low: "Light reasoning",
