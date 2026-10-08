@@ -15,6 +15,7 @@ import {
 	Harness,
 	type HarnessSettings,
 	hook,
+	section,
 	ToolResultEntry,
 } from "@earendil-works/pi-durable";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
@@ -23,9 +24,13 @@ const context = withAbortSignal(AbortSignal.timeout(30_000), BACKGROUND_CONTEXT)
 const summary = "## Goal\nVerify the beta SDK.\n## Progress\nEcho returned beta-smoke before the storage reopened.";
 const faux = fauxProvider();
 faux.setResponses([
-	fauxAssistantMessage([fauxToolCall("echo", { text: "beta-smoke" }, { id: "durable-beta-call" })], {
-		stopReason: "toolUse",
-	}),
+	({ messages }) => {
+		assert.equal(messages[0]?.role, "system");
+		assert.equal(messages[1]?.role, "user");
+		return fauxAssistantMessage([fauxToolCall("echo", { text: "beta-smoke" }, { id: "durable-beta-call" })], {
+			stopReason: "toolUse",
+		});
+	},
 	({ messages }) => {
 		const result = messages.findLast((message) => message.role === "toolResult");
 		assert.ok(result?.role === "toolResult");
@@ -69,13 +74,16 @@ const registry = createRegistry();
 registry.install(
 	defineExtension({
 		name: "durable-beta-smoke",
+		sections: [section("preamble", () => "Echo the requested text.")],
 		tools: [
 			defineTool({
 				name: "echo",
 				description: "Return the supplied text",
 				parameters: Type.Object({ text: Type.String() }),
 				replay: "safe",
-				async execute(args) {
+				async execute(args, api) {
+					assert.equal(api.models, models);
+					assert.equal(api.models.getModel("faux", "faux-1")?.id, "faux-1");
 					executions++;
 					return { content: [{ type: "text", text: args.text }] };
 				},
@@ -118,6 +126,22 @@ try {
 	assert.equal(faux.state.callCount, 2);
 	const original = (await root.entries({}, 100, undefined, context)).items;
 	assert.equal(original.filter((entry) => ToolResultEntry.is(entry)).length, 1);
+	const toolResult = original.find((entry) => ToolResultEntry.is(entry));
+	const resultMessage = toolResult?.model?.[0];
+	assert.ok(resultMessage?.role === "toolResult" && typeof resultMessage.durationMs === "number");
+	assert.ok(Number.isInteger(resultMessage.durationMs) && resultMessage.durationMs >= 0);
+	assert.ok(toolResult?.byTaskId !== undefined);
+	const toolTask = await harness.getTask(toolResult.byTaskId, context);
+	assert.ok(toolTask?.state.status === "terminal");
+	assert.ok(typeof toolTask.startedAt === "number" && typeof toolTask.endedAt === "number");
+	assert.ok(toolTask.endedAt >= toolTask.startedAt);
+	const initialContext = await root.context(context, { at: settled.answer });
+	const ascending = await root.entries({ order: "ascending" }, 2, undefined, context);
+	assert.deepEqual(ascending.items, original.slice(-2).reverse());
+	assert.ok(ascending.next !== undefined);
+	const remaining = await root.entries({}, 100, ascending.next, context);
+	assert.deepEqual([...ascending.items, ...remaining.items], [...original].reverse());
+	await assert.rejects(root.entries({ order: "descending" }, 100, ascending.next, context), /cursor continues/);
 	await harness.close(BACKGROUND_CONTEXT);
 	harness = undefined;
 
@@ -129,6 +153,8 @@ try {
 	const reopened = await harness.root(context);
 	assert.equal(reopened.id, root.id);
 	assert.deepEqual((await reopened.entries({}, 100, undefined, context)).items, original);
+	assert.deepEqual(await reopened.context(context, { at: settled.answer }), initialContext);
+	assert.deepEqual(await harness.getTask(toolResult.byTaskId, context), toolTask);
 	assert.deepEqual((await reopened.agent(context)).model, { provider: "faux", modelId: "faux-1" });
 	const repeated = await reopened.submit(input, context);
 	assert.equal(repeated.id, submission.id);
@@ -150,6 +176,7 @@ try {
 	assert.ok(placement);
 	assert.equal((await placement.wait(context)).status, "done");
 	const compacted = await reopened.context(context);
+	assert.deepEqual(await reopened.context(context, { at: settled.answer }), initialContext);
 	assert.ok(CompactionEntry.is(compacted.head));
 	assert.equal(compacted.head.data.reason, "manual");
 	assert.equal(compacted.head.head, next.answer);
@@ -176,5 +203,5 @@ try {
 	}
 }
 console.log(
-	"Aliased Durable SDK smoke passed: one native tool execution, JSONL close/reopen and deduplication, native compaction, and five offline model responses.",
+	"Aliased Durable SDK smoke passed: one native tool execution with public model access and timings, ordered scans, as-of context, JSONL close/reopen and deduplication, native compaction, and five offline model responses.",
 );

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { execNpmSync, parseNpmPackResult } from "./npm-command.mjs";
 
 export function prepareDurablePackages(destination) {
 	const gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -15,9 +16,11 @@ export function prepareDurablePackages(destination) {
 		if (manifest.name !== pkg.sourceName || manifest.version !== ai.version) {
 			throw new Error(`${pkg.directory} must match the fork beta's identity and version`);
 		}
-		const output = JSON.parse(execFileSync(process.platform === "win32" ? "npm.cmd" : "npm",
-			["pack", "--dry-run", "--ignore-scripts", "--json"], { cwd: pkg.directory, encoding: "utf8" }));
-		const packed = Array.isArray(output) ? output[0] : Object.values(output)[0];
+		const output = execNpmSync(["pack", "--dry-run", "--ignore-scripts", "--json"], {
+			cwd: pkg.directory,
+			encoding: "utf8",
+		});
+		const packed = parseNpmPackResult(output, manifest.name);
 		if (packed.name !== manifest.name || packed.version !== manifest.version) {
 			throw new Error(`Unexpected package contents for ${pkg.sourceName}`);
 		}

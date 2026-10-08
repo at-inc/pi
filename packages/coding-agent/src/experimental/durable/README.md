@@ -44,6 +44,10 @@ converted. Each imported branch's model context is checked against the v3 projec
 is retained as data, not executed as an extension; inspect the reported warnings before continuing a session that used
 custom tools or extensions.
 
+Durable moves an initial system message ahead of any preceding user messages in model context. Raw entry order,
+contributions, and the source archive stay unchanged; later system updates remain in place. Historical context is
+available through `conversation.context(context, { at: entryId })`, including on imported conversation forks.
+
 Conversion happens in a private staging directory. Only a completed, closed SQLite database is published as a session;
 failed imports are removed and staging directories are ignored by `--continue`. Importing the same bytes into the same
 working directory returns the existing imported session, including any subsequent durable conversation, without

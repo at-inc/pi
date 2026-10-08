@@ -21,7 +21,7 @@
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:runtime-deps": "node scripts/check-runtime-deps.mjs",
-		"check:package-install": "node scripts/coding-agent-consumer.mjs",
+		"check:package-install": "node scripts/check-package-install.mjs",
 		"check:shrinkwrap": "node scripts/generate-coding-agent-shrinkwrap.mjs --check",
 		"check:install-lock:coding-agent": "node scripts/generate-coding-agent-install-lock.mjs --check",
 		"check:ts-imports": "node scripts/check-ts-relative-imports.mjs",
@@ -49,6 +49,7 @@
 		"publish:github": "node scripts/publish-github-packages.mjs",
 		"publish:github:dry": "node scripts/publish-github-packages.mjs --dry-run",
 		"release:local": "node scripts/local-release.mjs",
+		"pack:packages": "node scripts/pack-packages.mjs",
 		"shrinkwrap:coding-agent": "node scripts/generate-coding-agent-shrinkwrap.mjs",
 		"install-lock:coding-agent": "node scripts/generate-coding-agent-install-lock.mjs",
 		"release:patch": "node scripts/release.mjs patch",
@@ -63,8 +64,10 @@
 		"@types/node": "22.19.19",
 		"esbuild": "0.28.2",
 		"husky": "9.1.7",
-		"shx": "0.4.0",
-		"typescript": "7.0.2"
+		"pnpm": "11.15.1",
+		"shx": "0.3.4",
+		"typescript": "7.0.2",
+		"yaml": "2.9.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"

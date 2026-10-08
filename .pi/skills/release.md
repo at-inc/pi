@@ -40,6 +40,7 @@ Run repository commands from the repo root (two directories above this skill), u
    PI_ALLOW_LOCKFILE_CHANGE=1 npm run release:minor    # breaking changes
    ```
    Review any lockfile, shrinkwrap, or install lock diffs the release creates before push. The fork retains its published CLI shrinkwrap even though upstream recommends the managed installer.
+   If the test suite already passed in `npm run release:local` and only fails from machine load, `PI_RELEASE_SKIP_TESTS=1` skips `./test.sh` in the release script; checks and the packed install check still run. Use it only with the user's approval.
 
    The release script refreshes the Nix model catalog pin (`nix/model-catalog.json`) if stale, bumps all package versions, updates changelogs, regenerates release artifacts, runs `npm run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
 

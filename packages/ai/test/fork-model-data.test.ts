@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyForkModelMetadata, getForkImageModels } from "../scripts/fork-model-data.ts";
 import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
 import { MODEL_DATA_MANIFEST_FILE, validateGeneratedModelData } from "../scripts/model-data.ts";
-import type { Api, Model } from "../src/types.ts";
+import type { Api, ClassifierModel, Model } from "../src/types.ts";
 
 const roots: string[] = [];
 
@@ -34,10 +34,12 @@ function chat(provider: string, id: string, api: Api = "openai-responses"): Mode
 describe("fork model metadata", () => {
 	it.each([
 		["openai", "gpt-6-astra", "openai-responses"],
+		["openai", "gpt-6.1-sol", "openai-responses"],
 		["openai", "gpt-5.5", "openai-responses"],
 		["cloudflare-ai-gateway", "gpt-6-sol", "openai-responses"],
 		["openai-codex", "gpt-6-luna", "openai-codex-responses"],
 		["anthropic", "claude-opus-5-5", "anthropic-messages"],
+		["anthropic", "claude-sonnet-5", "anthropic-messages"],
 	] as const)("keeps verified fast-mode support for %s/%s", (provider, id, api) => {
 		const model = chat(provider, id, api);
 		applyForkModelMetadata(model);
@@ -49,6 +51,8 @@ describe("fork model metadata", () => {
 		["github-copilot", "gpt-6-astra", "openai-responses"],
 		["cloudflare-ai-gateway", "claude-opus-5-5", "anthropic-messages"],
 		["openai", "gpt-6-unknown", "openai-responses"],
+		["anthropic", "claude-sonnet-5-5", "anthropic-messages"],
+		["anthropic", "claude-haiku-5-5", "anthropic-messages"],
 	] as const)("does not infer fast-mode support for %s/%s", (provider, id, api) => {
 		const model = chat(provider, id, api);
 		applyForkModelMetadata(model);
@@ -91,6 +95,10 @@ describe("fork model metadata", () => {
 			expect(direct.thinkingLevelMap).toEqual({ minimal: null });
 			expect(codex.thinkingLevelMap).toEqual({ minimal: "low" });
 		}
+		const sol61 = chat("openai-codex", "gpt-6.1-sol", "openai-codex-responses");
+		sol61.thinkingLevelMap = { off: null, minimal: "low", high: "high", max: "max" };
+		applyForkModelMetadata(sol61);
+		expect(sol61.thinkingLevelMap).toEqual({ off: null, minimal: "low", high: "high", max: "max" });
 	});
 
 	it.each(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"])("expands only the Azure context of %s", (id) => {
@@ -171,9 +179,31 @@ describe("fork model metadata", () => {
 			thinkingFormat: "openai",
 			supportsLongCacheRetention: false,
 		};
+		const classifier: ClassifierModel<"openai-decisions"> = {
+			type: "classifier",
+			id: "gpt-6-luna",
+			name: "GPT-6 Luna",
+			api: "openai-decisions",
+			provider: "openai",
+			baseUrl: "https://api.openai.com/v1",
+			input: ["text", "image"],
+			cost: {
+				input: 0.1,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				tiers: [{ inputTokensAbove: 272000, input: 0.2, output: 0, cacheRead: 0, cacheWrite: 0 }],
+			},
+			contextWindow: 922000,
+		};
 		const catalog = {
 			"openai-codex": [chat("openai-codex", "gpt-6-astra", "openai-codex-responses")],
-			openai: [chat("openai", "gpt-6-astra"), chat("openai", "future-model", "future-api")],
+			openai: [
+				chat("openai", "gpt-6-astra"),
+				chat("openai", "future-model", "future-api"),
+				chat("openai", "gpt-6-luna"),
+				classifier,
+			],
 			azure: [chat("azure", "gpt-6-sol", "azure-openai-responses"), deepseek],
 			anthropic: [chat("anthropic", "claude-opus-5-5", "anthropic-messages")],
 		};
@@ -200,6 +230,8 @@ describe("fork model metadata", () => {
 			supportsFastMode: true,
 			thinkingLevelMap: { off: null, minimal: null },
 		});
+		expect(openai["openai-responses"]["chat:gpt-6-luna"]).toMatchObject({ supportsFastMode: true });
+		expect(openai["openai-decisions"]["classifier:gpt-6-luna"]).toEqual(classifier);
 		const azure = JSON.parse(snapshot[2]) as Record<string, Record<string, unknown>>;
 		expect(Object.keys(azure).sort()).toEqual(["azure-openai-responses", "openai-completions"]);
 		expect(azure["azure-openai-responses"]["chat:gpt-6-sol"]).toMatchObject({

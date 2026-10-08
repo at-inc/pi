@@ -270,6 +270,43 @@ test("imports normal messages and custom contributions with exact raw records, w
 	});
 });
 
+test("leads imported context with the initial system message while preserving stored order and fork cutoffs", async () => {
+	const baseline: Message = { role: "system", content: "Saved baseline", timestamp: 2 };
+	const later: Message = { role: "system", content: "Later update", timestamp: 4 };
+	const entries = [
+		user("u", null),
+		record("system", "u", { type: "message", message: baseline }),
+		assistant("a", "system"),
+		record("update", "a", { type: "message", message: later }),
+		user("main", "update"),
+		user("branch", "system"),
+	];
+	const { session, harness, result } = await imported(entries);
+	for (const branch of result.branches) {
+		const conversation = (await harness.conversation(branch.conversationId as ConversationId, context))!;
+		const original = convertToLlm(buildSessionContext([...session.entries], branch.leafId).messages);
+		expect((await conversation.context(context)).messages).toEqual([baseline, original[0], ...original.slice(2)]);
+		expect((await conversation.context(context, { at: result.entryIds.u as EntryId })).messages).toEqual([
+			original[0],
+		]);
+		const cutoff = await conversation.context(context, { at: result.entryIds.system as EntryId });
+		expect(cutoff.messages).toEqual([baseline, original[0]]);
+		expect(cutoff.contributions.flat()).toEqual([original[0], baseline]);
+		const fork = await conversation.fork(
+			result.entryIds.system as EntryId,
+			{ ownership: { kind: "ownerless" } },
+			context,
+		);
+		expect(await fork.context(context)).toEqual(cutoff);
+	}
+	for (const original of entries) {
+		const saved = await harness.commit((tx) => tx.entry(result.entryIds[original.id as string] as EntryId), context);
+		expect(saved?.data).toEqual(original);
+	}
+	expect((await harness.inspect(context)).tasks).toEqual([]);
+	expect((await harness.inspect(context)).submissions).toEqual([]);
+});
+
 test("places the last physical path on root and forks both shared prefixes and separate roots once", async () => {
 	const entries = [
 		record("m", null, { type: "model_change", provider: "faux", modelId: "initial" }),

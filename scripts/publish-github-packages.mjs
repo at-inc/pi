@@ -1,40 +1,23 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareDurablePackages } from "./prepare-durable-packages.mjs";
+import { produceArtifactSet, verifyArtifactSet } from "./package-artifacts.mjs";
+import { execNpmSync } from "./npm-command.mjs";
 
 const registry = "https://npm.pkg.github.com";
 const librariesOnly = process.argv.includes("--libraries-only");
 const durableOnly = process.argv.includes("--durable-only");
 const dryRun = process.argv.includes("--dry-run");
-const unknownArgs = process.argv.slice(2).filter((arg) => !["--dry-run", "--libraries-only", "--durable-only"].includes(arg));
+const unknownArgs = process.argv
+	.slice(2)
+	.filter((arg) => !["--dry-run", "--libraries-only", "--durable-only"].includes(arg));
 
 if (unknownArgs.length > 0 || (librariesOnly && durableOnly)) {
 	console.error("Usage: node scripts/publish-github-packages.mjs [--dry-run] [--libraries-only | --durable-only]");
 	process.exit(1);
-}
-
-function commandForPlatform(command) {
-	return process.platform === "win32" ? `${command}.cmd` : command;
-}
-
-function run(command, args, options = {}) {
-	console.log(`$ ${[command, ...args].join(" ")}`);
-	const result = spawnSync(commandForPlatform(command), args, {
-		cwd: options.cwd,
-		encoding: "utf8",
-		stdio: options.capture ? ["inherit", "pipe", "pipe"] : "inherit",
-	});
-
-	if (result.status !== 0) {
-		const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
-		throw new Error(output || `Command failed: ${command} ${args.join(" ")}`);
-	}
-
-	return result;
 }
 
 function readPackage(directory) {
@@ -42,34 +25,46 @@ function readPackage(directory) {
 }
 
 function viewPackage(name, field) {
-	const result = spawnSync(
-		commandForPlatform("npm"),
-		field === "dist-tags" ? ["dist-tag", "ls", name, "--registry", registry] :
-			["view", name, field, "--json", "--registry", registry],
-		{ encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] },
-	);
-
-	if (result.status === 0 && result.stdout.trim()) {
-		if (field !== "dist-tags") return JSON.parse(result.stdout);
-		return Object.fromEntries(result.stdout.trim().split("\n").map((line) => {
-			const separator = line.indexOf(": ");
-			if (separator < 1) throw new Error(`Invalid dist-tag response for ${name}`);
-			return [line.slice(0, separator), line.slice(separator + 2)];
-		}));
+	let output;
+	try {
+		output = execNpmSync(
+			field === "dist-tags"
+				? ["dist-tag", "ls", name, "--registry", registry]
+				: ["view", name, field, "--json", "--registry", registry],
+			{ encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] },
+		);
+	} catch (error) {
+		const details = [error.stdout, error.stderr].filter(Boolean).join("\n");
+		if (details.includes("E404") || details.includes("404 Not Found")) return null;
+		throw new Error(details || `Failed to query ${name} ${field}`, { cause: error });
+	}
+	if (output.trim()) {
+		if (field !== "dist-tags") return JSON.parse(output);
+		return Object.fromEntries(
+			output
+				.trim()
+				.split("\n")
+				.map((line) => {
+					const separator = line.indexOf(": ");
+					if (separator < 1) throw new Error(`Invalid dist-tag response for ${name}`);
+					return [line.slice(0, separator), line.slice(separator + 2)];
+				}),
+		);
 	}
 
-	const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
-	if (result.status !== 0 && (output.includes("E404") || output.includes("404 Not Found"))) return null;
 	throw new Error(output || `Failed to query ${name} ${field}`);
 }
 
 const stagingDirectory = durableOnly ? mkdtempSync(join(tmpdir(), "pi-durable-publish-")) : undefined;
+let artifactSet;
 try {
-	const packages = durableOnly ? prepareDurablePackages(stagingDirectory) : [
-		{ directory: "packages/ai", name: "@at-inc/pi-ai" },
-		{ directory: "packages/agent", name: "@at-inc/pi-agent-core" },
-		{ directory: "packages/coding-agent", name: "@at-inc/pi" },
-	].slice(0, librariesOnly ? 2 : 3);
+	const packages = durableOnly
+		? prepareDurablePackages(stagingDirectory)
+		: [
+				{ directory: "packages/ai", name: "@at-inc/pi-ai" },
+				{ directory: "packages/agent", name: "@at-inc/pi-agent-core" },
+				{ directory: "packages/coding-agent", name: "@at-inc/pi" },
+			].slice(0, librariesOnly ? 2 : 3);
 	const packageStates = packages.map((pkg) => {
 		const manifest = readPackage(pkg.directory);
 		if (manifest.name !== pkg.name) {
@@ -98,21 +93,12 @@ try {
 		if (viewPackage(`@at-inc/pi-ai@${version}`, "version") !== version) {
 			throw new Error(`Publish @at-inc/pi-ai@${version} before the Durable packages`);
 		}
-	} else {
-		run("node", ["scripts/prepare-github-package-bundles.mjs"]);
 	}
 
+	artifactSet = produceArtifactSet({ build: false, repoRoot: process.cwd(), packages: packageStates });
 	for (const pkg of packageStates) {
-		const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { cwd: pkg.directory, capture: true });
-		const output = JSON.parse(result.stdout);
-		const packed = Array.isArray(output) ? output[0] : Object.values(output)[0];
-		const files = new Set(packed.files.map((file) => file.path));
-		const required = ["package.json", pkg.manifest.main, pkg.manifest.types, ...Object.values(pkg.manifest.bin ?? {}),
-			...(pkg.manifest.bundleDependencies ?? []).map((name) => `node_modules/${name}/package.json`)];
-		if (packed.name !== pkg.name || packed.version !== pkg.version ||
-			required.filter(Boolean).some((file) => !files.has(file.replace(/^\.\//, "")))) {
-			throw new Error(`${pkg.name} package contents are incomplete or do not match the manifest`);
-		}
+		const artifact = artifactSet.getPackage(pkg.name);
+		pkg.tarballPath = artifact.tarballPath;
 		pkg.published = viewPackage(`${pkg.name}@${pkg.version}`, "version") !== null;
 		pkg.tags = viewPackage(pkg.name, "dist-tags") ?? {};
 		console.log(`${pkg.name} dist-tags before publishing: ${JSON.stringify(pkg.tags)}`);
@@ -120,6 +106,8 @@ try {
 
 	console.log(`Publishing GitHub packages at ${version}${dryRun ? " (dry run)" : ""}\n`);
 
+	verifyArtifactSet(artifactSet);
+	let publishError;
 	try {
 		for (const pkg of packageStates) {
 			if (pkg.published) {
@@ -127,19 +115,35 @@ try {
 				continue;
 			}
 			if (!dryRun) {
-				run("npm", ["publish", "--ignore-scripts", "--registry", registry, "--tag", tag], { cwd: pkg.directory });
+				verifyArtifactSet(artifactSet);
+				execNpmSync(["publish", pkg.tarballPath, "--ignore-scripts", "--registry", registry, "--tag", tag], {
+					cwd: pkg.directory,
+					stdio: "inherit",
+				});
 			}
 		}
-	} finally {
+	} catch (error) {
+		publishError = error;
+	}
+	let verificationError;
+	try {
 		if (!dryRun && tag !== "latest") {
 			for (const pkg of packageStates) {
 				const tags = viewPackage(pkg.name, "dist-tags") ?? {};
-				if (tags.latest !== pkg.tags.latest) throw new Error(`${pkg.name}: latest changed during prerelease publishing`);
+				if (tags.latest !== pkg.tags.latest)
+					throw new Error(`${pkg.name}: latest changed during prerelease publishing`);
 				if (tags[tag] !== pkg.version) throw new Error(`${pkg.name}: ${tag} does not point to ${pkg.version}`);
 				console.log(`${pkg.name}: ${tag} verified; latest unchanged (${tags.latest ?? "absent"}).`);
 			}
 		}
+	} catch (error) {
+		verificationError = error;
 	}
+	if (publishError && verificationError)
+		throw new AggregateError([publishError, verificationError], "Publication and tag verification failed");
+	if (publishError) throw publishError;
+	if (verificationError) throw verificationError;
 } finally {
+	if (artifactSet) rmSync(artifactSet.artifactDirectory, { recursive: true, force: true });
 	if (stagingDirectory) rmSync(stagingDirectory, { recursive: true, force: true });
 }

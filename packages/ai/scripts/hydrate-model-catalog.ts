@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyForkModelMetadata, type ForkModelData, getForkImageModels } from "./fork-model-data.ts";
+import { getForkChatModelFallbacks } from "./fork-model-fallbacks.ts";
 import {
 	createModelDataManifest,
 	groupProviderModelData,
@@ -57,7 +58,7 @@ export function hydrateModelCatalog(
 			applyForkModelMetadata(model);
 			entries.push(model);
 		}
-		for (const model of getForkImageModels(provider)) {
+		for (const model of [...getForkChatModelFallbacks(provider), ...getForkImageModels(provider)]) {
 			if (!entries.some((entry) => entry.type === model.type && entry.id === model.id)) entries.push(model);
 		}
 		const grouped = groupProviderModelData(provider, entries);

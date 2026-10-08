@@ -28,6 +28,7 @@ on:
       - 'packages/coding-agent/install-lock/**'
       - 'packages/ai/scripts/hydrate-model-catalog.ts'
       - 'packages/ai/scripts/fork-model-data.ts'
+      - 'packages/ai/scripts/fork-model-fallbacks.ts'
       - 'scripts/update-model-catalog-pin.mjs'
   workflow_run:
     workflows:
