@@ -2,11 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Publish and validate the exact packed library artifacts with source provenance and SHA-512 integrity checks.
+
 ### Fixed
 
 - Fixed quadratic matching of long Cerebras bodyless error messages.
 - Match model compatibility endpoints by parsed hostname rather than URL substrings, preserving existing built-in model settings.
 - Preserve the fork's Codex image model, verified Fast mode settings, thinking-level restrictions, and Azure context limits when hydrating a pinned upstream model catalog for offline builds.
+- Retain the tagged Claude Haiku 5.5 metadata when a pinned catalog omits it, without replacing supplied records or adding unverified Fast support.
 
 ## [1.1.0] - 2026-10-07
 

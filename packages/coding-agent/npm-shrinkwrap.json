@@ -1,20 +1,20 @@
 {
 	"name": "@at-inc/pi",
-	"version": "1.0.0-beta.1",
+	"version": "1.1.0-beta.1",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@at-inc/pi",
-			"version": "1.0.0-beta.1",
+			"version": "1.1.0-beta.1",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/chord": "^1.0.0-beta.1",
-				"@at-inc/pi-agent-core": "^1.0.0-beta.1",
-				"@at-inc/pi-ai": "^1.0.0-beta.1",
-				"@earendil-works/pi-codemode": "^1.0.0-beta.1",
-				"@earendil-works/pi-mcp": "^1.0.0-beta.1",
-				"@earendil-works/pi-tui": "^1.0.0-beta.1",
+				"@earendil-works/chord": "^1.1.0-beta.1",
+				"@at-inc/pi-agent-core": "^1.1.0-beta.1",
+				"@at-inc/pi-ai": "^1.1.0-beta.1",
+				"@earendil-works/pi-codemode": "^1.1.0-beta.1",
+				"@earendil-works/pi-mcp": "^1.1.0-beta.1",
+				"@earendil-works/pi-tui": "^1.1.0-beta.1",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"brace-expansion": "5.0.12",
 				"chalk": "6.0.0",
@@ -65,11 +65,11 @@
 			}
 		},
 		"node_modules/@at-inc/pi-agent-core": {
-			"version": "1.0.0-beta.1",
-			"resolved": "https://npm.pkg.github.com/@at-inc/pi-agent-core/-/pi-agent-core-1.0.0-beta.1.tgz",
+			"version": "1.1.0-beta.1",
+			"resolved": "https://npm.pkg.github.com/@at-inc/pi-agent-core/-/pi-agent-core-1.1.0-beta.1.tgz",
 			"license": "MIT",
 			"dependencies": {
-				"@at-inc/pi-ai": "^1.0.0-beta.1",
+				"@at-inc/pi-ai": "^1.1.0-beta.1",
 				"typebox": "1.3.27"
 			},
 			"engines": {
@@ -77,13 +77,13 @@
 			}
 		},
 		"node_modules/@at-inc/pi-ai": {
-			"version": "1.0.0-beta.1",
-			"resolved": "https://npm.pkg.github.com/@at-inc/pi-ai/-/pi-ai-1.0.0-beta.1.tgz",
+			"version": "1.1.0-beta.1",
+			"resolved": "https://npm.pkg.github.com/@at-inc/pi-ai/-/pi-ai-1.1.0-beta.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.129.0",
 				"@aws-sdk/client-bedrock-runtime": "3.1127.0",
-				"@earendil-works/pi-telemetry": "^1.0.0-beta.1",
+				"@earendil-works/pi-telemetry": "^1.1.0-beta.1",
 				"@google/genai": "2.21.0",
 				"@smithy/node-http-handler": "4.12.1",
 				"http-proxy-agent": "9.1.0",
@@ -510,8 +510,8 @@
 			}
 		},
 		"node_modules/@earendil-works/chord": {
-			"version": "1.0.0-beta.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/chord/-/chord-1.0.0-beta.1.tgz",
+			"version": "1.1.0-beta.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/chord/-/chord-1.1.0-beta.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"esbuild": "0.28.2"
@@ -521,8 +521,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-codemode": {
-			"version": "1.0.0-beta.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-codemode/-/pi-codemode-1.0.0-beta.1.tgz",
+			"version": "1.1.0-beta.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-codemode/-/pi-codemode-1.1.0-beta.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"quickjs-wasi": "3.6.2"
@@ -532,8 +532,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-mcp": {
-			"version": "1.0.0-beta.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-1.0.0-beta.1.tgz",
+			"version": "1.1.0-beta.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-1.1.0-beta.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"cross-spawn": "7.0.6"
@@ -543,16 +543,16 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-telemetry": {
-			"version": "1.0.0-beta.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-1.0.0-beta.1.tgz",
+			"version": "1.1.0-beta.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-1.1.0-beta.1.tgz",
 			"license": "MIT",
 			"engines": {
 				"node": ">=22.19.0"
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "1.0.0-beta.1",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.0.0-beta.1.tgz",
+			"version": "1.1.0-beta.1",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.1.0-beta.1.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",
