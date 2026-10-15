@@ -72,6 +72,15 @@ export function hydrateModelCatalogBytes(root, bytes, options = {}) {
 	}
 }
 
+export async function hydratePinnedModelCatalog(root) {
+	const pinPath = join(root, "nix/model-catalog.json");
+	const revision = JSON.parse(readFileSync(pinPath, "utf8")).revision;
+	if (typeof revision !== "string" || !REVISION_RE.test(revision)) throw new Error(`Invalid pin in ${pinPath}`);
+	const bytes = await fetchRevision(revision);
+	hydrateModelCatalogBytes(root, bytes);
+	return revision;
+}
+
 /** Return why the catalog cannot hydrate this checkout, or undefined if it can. */
 function hydrationProblem(root, bytes) {
 	try {
@@ -128,10 +137,14 @@ export async function updateModelCatalogPin(root, { ifStale = false } = {}) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
 	const args = process.argv.slice(2);
-	if (args.length > 1 || (args.length === 1 && args[0] !== "--if-stale")) {
-		throw new Error("Usage: node scripts/update-model-catalog-pin.mjs [--if-stale]");
+	if (args.length > 1 || (args.length === 1 && !["--if-stale", "--hydrate"].includes(args[0]))) {
+		throw new Error("Usage: node scripts/update-model-catalog-pin.mjs [--if-stale | --hydrate]");
 	}
 	const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-	const { revision, updated } = await updateModelCatalogPin(root, { ifStale: args[0] === "--if-stale" });
-	console.log(`${updated ? "Pinned" : "Kept"} model catalog ${revision}`);
+	if (args[0] === "--hydrate") {
+		console.log(`Hydrated pinned model catalog ${await hydratePinnedModelCatalog(root)}`);
+	} else {
+		const { revision, updated } = await updateModelCatalogPin(root, { ifStale: args[0] === "--if-stale" });
+		console.log(`${updated ? "Pinned" : "Kept"} model catalog ${revision}`);
+	}
 }

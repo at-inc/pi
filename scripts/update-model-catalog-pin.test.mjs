@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
-import { updateModelCatalogPin } from "./update-model-catalog-pin.mjs";
+import { hydrateModelCatalogBytes, hydratePinnedModelCatalog, updateModelCatalogPin } from "./update-model-catalog-pin.mjs";
 
 const model = {
 	type: "chat",
@@ -90,6 +90,48 @@ function mockPiDev({ live = liveRevision, failure } = {}) {
 	});
 	return requests;
 }
+
+test("hydrates only the committed revision without changing the pin or generated model types", async () => {
+	const requests = mockPiDev();
+	const generatedPath = join(root, "packages/ai/src/models.generated.ts");
+	const generated = readFileSync(generatedPath, "utf8");
+	assert.equal(await hydratePinnedModelCatalog(root), currentRevision);
+	assert.deepEqual(requests, [`https://pi.dev/api/models/revisions/${currentRevision}?${typed}`]);
+	assert.equal(readPin(), pinFile(currentRevision));
+	assert.equal(readFileSync(generatedPath, "utf8"), generated);
+	const data = JSON.parse(readFileSync(join(root, "packages/ai/src/providers/data/test-provider.json"), "utf8"));
+	assert.deepEqual(Object.keys(data["openai-completions"]), ["chat:model-a"]);
+});
+
+test("rejects invalid hydration pins before making a request", async () => {
+	const requests = mockPiDev();
+	writeFileSync(join(root, "nix/model-catalog.json"), pinFile("latest"));
+	await assert.rejects(hydratePinnedModelCatalog(root), /Invalid pin/);
+	assert.deepEqual(requests, []);
+});
+
+for (const failure of ["revision-http", "revision-hash"]) {
+	test(`preserves hydrated data and the pin on ${failure} failure`, async () => {
+		hydrateModelCatalogBytes(root, Buffer.from(currentBody));
+		const path = join(root, "packages/ai/src/providers/data/test-provider.json");
+		const before = readFileSync(path, "utf8");
+		mockPiDev({ failure });
+		await assert.rejects(hydratePinnedModelCatalog(root));
+		assert.equal(readFileSync(path, "utf8"), before);
+		assert.equal(readPin(), pinFile(currentRevision));
+	});
+}
+
+test("preserves hydrated data when the pinned catalog cannot hydrate this checkout", async () => {
+	hydrateModelCatalogBytes(root, Buffer.from(currentBody));
+	const path = join(root, "packages/ai/src/providers/data/test-provider.json");
+	const before = readFileSync(path, "utf8");
+	writeFileSync(join(root, "nix/model-catalog.json"), pinFile(staleRevision));
+	mockPiDev();
+	await assert.rejects(hydratePinnedModelCatalog(root), /missing provider/);
+	assert.equal(readFileSync(path, "utf8"), before);
+	assert.equal(readPin(), pinFile(staleRevision));
+});
 
 test("pins the newest typed catalog after verifying its immutable URL", async () => {
 	const requests = mockPiDev();

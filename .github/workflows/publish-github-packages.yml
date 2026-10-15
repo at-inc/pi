@@ -57,9 +57,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Hydrate model data
+      - name: Hydrate pinned model data
         if: ${{ inputs.libraries_only || inputs.durable_only }}
-        run: npm run hydrate:model-data
+        run: node scripts/update-model-catalog-pin.mjs --hydrate
 
       - name: Build
         run: npm run ${{ (inputs.libraries_only || inputs.durable_only) && 'build:offline' || 'build' }}
