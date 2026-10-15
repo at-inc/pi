@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../src/types.ts";
 import { isContextOverflow, isRecoverableLength } from "../src/utils/overflow.ts";
@@ -99,6 +103,43 @@ describe("isContextOverflow", () => {
 			expect(isContextOverflow(createErrorMessage(errorMessage, "opencode-go"), 1000000)).toBe(false);
 		}
 	});
+
+	it("accepts Cerebras bodyless errors with and without the optional status label", () => {
+		for (const status of ["400", "413"]) {
+			for (const separator of ["", " ", "\t", "\r\n"]) {
+				for (const label of ["", "status code", "STATUS CODE"]) {
+					const message = createErrorMessage(`${status}${separator}${label}${separator}(no body)`, "cerebras");
+					expect(isContextOverflow(message)).toBe(true);
+				}
+			}
+		}
+	});
+
+	it("rejects long whitespace-only Cerebras errors without backtracking", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-overflow-"));
+		try {
+			const script = join(root, "overflow.mjs");
+			const moduleUrl = new URL("../src/utils/overflow.ts", import.meta.url).href;
+			writeFileSync(
+				script,
+				`import assert from "node:assert/strict";\n` +
+					`import { isContextOverflow } from ${JSON.stringify(moduleUrl)};\n` +
+					`const message = ${JSON.stringify(createErrorMessage("", "cerebras"))};\n` +
+					`const whitespace = "\\t".repeat(100_000);\n` +
+					`for (const suffix of ["", "x", "(no bodx)"]) {\n` +
+					`  message.errorMessage = "400" + whitespace + suffix;\n` +
+					`  assert.equal(isContextOverflow(message), false);\n` +
+					`}\n` +
+					`message.errorMessage = "413" + whitespace + "(no body)";\n` +
+					`assert.equal(isContextOverflow(message), true);\n`,
+			);
+			const result = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 5_000 });
+			expect(result.error).toBeUndefined();
+			expect(result.status, result.stderr).toBe(0);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	}, 10_000);
 
 	it("does not treat Bedrock throttling 'Too many tokens' as overflow", () => {
 		// Bedrock returns this for HTTP 429 rate limiting, NOT context overflow.

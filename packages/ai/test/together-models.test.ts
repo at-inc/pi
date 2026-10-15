@@ -61,10 +61,10 @@ describe("Together models", () => {
 
 		const catalog = generateModelsFixture({
 			together: {
-				models: { "deepseek-ai/DeepSeek-V4-Pro": { tool_call: true, reasoning: true } },
+				models: { "deepseek-ai/DeepSeek-V4-Pro-0813": { tool_call: true, reasoning: true } },
 			},
 		});
-		const deepSeekV4 = catalog.together["deepseek-ai/DeepSeek-V4-Pro"];
+		const deepSeekV4 = catalog.together["deepseek-ai/DeepSeek-V4-Pro-0813"];
 		expect(deepSeekV4.thinkingLevelMap).toEqual({
 			minimal: null,
 			low: null,

@@ -1,7 +1,7 @@
 import type { ProviderAuthInteraction } from "../auth/types.ts";
 import { getProviderEnvValue } from "./provider-env.ts";
 
-/** Keep device authorization and Anthropic-compatible requests in the same Kimi deployment. */
+/** Keep device authorization and Chat Completions requests in the same Kimi deployment. */
 export function kimiCodingEndpoints(input: { oauthHost?: string; baseUrl?: string }): {
 	oauthHost: string;
 	baseUrl: string;
@@ -12,8 +12,7 @@ export function kimiCodingEndpoints(input: { oauthHost?: string; baseUrl?: strin
 	const domain = global ? "kimi.ai" : "kimi.com";
 	return {
 		oauthHost: (input.oauthHost || `https://auth.${domain}`).replace(/\/+$/, ""),
-		// The Anthropic transport appends /v1/messages itself.
-		baseUrl: (input.baseUrl || `https://api.${domain}/coding`).replace(/\/+$/, "").replace(/\/v1$/, ""),
+		baseUrl: `${(input.baseUrl || `https://api.${domain}/coding`).replace(/\/+$/, "").replace(/(?:\/v1)+$/, "")}/v1`,
 	};
 }
 

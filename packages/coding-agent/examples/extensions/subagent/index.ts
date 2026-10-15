@@ -16,7 +16,14 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CONFIG_DIR_NAME, type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@at-inc/pi";
+import {
+	CONFIG_DIR_NAME,
+	type ExtensionAPI,
+	formatReadLineRange,
+	getAgentDir,
+	getMarkdownTheme,
+	withFileMutationQueue,
+} from "@at-inc/pi";
 import type { AgentToolResult, ThinkingLevel } from "@at-inc/pi-agent-core";
 import type { Message } from "@at-inc/pi-ai";
 import { StringEnum } from "@at-inc/pi-ai";
@@ -81,13 +88,10 @@ function formatToolCall(
 		case "read": {
 			const rawPath = (args.file_path || args.path || "...") as string;
 			const filePath = shortenPath(rawPath);
-			const offset = args.offset as number | undefined;
-			const limit = args.limit as number | undefined;
+			const lineRange = formatReadLineRange(args.offset, args.limit);
 			let text = themeFg("accent", filePath);
-			if (offset !== undefined || limit !== undefined) {
-				const startLine = offset ?? 1;
-				const endLine = limit !== undefined ? startLine + limit - 1 : "";
-				text += themeFg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
+			if (lineRange) {
+				text += themeFg("warning", lineRange);
 			}
 			return themeFg("muted", "read ") + text;
 		}

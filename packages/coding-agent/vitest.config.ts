@@ -20,6 +20,7 @@ export default mergeConfig(
 			},
 		},
 		resolve: {
+			conditions: ["source"],
 			alias: [
 				{ find: /^@at-inc\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
 				{ find: /^@at-inc\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
@@ -29,5 +30,6 @@ export default mergeConfig(
 				{ find: /^@mariozechner\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
 			],
 		},
+		ssr: { resolve: { conditions: ["source"] } },
 	}),
 );

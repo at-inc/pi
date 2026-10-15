@@ -519,7 +519,7 @@ describe("Generate E2E Tests", () => {
 	});
 
 	describe.skipIf(!hasAzureOpenAICredentials())("Azure OpenAI Responses Provider (gpt-4o-mini)", () => {
-		const llm = getModel("azure-openai-responses", "gpt-4o-mini");
+		const llm = getModel("azure", "gpt-4o-mini");
 		const azureDeploymentName = resolveAzureDeploymentName(llm.id);
 		const azureOptions = azureDeploymentName ? { azureDeploymentName } : {};
 
@@ -700,9 +700,9 @@ describe("Generate E2E Tests", () => {
 	);
 
 	describe.skipIf(!hasCloudflareAiGatewayCredentials() || !process.env.ANTHROPIC_API_KEY)(
-		"Cloudflare AI Gateway → Anthropic BYOK (claude-sonnet-4.6 via /anthropic messages)",
+		"Cloudflare AI Gateway → Anthropic BYOK (claude-sonnet-4-5 via /anthropic messages)",
 		() => {
-			const llm = getModel("cloudflare-ai-gateway", "claude-sonnet-4.6");
+			const llm = getModel("cloudflare-ai-gateway", "claude-sonnet-4-5");
 			const options = { headers: { Authorization: `Bearer ${process.env.ANTHROPIC_API_KEY}` } };
 			const thinkingOptions = {
 				...options,
@@ -809,10 +809,10 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3 Super via OpenAI Completions)", () => {
+	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3 Ultra via OpenAI Completions)", () => {
 		const getNvidiaModel = () => {
-			const model = getModels("nvidia").find((model) => model.id === "nvidia/nemotron-3-super-120b-a12b");
-			if (!model) throw new Error("NVIDIA NIM catalog does not include Nemotron 3 Super");
+			const model = getModels("nvidia").find((model) => model.id === "nvidia/nemotron-3-ultra-550b-a55b");
+			if (!model) throw new Error("NVIDIA NIM catalog does not include Nemotron 3 Ultra");
 			return model;
 		};
 
@@ -1045,7 +1045,7 @@ describe("Generate E2E Tests", () => {
 	});
 
 	describe.skipIf(!process.env.KIMI_API_KEY)(
-		"Kimi For Coding Provider (kimi-for-coding via Anthropic Messages)",
+		"Kimi For Coding Provider (kimi-for-coding via OpenAI Completions)",
 		() => {
 			const llm = getModel("kimi-coding", "kimi-for-coding");
 

@@ -9,10 +9,11 @@ import {
 } from "@at-inc/pi-ai";
 import type { Draft } from "@earendil-works/chord";
 import {
+	AgentDoc,
 	type AgentEvent,
 	type AgentEventStream,
 	type Conversation,
-	ConversationConfig,
+	defineTool,
 	type Harness,
 	LiveDoc,
 	type LiveState,
@@ -24,6 +25,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import { type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
+import { addTool } from "./harness-support.ts";
 import { context, documentChanges } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
 
@@ -152,18 +154,21 @@ describe("agent events", () => {
 	it("reports tool start, output appends, and the result entry", async () => {
 		const setup = chatSetup();
 		const gate = deferred();
-		setup.registry.tools.add({
-			name: "print",
-			description: "Prints",
-			parameters: Type.Object({ n: Type.Number() }),
-			execute: async (_args, api) => {
-				api.output("one\n");
-				await new Promise((resolve) => setTimeout(resolve, 150));
-				api.output("two\n");
-				await gate.promise;
-				return {};
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "print",
+				description: "Prints",
+				parameters: Type.Object({ n: Type.Number() }),
+				execute: async (_args, api) => {
+					api.output("one\n");
+					await new Promise((resolve) => setTimeout(resolve, 150));
+					api.output("two\n");
+					await gate.promise;
+					return {};
+				},
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("print", { n: 1 }, { id: "c1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
@@ -186,7 +191,13 @@ describe("agent events", () => {
 		await submission.wait(context);
 		await drained();
 		const tool = events().filter((event) => event.type.startsWith("tool_execution"));
-		expect(tool[0]).toEqual({ type: "tool_execution_start", toolCallId: "c1", toolName: "print", args: { n: 1 } });
+		expect(tool[0]).toEqual({
+			type: "tool_execution_start",
+			toolCallId: "c1",
+			toolName: "print",
+			taskId: expect.any(Number),
+			args: { n: 1 },
+		});
 		const end = tool.at(-1)!;
 		expect(end).toMatchObject({ type: "tool_execution_end", toolCallId: "c1", entry: { kind: "pi.tool-result" } });
 		// As in the coding agent, the tool ends directly before its result message.
@@ -215,7 +226,7 @@ describe("agent events", () => {
 		const error = fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" });
 		setup.faux.setResponses([held, error, fauxAssistantMessage([fauxText("second")])]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		await root.setRetryPolicy({ enabled: true, maxRetries: 1, baseDelayMs: 1 }, context);
+		setup.settings.retry = { enabled: true, maxRetries: 1, baseDelayMs: 1 };
 		const { stream, events } = await listen(harness, root);
 		await root.submit({ type: "input", content: "a" }, context);
 		const followUp = await root.submit({ type: "input", content: "f" }, context);
@@ -299,20 +310,23 @@ describe("agent events", () => {
 	it("rebuilds a sliding tail window from output trims and appends", async () => {
 		const setup = chatSetup();
 		const gate = deferred();
-		setup.registry.tools.add({
-			name: "tail",
-			description: "Prints lines",
-			parameters: Type.Object({}),
-			outputLimits: { maxLines: 3, retain: "tail" },
-			execute: async (_args, api) => {
-				for (let line = 0; line < 6; line++) {
-					api.output(`line ${line}\n`);
-					await new Promise((resolve) => setTimeout(resolve, 120));
-				}
-				await gate.promise;
-				return {};
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "tail",
+				description: "Prints lines",
+				parameters: Type.Object({}),
+				outputLimits: { maxLines: 3, retain: "tail" },
+				execute: async (_args, api) => {
+					for (let line = 0; line < 6; line++) {
+						api.output(`line ${line}\n`);
+						await new Promise((resolve) => setTimeout(resolve, 120));
+					}
+					await gate.promise;
+					return {};
+				},
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("tail", {}, { id: "c1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
@@ -389,12 +403,15 @@ describe("agent events", () => {
 
 	it("ends a call that never runs and a tool aborted with its generation", async () => {
 		const setup = chatSetup();
-		setup.registry.tools.add({
-			name: "wait",
-			description: "Waits until aborted",
-			parameters: Type.Object({}),
-			execute: (_args, _api, callContext) => aborted(callContext.abortSignal!),
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "wait",
+				description: "Waits until aborted",
+				parameters: Type.Object({}),
+				execute: (_args, _api, callContext) => aborted(callContext.abortSignal!),
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("ghost", {}, { id: "c1" }), fauxToolCall("wait", {}, { id: "c2" })], {
 				stopReason: "toolUse",
@@ -436,15 +453,18 @@ describe("agent events", () => {
 	it("reports a steer without run events, a reset as an appended entry, and nothing for other conversations", async () => {
 		const setup = chatSetup();
 		const gate = deferred();
-		setup.registry.tools.add({
-			name: "hold",
-			description: "Waits",
-			parameters: Type.Object({}),
-			execute: async () => {
-				await gate.promise;
-				return {};
-			},
-		});
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "hold",
+				description: "Waits",
+				parameters: Type.Object({}),
+				execute: async () => {
+					await gate.promise;
+					return {};
+				},
+			}),
+		);
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("hold", {}, { id: "c1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
@@ -551,7 +571,7 @@ describe("agent events", () => {
 			live.tools![0]!.status = "done";
 		});
 		await root.commit((tx) => tx.retireDoc(UsageDoc, root.id), context);
-		await root.commit((tx) => tx.retireDoc(ConversationConfig, root.id), context);
+		await root.commit((tx) => tx.retireDoc(AgentDoc, root.id), context);
 		await drained();
 		expect(batches.map((batch) => batch.filter((event) => event.type !== "task_failed"))).toEqual([
 			[{ type: "message_start", message: partial }],
@@ -563,7 +583,7 @@ describe("agent events", () => {
 			[{ type: "tool_execution_end", toolCallId: "c1", toolName: "t" }],
 			// Retired documents read as their initial values.
 			[{ type: "usage_changed", usage: { models: {}, tools: {} } }],
-			[{ type: "config_changed", config: { thinkingLevel: "off", activeTools: [] } }],
+			[{ type: "agent_changed", agent: {} }],
 		]);
 		await stream.stop();
 		await harness.close(context);

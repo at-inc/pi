@@ -25,7 +25,8 @@ function runSyncVersions(root) {
 	});
 }
 
-test("synchronizes private dependencies without touching registry aliases, generated manifests, or published lockstep", async () => {
+// #10865: caret ranges allowed older agents to install incompatible newer workspace dependencies.
+test("pins published and private dependencies without touching registry aliases, generated manifests, or published lockstep", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-sync-versions-"));
 	try {
 		await writeManifest(root, "packages/ai", {
@@ -35,6 +36,15 @@ test("synchronizes private dependencies without touching registry aliases, gener
 		await writeManifest(root, "packages/coding-agent", {
 			name: "@at-inc/pi",
 			version: "2.0.0",
+			dependencies: {
+				"@at-inc/pi-ai": "^2.0.0",
+			},
+			devDependencies: {
+				"@at-inc/pi-ai": "~1.0.0",
+			},
+			optionalDependencies: {
+				"@at-inc/pi-ai": "1.0.0",
+			},
 		});
 		await writeManifest(root, "packages/evals", {
 			name: "@earendil-works/pi-evals",
@@ -57,11 +67,19 @@ test("synchronizes private dependencies without touching registry aliases, gener
 		const result = runSyncVersions(root);
 		assert.equal(result.status, 0, result.stderr);
 
+		const agentManifest = await readManifest(root, "packages/coding-agent");
+		for (const section of ["dependencies", "devDependencies", "optionalDependencies"]) {
+			assert.equal(agentManifest[section]["@at-inc/pi-ai"], "2.0.0");
+		}
 		const evalsManifest = await readManifest(root, "packages/evals");
-		assert.equal(evalsManifest.dependencies["@at-inc/pi"], "^2.0.0");
+		assert.equal(evalsManifest.dependencies["@at-inc/pi"], "2.0.0");
 		assert.equal(evalsManifest.dependencies["@mariozechner/pi-ai"], "npm:@at-inc/pi-ai@1.0.0");
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
 		assert.equal(generatedManifest.dependencies["@at-inc/pi"], "^1.0.0");
+
+		const alreadySynced = runSyncVersions(root);
+		assert.equal(alreadySynced.status, 0, alreadySynced.stderr);
+		assert.match(alreadySynced.stdout, /All inter-package dependencies are already in sync/);
 
 		await writeManifest(root, "packages/ai", {
 			name: "@at-inc/pi-ai",

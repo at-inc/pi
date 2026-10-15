@@ -25,6 +25,8 @@ export interface PromptTemplate {
 export function parseCommandArgs(argsString: string): string[] {
 	const args: string[] = [];
 	let current = "";
+	// Tracks whether a token has started, so quoted empty strings ("" or '') are kept as arguments
+	let hasToken = false;
 	let inQuote: string | null = null;
 
 	for (let i = 0; i < argsString.length; i++) {
@@ -38,17 +40,20 @@ export function parseCommandArgs(argsString: string): string[] {
 			}
 		} else if (char === '"' || char === "'") {
 			inQuote = char;
+			hasToken = true;
 		} else if (/\s/.test(char)) {
-			if (current) {
+			if (hasToken) {
 				args.push(current);
 				current = "";
+				hasToken = false;
 			}
 		} else {
 			current += char;
+			hasToken = true;
 		}
 	}
 
-	if (current) {
+	if (hasToken) {
 		args.push(current);
 	}
 
@@ -70,36 +75,37 @@ export function parseCommandArgs(argsString: string): string[] {
  */
 export function substituteArgs(content: string, args: string[]): string {
 	const allArgs = args.join(" ");
-
-	return content.replace(
-		/\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
-		(_match, defaultTarget, defaultValue, sliceStart, sliceLength, simple) => {
-			if (defaultTarget) {
-				const value =
-					defaultTarget === "@" || defaultTarget === "ARGUMENTS" ? allArgs : args[parseInt(defaultTarget, 10) - 1];
-				return value ? value : defaultValue;
+	const pattern = /\$\{(\d+|ARGUMENTS|@):-|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g;
+	const result: string[] = [];
+	let copiedThrough = 0;
+	let nextClosingBrace = content.indexOf("}");
+	for (let match = pattern.exec(content); match !== null; match = pattern.exec(content)) {
+		const [, defaultTarget, sliceStart, sliceLength, simple] = match;
+		let replacement: string;
+		if (defaultTarget) {
+			if (nextClosingBrace !== -1 && nextClosingBrace < pattern.lastIndex) {
+				nextClosingBrace = content.indexOf("}", pattern.lastIndex);
 			}
-
-			if (sliceStart) {
-				let start = parseInt(sliceStart, 10) - 1; // Convert to 0-indexed (user provides 1-indexed)
-				// Treat 0 as 1 (bash convention: args start at 1)
-				if (start < 0) start = 0;
-
-				if (sliceLength) {
-					const length = parseInt(sliceLength, 10);
-					return args.slice(start, start + length).join(" ");
-				}
-				return args.slice(start).join(" ");
-			}
-
-			if (simple === "ARGUMENTS" || simple === "@") {
-				return allArgs;
-			}
-
-			const index = parseInt(simple, 10) - 1;
-			return args[index] ?? "";
-		},
-	);
+			if (nextClosingBrace === -1) continue;
+			const value =
+				defaultTarget === "@" || defaultTarget === "ARGUMENTS" ? allArgs : args[parseInt(defaultTarget, 10) - 1];
+			replacement = value || content.slice(pattern.lastIndex, nextClosingBrace);
+			pattern.lastIndex = nextClosingBrace + 1;
+		} else if (sliceStart) {
+			const start = Math.max(0, parseInt(sliceStart, 10) - 1);
+			replacement = sliceLength
+				? args.slice(start, start + parseInt(sliceLength, 10)).join(" ")
+				: args.slice(start).join(" ");
+		} else if (simple === "ARGUMENTS" || simple === "@") {
+			replacement = allArgs;
+		} else {
+			replacement = args[parseInt(simple, 10) - 1] ?? "";
+		}
+		result.push(content.slice(copiedThrough, match.index), replacement);
+		copiedThrough = pattern.lastIndex;
+	}
+	result.push(content.slice(copiedThrough));
+	return result.join("");
 }
 
 function loadTemplateFromFile(

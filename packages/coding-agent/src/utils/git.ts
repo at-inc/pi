@@ -112,6 +112,11 @@ function buildGitSource(args: { repo: string; host: string; path: string; ref?: 
 	if (hasUnsafeGitInstallPart(args.host, false) || hasUnsafeGitInstallPart(normalizedPath, true)) {
 		return null;
 	}
+	if (args.ref?.startsWith("-")) {
+		throw new Error(
+			`Invalid Git ref ${JSON.stringify(args.ref)}: use a branch, tag, or commit that does not start with "-"`,
+		);
+	}
 
 	return {
 		type: "git",
