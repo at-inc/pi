@@ -335,7 +335,7 @@ const KIMI_K3_COST = {
 	input: 3,
 	output: 15,
 	cacheRead: 0.3,
-	cacheWrite: 0,
+	cacheWrite: 3,
 } as const;
 // Kimi Coding is subscription-backed, so models.dev reports zero cost. Use the
 // equivalent Moonshot API rates to estimate the value of subscription usage.
@@ -2879,7 +2879,7 @@ async function generateModels() {
 				max: "max",
 			},
 			input: ["text", "image"],
-			cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+			cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 			contextWindow: 1000000,
 			maxTokens: 128000,
 		});

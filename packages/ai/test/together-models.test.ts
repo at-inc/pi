@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { getModel } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
+import { generateModelsFixture } from "./generate-models-fixture.ts";
 
 const originalTogetherApiKey = process.env.TOGETHER_API_KEY;
 
@@ -58,7 +59,12 @@ describe("Together models", () => {
 			thinkingFormat: "openai",
 		});
 
-		const deepSeekV4 = getModel("together", "deepseek-ai/DeepSeek-V4-Pro");
+		const catalog = generateModelsFixture({
+			together: {
+				models: { "deepseek-ai/DeepSeek-V4-Pro": { tool_call: true, reasoning: true } },
+			},
+		});
+		const deepSeekV4 = catalog.together["deepseek-ai/DeepSeek-V4-Pro"];
 		expect(deepSeekV4.thinkingLevelMap).toEqual({
 			minimal: null,
 			low: null,
