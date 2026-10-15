@@ -26,8 +26,8 @@ interface HtmlViewer {
 
 // Runs the exported viewer's real data loading and renderers, stopping before DOM initialization.
 function loadHtmlViewer(html: string): HtmlViewer {
-	const sessionData = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script>/)?.[1];
-	const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)?.[1];
+	const sessionData = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script\s*>/i)?.[1];
+	const script = [...html.matchAll(/<script>([\s\S]*?)<\/script\s*>/gi)].at(-1)?.[1];
 	if (!sessionData || !script) throw new Error("Missing exported session data or viewer script");
 	return runInNewContext(
 		script.replace(
@@ -145,11 +145,16 @@ describe("read line range display", () => {
 			"[read: notes.txt:25-37]",
 		);
 
-		const viewer = loadHtmlViewer(readFileSync(await exportFromFile(sessionPath, join(tempDir, "out.html")), "utf8"));
-		for (const [offset, limit, range] of cases) {
-			expect(viewer.formatReadLineRange(offset, limit), `${offset}, ${limit}`).toBe(range);
+		const html = readFileSync(await exportFromFile(sessionPath, join(tempDir, "out.html")), "utf8");
+		for (const markup of [html, html.replaceAll("<script", "<SCRIPT").replaceAll("</script>", "</SCRIPT >")]) {
+			const viewer = loadHtmlViewer(markup);
+			for (const [offset, limit, range] of cases) {
+				expect(viewer.formatReadLineRange(offset, limit), `${offset}, ${limit}`).toBe(range);
+			}
+			expect(viewer.getTreeNodeDisplayHtml(result)).toBe(
+				'<span class="tree-role-tool">[read: notes.txt:25-37]</span>',
+			);
+			expect(viewer.renderEntry(assistant)).toContain('<span class="line-numbers">:25-37</span>');
 		}
-		expect(viewer.getTreeNodeDisplayHtml(result)).toBe('<span class="tree-role-tool">[read: notes.txt:25-37]</span>');
-		expect(viewer.renderEntry(assistant)).toContain('<span class="line-numbers">:25-37</span>');
 	});
 });

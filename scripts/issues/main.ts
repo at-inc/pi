@@ -151,7 +151,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 const server = createServer((req, res) => {
 	handle(req, res).catch((error: unknown) => {
 		console.error(error);
-		if (!res.headersSent) send(res, 500, JSON.stringify({ error: String(error) }));
+		if (!res.headersSent) send(res, 500, '{"error":"Internal server error"}');
 	});
 });
 const socket = process.env.TRIAGE_SOCKET;
