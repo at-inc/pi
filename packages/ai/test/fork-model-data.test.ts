@@ -196,8 +196,11 @@ describe("fork model metadata", () => {
 			},
 			contextWindow: 922000,
 		};
+		// #10840
+		const sol61 = chat("openai-codex", "gpt-6.1-sol", "openai-codex-responses");
+		sol61.contextWindow = 500000;
 		const catalog = {
-			"openai-codex": [chat("openai-codex", "gpt-6-astra", "openai-codex-responses")],
+			"openai-codex": [chat("openai-codex", "gpt-6-astra", "openai-codex-responses"), sol61],
 			openai: [
 				chat("openai", "gpt-6-astra"),
 				chat("openai", "future-model", "future-api"),
@@ -224,6 +227,10 @@ describe("fork model metadata", () => {
 		expect(codex["openai-codex-images"]["image:chatgpt-image-generation"]).toEqual(
 			getForkImageModels("openai-codex")[0],
 		);
+		expect(codex["openai-codex-responses"]["chat:gpt-6.1-sol"]).toMatchObject({
+			contextWindow: 500000,
+			supportsFastMode: true,
+		});
 		const openai = JSON.parse(snapshot[1]) as Record<string, Record<string, unknown>>;
 		expect(openai["future-api"]["chat:future-model"]).toEqual(catalog.openai[1]);
 		expect(openai["openai-responses"]["chat:gpt-6-astra"]).toMatchObject({

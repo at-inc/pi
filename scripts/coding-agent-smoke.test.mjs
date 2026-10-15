@@ -18,14 +18,14 @@ function writePackage(directory, manifest, files) {
 	}
 }
 
-function createFixture(t, { importServer = false, declareServer = false, bundleChord = false } = {}) {
+function createFixture(t, { importServer = false, importUndeclared = false, declareServer = false, bundleRuntime = false } = {}) {
 	const temporaryRoot = mkdtempSync(join(tmpdir(), "pi-coding-agent-smoke-test-"));
 	t.after(() => rmSync(temporaryRoot, { recursive: true, force: true }));
 	const root = join(temporaryRoot, "fixture with spaces");
 	const repoRoot = join(root, "repo");
 	mkdirSync(repoRoot, { recursive: true });
 	writeFileSync(join(repoRoot, "package.json"), '{"name":"fixture","private":true}\n');
-	const packageNames = [codingAgentName, "@earendil-works/chord", ...devPackages];
+	const packageNames = [codingAgentName, "@earendil-works/pi-tui", ...devPackages];
 	for (const name of packageNames) {
 		const isAgent = name === codingAgentName;
 		writePackage(
@@ -36,31 +36,26 @@ function createFixture(t, { importServer = false, declareServer = false, bundleC
 				type: "module",
 				main: "./dist/index.js",
 				types: "./dist/index.d.ts",
-				exports: isAgent
-					? {
-							".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
-							"./client": { source: "./src/client/index.ts" },
-							"./experimental/plugin": { source: "./src/experimental/plugin.ts" },
-						}
-					: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
-				files: ["dist", "docs", "examples", "README.md", "CHANGELOG.md"],
+				exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+				files: ["dist", "docs", "examples", "schemas", "README.md", "CHANGELOG.md"],
 				...(isAgent
 					? {
 							bin: { pi: "dist/bundle/cli.js" },
 							dependencies: {
-								"@earendil-works/chord": "1.0.0",
+								"@earendil-works/pi-tui": "1.0.0",
 								...(declareServer ? { "@earendil-works/pi-server": "1.0.0" } : {}),
 							},
 							devDependencies: Object.fromEntries(devPackages.map((packageName) => [packageName, "1.0.0"])),
-							...(bundleChord ? { bundleDependencies: ["@earendil-works/chord"] } : {}),
+							...(bundleRuntime ? { bundleDependencies: ["@earendil-works/pi-tui"] } : {}),
 						}
 					: {}),
 			},
 			{
 				"dist/index.js": isAgent
 					? `${importServer ? 'import "@earendil-works/pi-server";' : ""}
-import { marker } from "@earendil-works/chord";
-if (marker !== ${JSON.stringify(bundleChord ? "bundled artifact" : "local tarball")}) throw new Error("Wrong Chord artifact");
+${importUndeclared ? 'import "@earendil-works/undeclared";' : ""}
+import { marker } from "@earendil-works/pi-tui";
+if (marker !== ${JSON.stringify(bundleRuntime ? "bundled artifact" : "local tarball")}) throw new Error("Wrong TUI artifact");
 export function createAgentSession() {}
 export class SessionManager { static inMemory() {} }
 export class ModelRuntime { static create() {} }
@@ -77,26 +72,29 @@ export class ModelRuntime { static create() {} }
 							"examples/fixture.ts": "export {};\n",
 							"dist/modes/interactive/theme/dark.json": "{}\n",
 							"dist/modes/interactive/theme/light.json": "{}\n",
-							"dist/modes/interactive/theme/theme-schema.json": "{}\n",
+							"schemas/keybindings.schema.json": "{}\n",
+							"schemas/models.schema.json": "{}\n",
+							"schemas/settings.schema.json": "{}\n",
+							"schemas/theme.schema.json": "{}\n",
 							"dist/modes/interactive/assets/clankolas.png": "fixture",
 							"dist/core/export-html/template.html": "fixture",
 							"dist/core/export-html/template.css": "fixture",
 							"dist/core/export-html/template.js": "export {};\n",
 							"dist/core/export-html/vendor/highlight.min.js": "export {};\n",
 							"dist/core/export-html/vendor/marked.min.js": "export {};\n",
-							...(bundleChord
+							...(bundleRuntime
 								? {
-										"node_modules/@earendil-works/chord/package.json": JSON.stringify({
-											name: "@earendil-works/chord",
+										"node_modules/@earendil-works/pi-tui/package.json": JSON.stringify({
+											name: "@earendil-works/pi-tui",
 											version: "1.0.0",
 											type: "module",
 											main: "./dist/index.js",
 											types: "./dist/index.d.ts",
 											exports: "./dist/index.js",
 										}),
-										"node_modules/@earendil-works/chord/dist/index.js":
+										"node_modules/@earendil-works/pi-tui/dist/index.js":
 											'export const marker = "bundled artifact";\n',
-										"node_modules/@earendil-works/chord/dist/index.d.ts":
+										"node_modules/@earendil-works/pi-tui/dist/index.d.ts":
 											'export declare const marker: "bundled artifact";\n',
 									}
 								: {}),
@@ -107,7 +105,7 @@ export class ModelRuntime { static create() {} }
 	}
 	const artifactSet = produceArtifactSet({ build: false, outDir: join(root, "artifacts"), repoRoot, source: null });
 	const directory = join(root, "consumer");
-	const installArtifacts = bundleChord
+	const installArtifacts = bundleRuntime
 		? { ...artifactSet, packages: artifactSet.packages.filter((pkg) => pkg.name === codingAgentName) }
 		: artifactSet;
 	installConsumer({ artifactSet: installArtifacts, directory, packageNames: [codingAgentName] });
@@ -156,14 +154,21 @@ test("rejects missing stable SDK declarations and runtime assets", (t) => {
 	rmSync(declarations);
 	assert.throws(() => smokeTestCodingAgent(directory), /types does not exist/);
 	writeFileSync(declarations, contents);
+	for (const schema of ["keybindings", "models", "settings", "theme"]) {
+		const path = join(packageDirectory, `schemas/${schema}.schema.json`);
+		const schemaContents = readFileSync(path, "utf8");
+		rmSync(path);
+		assert.throws(() => smokeTestCodingAgent(directory), /missing a runtime asset.*schemas\//);
+		writeFileSync(path, schemaContents);
+	}
 	rmSync(join(packageDirectory, "dist/modes/interactive/theme/dark.json"));
 	assert.throws(() => smokeTestCodingAgent(directory), /missing a runtime asset.*dark.json/);
 });
 
 test("validates bundled runtime files through their host artifact without substituting development peers", (t) => {
-	const directory = createFixture(t, { bundleChord: true });
+	const directory = createFixture(t, { bundleRuntime: true });
 	const artifactSet = readArtifactSet(join(directory, "..", "artifacts", "manifest.json"));
-	assert.equal(existsSync(join(directory, "node_modules/@earendil-works/chord")), false);
+	assert.equal(existsSync(join(directory, "node_modules/@earendil-works/pi-tui")), false);
 	smokeTestNpmConsumer({ artifactSet, directory, packageName: codingAgentName });
 	smokeTestCodingAgent(directory);
 	const hostManifestPath = join(directory, "node_modules", codingAgentName, "package.json");
@@ -174,4 +179,9 @@ test("validates bundled runtime files through their host artifact without substi
 		() => smokeTestNpmConsumer({ artifactSet, directory, packageName: codingAgentName }),
 		/no verified bundle host/,
 	);
+});
+
+test("fails when the SDK imports an undeclared package despite a working CLI", (t) => {
+	const directory = createFixture(t, { importUndeclared: true });
+	assert.throws(() => smokeTestCodingAgent(directory), /Cannot find package '@earendil-works\/undeclared'/);
 });

@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getForkChatModelFallbacks } from "../scripts/fork-model-fallbacks.ts";
 import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
 import { MODEL_DATA_MANIFEST_FILE, validateGeneratedModelData } from "../scripts/model-data.ts";
+import { stream } from "../src/api/anthropic-messages.ts";
+import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { AnyModel } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const roots: string[] = [];
 
@@ -29,6 +32,38 @@ function fixture(models: readonly AnyModel[]): { root: string; catalogPath: stri
 }
 
 describe("fork chat model fallbacks", () => {
+	// #10753
+	it("disables thinking on the Haiku fallback without sending effort settings", async () => {
+		const [model] = getForkChatModelFallbacks("anthropic");
+		expect(getSupportedThinkingLevels(model)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+		const fetch = vi.fn(() => {
+			throw new Error("Unexpected provider request");
+		});
+		let payload: unknown;
+		const result = await stream(
+			model,
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 0 }] }),
+			{
+				apiKey: "test-key",
+				cacheRetention: "none",
+				thinkingEnabled: false,
+				fetch,
+				onPayload(value) {
+					payload = value;
+					throw new Error("Payload captured before network request");
+				},
+			},
+		).result();
+		expect(payload).toMatchObject({
+			thinking: { type: "disabled" },
+			messages: [{ role: "user", content: "Hello" }],
+		});
+		expect(payload).not.toHaveProperty("output_config");
+		expect(result.providerThinkingLevel).toBeUndefined();
+		expect(result.errorMessage).toContain("Payload captured before network request");
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
 	it("matches the complete generated Haiku 5.5 metadata without adding Fast support", () => {
 		const data = JSON.parse(
 			readFileSync(new URL("../src/providers/data/anthropic.json", import.meta.url), "utf8"),

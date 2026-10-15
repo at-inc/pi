@@ -122,7 +122,7 @@ describe("Kimi Code OAuth", () => {
 		await expect(credentialPromise).resolves.toEqual({
 			type: "oauth",
 			oauthHost: OAUTH_HOST,
-			baseUrl: "https://api.kimi.com/coding",
+			baseUrl: "https://api.kimi.com/coding/v1",
 			access: "access-token",
 			refresh: "refresh-token",
 			expires: startTime.getTime() + 10000 + 3600 * 1000,
@@ -230,7 +230,7 @@ describe("Kimi Code OAuth", () => {
 		expect(credential).toEqual({
 			type: "oauth",
 			oauthHost: OAUTH_HOST,
-			baseUrl: "https://api.kimi.com/coding",
+			baseUrl: "https://api.kimi.com/coding/v1",
 			access: "new-access",
 			refresh: "new-refresh",
 			expires: expect.any(Number),
@@ -239,7 +239,7 @@ describe("Kimi Code OAuth", () => {
 
 		await expect(kimiCodingOAuth.toAuth(credential)).resolves.toEqual({
 			headers: { Authorization: "Bearer new-access" },
-			baseUrl: "https://api.kimi.com/coding",
+			baseUrl: "https://api.kimi.com/coding/v1",
 		});
 	});
 
@@ -277,7 +277,7 @@ describe("Kimi Code OAuth", () => {
 		expect(events[0]).toMatchObject({
 			verificationUri: "https://www.kimi.ai/code/authorize_device?user_code=ABCD-1234",
 		});
-		expect(credential).toMatchObject({ oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding" });
+		expect(credential).toMatchObject({ oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding/v1" });
 		vi.stubEnv("KIMI_CODE_OAUTH_HOST", OAUTH_HOST);
 		vi.stubEnv("KIMI_CODE_BASE_URL", "https://api.kimi.com/coding");
 		// Round-trip through storage as a restarted client would.
@@ -285,7 +285,7 @@ describe("Kimi Code OAuth", () => {
 			JSON.parse(JSON.stringify(credential)),
 			new AbortController().signal,
 		);
-		expect(refreshed).toMatchObject({ oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding" });
+		expect(refreshed).toMatchObject({ oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding/v1" });
 		expect(urls).toEqual([
 			"https://auth.kimi.ai/api/oauth/device_authorization",
 			"https://auth.kimi.ai/api/oauth/token",
@@ -298,13 +298,12 @@ describe("Kimi Code OAuth", () => {
 		const models = createModels({ credentials });
 		models.setProvider(kimiCodingProvider());
 		const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-			expect(getUrl(input)).toBe("https://api.kimi.ai/coding/v1/messages?beta=true");
+			expect(getUrl(input)).toBe("https://api.kimi.ai/coding/v1/chat/completions");
 			expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer global-access");
 			return new Response(
 				[
-					'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":1,"output_tokens":0}}}',
-					'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
-					'event: message_stop\ndata: {"type":"message_stop"}',
+					'data: {"id":"chat_test","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}',
+					"data: [DONE]",
 					"",
 				].join("\n\n"),
 				{ headers: { "content-type": "text/event-stream" } },
@@ -344,7 +343,7 @@ describe("Kimi Code OAuth", () => {
 		await vi.advanceTimersByTimeAsync(1000);
 		await expect(login).resolves.toMatchObject({
 			oauthHost: "https://auth.kimi.ai",
-			baseUrl: "https://api.kimi.ai/coding",
+			baseUrl: "https://api.kimi.ai/coding/v1",
 		});
 		expect(interaction.prompt).not.toHaveBeenCalled();
 	});

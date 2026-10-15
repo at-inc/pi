@@ -13,8 +13,17 @@ async function check(t, target, utilities) {
 			exports: { "./models": "./dist/models.js", "./utils/*": target },
 		}),
 		"packages/ai/src/models.ts": "export {};\n",
-		"packages/durable/package.json": JSON.stringify({ exports: { ".": "./dist/index.js" } }),
+		"packages/codemode/package.json": JSON.stringify({
+			exports: { ".": "./dist/index.js", "./portable": "./dist/portable.js", "./cloudflare": "./dist/cloudflare.js" },
+		}),
+		"packages/codemode/src/index.ts": "export {};\n",
+		"packages/codemode/src/portable.ts": "export {};\n",
+		"packages/codemode/src/cloudflare.ts": "export {};\n",
+		"packages/durable/package.json": JSON.stringify({
+			exports: { ".": "./dist/index.js", "./tools": "./dist/tools.js" },
+		}),
 		"packages/durable/src/index.ts": "export {};\n",
+		"packages/durable/src/tools.ts": "export {};\n",
 		...Object.fromEntries(utilities.map((name) => [`packages/ai/src/utils/${name}.ts`, "export {};\n"])),
 	};
 	for (const [path, content] of Object.entries(files)) {

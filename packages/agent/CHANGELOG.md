@@ -6,6 +6,10 @@
 
 - Publish and validate the exact packed library artifacts with source provenance, SHA-512 integrity checks, and one shared fork AI runtime in aliased consumers.
 
+## [1.3.0] - 2026-10-15
+
+## [1.2.0] - 2026-10-12
+
 ## [1.1.0] - 2026-10-07
 
 ### Added

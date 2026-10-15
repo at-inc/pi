@@ -12,7 +12,6 @@ export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-m
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
 		thinkingLevelMap: {
-			off: null,
 			minimal: null,
 			low: "low",
 			medium: "medium",

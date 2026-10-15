@@ -12,7 +12,6 @@ const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
 const internalPackagePrefixes = ["@at-inc/pi-", "@earendil-works/pi-"];
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
-	["esbuild@0.28.2", "postinstall selects and verifies the platform-specific esbuild binary"],
 	["protobufjs@7.6.6", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);
 
@@ -295,11 +294,6 @@ function validateShrinkwrap(shrinkwrap, internalNames) {
 				errors.push(`${lockPath || "root"} dependency ${dependencyName} is missing`);
 			}
 		}
-	}
-
-	const platformPackageCount = Object.values(shrinkwrap.packages).filter((entry) => entry.os || entry.cpu || entry.libc).length;
-	if (platformPackageCount === 0) {
-		errors.push("no platform-specific optional dependency entries found");
 	}
 
 	if (errors.length > 0) {
