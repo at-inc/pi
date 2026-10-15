@@ -3264,7 +3264,7 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 and GPT-6 models use Codex's 272k default catalog limit.
+	// Older model limits are based on observed server behavior; GPT-5.6 and GPT-6.0 models use Codex's 272k default catalog limit.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
 	const CODEX_GPT_56_CONTEXT = 272000;
@@ -3280,7 +3280,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6.1-sol"]),
-			contextWindow: CODEX_CONTEXT,
+			contextWindow: 500000,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{

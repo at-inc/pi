@@ -208,7 +208,7 @@ describe("getSupportedThinkingLevels", () => {
 						},
 					],
 				},
-				contextWindow: 272000,
+				contextWindow: provider === "openai-codex" && modelId === "gpt-6.1-sol" ? 500000 : 272000,
 				maxTokens: 128000,
 				compat: {
 					supportsAdditionalTools: true,
@@ -218,6 +218,20 @@ describe("getSupportedThinkingLevels", () => {
 				},
 			});
 		}
+	});
+
+	it.each([
+		["gpt-6.1-sol", 500000],
+		["gpt-6-astra", 272000],
+		["gpt-6-sol", 272000],
+		["gpt-6-luna", 272000],
+		["gpt-5.6-sol", 272000],
+		["gpt-5.6-terra", 272000],
+		["gpt-5.6-luna", 272000],
+		["gpt-5.5", 272000],
+		["gpt-5.3-codex-spark", 128000],
+	] as const)("uses the model-specific Codex context window for %s", (modelId, contextWindow) => {
+		expect(getModel("openai-codex", modelId)).toMatchObject({ contextWindow, maxTokens: 128000 });
 	});
 
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {

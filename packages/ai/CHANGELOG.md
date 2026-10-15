@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Raised the default context window for OpenAI Codex GPT-6.1 Sol from 272,000 to 500,000 tokens.
+
 ## [0.99.2] - 2026-09-30
 
 ### Added
