@@ -50,6 +50,7 @@ export interface ForkModelData {
 	thinkingLevelMap?: unknown;
 	supportsFastMode?: unknown;
 	contextWindow?: unknown;
+	cost?: unknown;
 }
 
 export function applyForkModelMetadata(model: ForkModelData): void {
@@ -102,6 +103,16 @@ export function applyForkModelMetadata(model: ForkModelData): void {
 	if (model.provider === "azure" && model.api === "azure-openai-responses") {
 		const contextWindow = FORK_AZURE_CONTEXT_WINDOW_OVERRIDES.get(model.id);
 		if (contextWindow !== undefined) model.contextWindow = contextWindow;
+	}
+	if (
+		model.api === "openai-completions" &&
+		(((model.provider === "moonshotai" || model.provider === "moonshotai-cn") && model.id === "kimi-k3") ||
+			(model.provider === "kimi-coding" && model.id === "k3")) &&
+		typeof model.cost === "object" &&
+		model.cost !== null &&
+		!Array.isArray(model.cost)
+	) {
+		model.cost = { ...model.cost, cacheWrite: 3 };
 	}
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getSupportedThinkingLevels } from "../src/compat.ts";
+import { generateModelsFixture } from "./generate-models-fixture.ts";
 
 describe("getSupportedThinkingLevels", () => {
 	it("includes max but not xhigh for Anthropic Opus 4.6 on anthropic-messages API", () => {
@@ -221,6 +222,20 @@ describe("getSupportedThinkingLevels", () => {
 		}
 	});
 
+	it.each([
+		["gpt-6.1-sol", 500000],
+		["gpt-6-astra", 272000],
+		["gpt-6-sol", 272000],
+		["gpt-6-luna", 272000],
+		["gpt-5.6-sol", 272000],
+		["gpt-5.6-terra", 272000],
+		["gpt-5.6-luna", 272000],
+		["gpt-5.5", 272000],
+		["gpt-5.3-codex-spark", 128000],
+	] as const)("uses the model-specific Codex context window for %s", (modelId, contextWindow) => {
+		expect(getModel("openai-codex", modelId)).toMatchObject({ contextWindow, maxTokens: 128000 });
+	});
+
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
 		const model = getModel("openai", "gpt-5.5-pro");
 		expect(model).toBeDefined();
@@ -235,6 +250,17 @@ describe("getSupportedThinkingLevels", () => {
 
 	it("includes low/high/max plus off for DeepSeek V4.1 Flash on the DeepSeek provider", () => {
 		const model = getModel("deepseek", "deepseek-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
+	it("includes low/high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
+		const catalog = generateModelsFixture({
+			"opencode-go": {
+				models: { "deepseek-v4-flash": { tool_call: true, reasoning: true } },
+			},
+		});
+		const model = catalog["opencode-go"]["deepseek-v4-flash"];
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});

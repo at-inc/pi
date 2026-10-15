@@ -5,6 +5,7 @@
 ### Changed
 
 - Publish and validate the exact packed library artifacts with source provenance and SHA-512 integrity checks.
+- Raised the default context window for OpenAI Codex GPT-6.1 Sol from 272,000 to 500,000 tokens.
 
 ### Fixed
 
