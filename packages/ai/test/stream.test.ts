@@ -4,7 +4,7 @@ import { dirname, join } from "path";
 import { Type } from "typebox";
 import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { complete, getModel, stream } from "../src/compat.ts";
+import { complete, getModel, getModels, stream } from "../src/compat.ts";
 import type { Api, Context, ImageContent, Model, StreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
@@ -810,26 +810,30 @@ describe("Generate E2E Tests", () => {
 	});
 
 	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3 Super via OpenAI Completions)", () => {
-		const llm = getModel("nvidia", "nvidia/nemotron-3-super-120b-a12b");
+		const getNvidiaModel = () => {
+			const model = getModels("nvidia").find((model) => model.id === "nvidia/nemotron-3-super-120b-a12b");
+			if (!model) throw new Error("NVIDIA NIM catalog does not include Nemotron 3 Super");
+			return model;
+		};
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
-			await basicTextGeneration(llm);
+			await basicTextGeneration(getNvidiaModel());
 		});
 
 		it("should handle tool calling", { retry: 3 }, async () => {
-			await handleToolCall(llm);
+			await handleToolCall(getNvidiaModel());
 		});
 
 		it("should handle streaming", { retry: 3 }, async () => {
-			await handleStreaming(llm);
+			await handleStreaming(getNvidiaModel());
 		});
 
 		it("should handle thinking mode", { retry: 3 }, async () => {
-			await handleThinking(llm, { reasoningEffort: "high" });
+			await handleThinking(getNvidiaModel(), { reasoningEffort: "high" });
 		});
 
 		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-			await multiTurn(llm, { reasoningEffort: "high" });
+			await multiTurn(getNvidiaModel(), { reasoningEffort: "high" });
 		});
 	});
 

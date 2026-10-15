@@ -335,7 +335,7 @@ const KIMI_K3_COST = {
 	input: 3,
 	output: 15,
 	cacheRead: 0.3,
-	cacheWrite: 0,
+	cacheWrite: 3,
 } as const;
 // Kimi Coding is subscription-backed, so models.dev reports zero cost. Use the
 // equivalent Moonshot API rates to estimate the value of subscription usage.
@@ -2879,7 +2879,7 @@ async function generateModels() {
 				max: "max",
 			},
 			input: ["text", "image"],
-			cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+			cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 			contextWindow: 1000000,
 			maxTokens: 128000,
 		});
@@ -3264,7 +3264,7 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 and GPT-6 models use Codex's 272k default catalog limit.
+	// Older model limits are based on observed server behavior; GPT-5.6 and GPT-6.0 models use Codex's 272k default catalog limit.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
 	const CODEX_GPT_56_CONTEXT = 272000;
@@ -3280,7 +3280,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6.1-sol"]),
-			contextWindow: CODEX_CONTEXT,
+			contextWindow: 500000,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getSupportedThinkingLevels } from "../src/compat.ts";
+import { generateModelsFixture } from "./generate-models-fixture.ts";
 
 describe("getSupportedThinkingLevels", () => {
 	it("includes max but not xhigh for Anthropic Opus 4.6 on anthropic-messages API", () => {
@@ -42,7 +43,7 @@ describe("getSupportedThinkingLevels", () => {
 	it("includes Claude Sonnet 5.5 with managed effort levels and official pricing", () => {
 		const model = getModel("anthropic", "claude-sonnet-5-5");
 		expect(model).toMatchObject({
-			cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+			cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 			contextWindow: 1_000_000,
 			maxTokens: 128_000,
 			compat: {
@@ -208,7 +209,7 @@ describe("getSupportedThinkingLevels", () => {
 						},
 					],
 				},
-				contextWindow: 272000,
+				contextWindow: provider === "openai-codex" && modelId === "gpt-6.1-sol" ? 500000 : 272000,
 				maxTokens: 128000,
 				compat: {
 					supportsAdditionalTools: true,
@@ -218,6 +219,20 @@ describe("getSupportedThinkingLevels", () => {
 				},
 			});
 		}
+	});
+
+	it.each([
+		["gpt-6.1-sol", 500000],
+		["gpt-6-astra", 272000],
+		["gpt-6-sol", 272000],
+		["gpt-6-luna", 272000],
+		["gpt-5.6-sol", 272000],
+		["gpt-5.6-terra", 272000],
+		["gpt-5.6-luna", 272000],
+		["gpt-5.5", 272000],
+		["gpt-5.3-codex-spark", 128000],
+	] as const)("uses the model-specific Codex context window for %s", (modelId, contextWindow) => {
+		expect(getModel("openai-codex", modelId)).toMatchObject({ contextWindow, maxTokens: 128000 });
 	});
 
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
@@ -239,7 +254,12 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it("includes low/high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
-		const model = getModel("opencode-go", "deepseek-v4-flash");
+		const catalog = generateModelsFixture({
+			"opencode-go": {
+				models: { "deepseek-v4-flash": { tool_call: true, reasoning: true } },
+			},
+		});
+		const model = catalog["opencode-go"]["deepseek-v4-flash"];
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
