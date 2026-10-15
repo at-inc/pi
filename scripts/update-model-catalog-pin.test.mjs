@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
+import YAML from "yaml";
 import { hydrateModelCatalogBytes, hydratePinnedModelCatalog, updateModelCatalogPin } from "./update-model-catalog-pin.mjs";
 
 const model = {
@@ -52,6 +53,24 @@ const bodies = new Map([
 	[switchedRevision, switchedBody],
 ]);
 const typed = "types=chat,image,classifier";
+
+test("keeps ordinary CI and scoped beta builds on the committed catalog", () => {
+	for (const [workflow, job] of [["ci.yml", "build-check-test"], ["env.yml", "check"]]) {
+		const config = YAML.parse(readFileSync(new URL(`../.github/workflows/${workflow}`, import.meta.url), "utf8"));
+		const steps = config.jobs[job].steps;
+		const hydrate = steps.findIndex((step) => step.run === "node scripts/update-model-catalog-pin.mjs --hydrate");
+		const build = steps.findIndex((step) => step.run === "npm run build:offline");
+		assert.ok(hydrate >= 0 && build > hydrate, workflow);
+		assert.ok(!steps.some((step) => step.run === "npm run build"), workflow);
+	}
+	const publish = YAML.parse(
+		readFileSync(new URL("../.github/workflows/publish-github-packages.yml", import.meta.url), "utf8"),
+	).jobs.publish.steps;
+	const hydrate = publish.find((step) => step.run === "node scripts/update-model-catalog-pin.mjs --hydrate");
+	assert.match(hydrate.if, /inputs\.libraries_only/);
+	assert.match(hydrate.if, /inputs\.durable_only/);
+	assert.match(publish.find((step) => step.name === "Build").run, /build:offline/);
+});
 
 let root;
 beforeEach(() => {
