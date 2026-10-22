@@ -9,7 +9,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@at-
 import { openaiProvider } from "@at-inc/pi-ai/providers/openai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "../../src/env/node.ts";
-import { AssistantEntry, createRegistry, Harness, MemoryStorage } from "../../src/index.ts";
+import { AssistantEntry, createRegistry, defineExtension, Harness, MemoryStorage, section } from "../../src/index.ts";
 import { createBashTool, createReadTool } from "../../src/tools/index.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -30,13 +30,16 @@ if (process.env.OPENAI_API_KEY !== undefined) {
 }
 
 const registry = createRegistry();
-registry.systemPrompt.section("preamble", () => "You are a concise coding assistant.", { tag: false });
-registry.tools.add(createReadTool());
-registry.tools.add(createBashTool());
+registry.install(
+	defineExtension({
+		name: "coding",
+		tools: [createReadTool(), createBashTool()],
+		sections: [section("preamble", () => "You are a concise coding assistant.", { tag: false })],
+	}),
+);
 const env = new NodeExecutionEnv({ cwd: process.cwd() });
-const harness = await Harness.open(new MemoryStorage(), { models, registry, env }, context);
-const root = await harness.root(context);
-await root.setModel(model, context);
+const harness = await Harness.open(new MemoryStorage(), { models, registry, env: () => env }, context);
+const root = await harness.root(context, { agent: { model } });
 
 const submission = await root.submit({ type: "input", content: prompt }, context);
 const settled = await submission.wait(context);

@@ -75,7 +75,8 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 			signal: requestSignal.signal,
 			timeoutMs,
 			maxRetryDelayMs: options?.maxRetryDelayMs,
-			telemetryContext: options?.telemetryContext,
+			telemetry: options?.telemetry,
+			identity: options?.identity,
 			transport: "sse",
 			// Image requests are isolated and billable, so never persist state or retry an ambiguous failure.
 			cacheRetention: "none",

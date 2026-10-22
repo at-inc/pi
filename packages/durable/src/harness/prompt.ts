@@ -19,14 +19,14 @@ export function replaySections(messages: readonly Message[]): Map<string, string
 }
 
 /**
- * Render sections in registry order. `undefined` omits a section; tagged text is wrapped as `<key>\n...\n</key>`. A
+ * Render the agent's sections in order. `undefined` omits a section; tagged text is wrapped as `<key>\n...\n</key>`. A
  * section that throws keeps its shown text, if any, and is reported; errors after `context` is aborted propagate.
  */
 export async function renderSections<Tool extends ToolRegistration>(
 	sections: readonly PromptSection<Tool>[],
 	input: PromptInput<Tool>,
 	shown: ReadonlyMap<string, string>,
-	report: (error: unknown) => void,
+	report: (error: unknown, section: PromptSection<Tool>) => void,
 	context: Context,
 ): Promise<Map<string, string>> {
 	const desired = new Map<string, string>();
@@ -36,7 +36,7 @@ export async function renderSections<Tool extends ToolRegistration>(
 			text = await section.render(input, context);
 		} catch (error) {
 			if (context.abortSignal?.aborted) throw error;
-			report(error);
+			report(error, section);
 			const kept = shown.get(section.key);
 			if (kept !== undefined) desired.set(section.key, kept);
 			continue;
@@ -48,19 +48,6 @@ export async function renderSections<Tool extends ToolRegistration>(
 }
 
 type SystemDraft = TypedEntryDraft<never>;
-
-/** Active names the snapshot resolves, first occurrence of each, in configured order, as composed by wrappers. */
-export function desiredTools<T extends ToolRegistration>(
-	activeTools: readonly string[],
-	resolve: (name: string) => T | undefined,
-): T[] {
-	const tools = new Map<string, T>();
-	for (const name of activeTools) {
-		const tool = tools.has(name) ? undefined : resolve(name);
-		if (tool !== undefined) tools.set(name, tool);
-	}
-	return [...tools.values()];
-}
 
 type ToolChanges = { readonly toolsRemoved: ToolReference[]; readonly toolsAdded: Tool[] };
 

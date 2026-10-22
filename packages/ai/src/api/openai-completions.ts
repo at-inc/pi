@@ -40,8 +40,8 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { parseStreamingJson } from "../utils/json-parse.ts";
-import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
+import { parseStreamingJson, parseToolCallArguments } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -63,7 +63,12 @@ import {
 } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { buildBaseOptions, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from "./simple-options.ts";
+import {
+	buildBaseOptions,
+	clampThinkingBudgetToAnswerRoom,
+	resolveSamplingParams,
+	thinkingBudgetForLevel,
+} from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -347,6 +352,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				normalizedContext,
 				apiKey,
 				options?.headers,
+				options?.identity,
 				options?.fetch,
 				cacheSessionId,
 				compat,
@@ -457,7 +463,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 							});
 						}
 					} else {
-						block.arguments = parseStreamingJson(block.partialArgs);
+						Object.assign(block, parseToolCallArguments(block.partialArgs));
 					}
 					// Finalize in-place and strip the scratch buffers so replay only
 					// carries parsed arguments.
@@ -585,21 +591,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 
 				if (choice.delta) {
-					if (
-						choice.delta.content !== null &&
-						choice.delta.content !== undefined &&
-						choice.delta.content.length > 0
-					) {
-						const block = ensureTextBlock();
-						block.text += choice.delta.content;
-						stream.push({
-							type: "text_delta",
-							contentIndex: getContentIndex(block),
-							delta: choice.delta.content,
-							partial: output,
-						});
-					}
-
+					// Handle reasoning before content: some proxies (e.g. LiteLLM) aggregate reasoning and
+					// answer into one delta, and the thinking block must precede the text block.
 					// Some endpoints return reasoning in reasoning_content (llama.cpp),
 					// or reasoning (other openai compatible endpoints)
 					// Use the first non-empty reasoning field to avoid duplication
@@ -633,6 +626,34 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						}
 					}
 
+					const reasoningDetails = (choice.delta as { reasoning_details?: unknown }).reasoning_details;
+					if (Array.isArray(reasoningDetails)) {
+						for (const detail of reasoningDetails) {
+							if (!isOpenAIReasoningDetail(detail)) continue;
+							ensureThinkingBlock("");
+							streamedReasoningDetails ??= [];
+							// Keep provider replay data in the existing signature slot. OpenRouter streams
+							// reasoning_details as deltas: consecutive text/summary deltas are merged into
+							// logical entries, while encrypted entries remain opaque and discrete.
+							appendOpenAIReasoningDetail(streamedReasoningDetails, detail);
+						}
+					}
+
+					if (
+						choice.delta.content !== null &&
+						choice.delta.content !== undefined &&
+						choice.delta.content.length > 0
+					) {
+						const block = ensureTextBlock();
+						block.text += choice.delta.content;
+						stream.push({
+							type: "text_delta",
+							contentIndex: getContentIndex(block),
+							delta: choice.delta.content,
+							partial: output,
+						});
+					}
+
 					if (choice?.delta?.tool_calls) {
 						for (const toolCall of choice.delta.tool_calls as StreamingToolCallDelta[]) {
 							const block = ensureToolCallBlock(toolCall);
@@ -660,19 +681,6 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 								delta,
 								partial: output,
 							});
-						}
-					}
-
-					const reasoningDetails = (choice.delta as { reasoning_details?: unknown }).reasoning_details;
-					if (Array.isArray(reasoningDetails)) {
-						for (const detail of reasoningDetails) {
-							if (!isOpenAIReasoningDetail(detail)) continue;
-							ensureThinkingBlock("");
-							streamedReasoningDetails ??= [];
-							// Keep provider replay data in the existing signature slot. OpenRouter streams
-							// reasoning_details as deltas: consecutive text/summary deltas are merged into
-							// logical entries, while encrypted entries remain opaque and discrete.
-							appendOpenAIReasoningDetail(streamedReasoningDetails, detail);
 						}
 					}
 				}
@@ -758,11 +766,12 @@ function createClient(
 	context: TranscriptContext,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
+	identity?: ClientIdentity,
 	fetch?: typeof globalThis.fetch,
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 ) {
-	const headers: ProviderHeaders = { "User-Agent": getPiUserAgent(), ...model.headers };
+	const headers: ProviderHeaders = { ...getIdentityHeaders(model, identity), ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({
@@ -811,7 +820,9 @@ function buildParams(
 ) {
 	const transcriptTools = resolveTranscriptTools(
 		context.messages,
-		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true,
+		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true
+			? "additions"
+			: "none",
 	);
 	const messages = convertMessages(model, context, compat, {
 		grammarToolInputProperties,
@@ -823,7 +834,7 @@ function buildParams(
 		messages,
 		stream: true,
 		prompt_cache_key:
-			(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
+			(URL.parse(model.baseUrl)?.hostname === "api.openai.com" && cacheRetention !== "none") ||
 			(cacheRetention === "long" && compat.supportsLongCacheRetention)
 				? clampOpenAIPromptCacheKey(options?.sessionId)
 				: undefined,
@@ -999,8 +1010,11 @@ function buildParams(
 		}
 	}
 
-	// Last so custom keys override the named request fields. Per-request keys override model defaults.
-	Object.assign(params, model.samplingParams, options?.samplingParams);
+	// Last so model and request sampling parameters override named request fields.
+	const samplingParams = resolveSamplingParams(model, options?.reasoningEffort ?? "off", options?.samplingParams);
+	if (samplingParams) {
+		Object.assign(params, samplingParams);
+	}
 
 	return params;
 }
@@ -1224,11 +1238,14 @@ export function convertMessages(
 	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id));
 	const transcriptTools = resolveTranscriptTools(
 		normalizedContext.messages,
-		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true,
+		compat.supportsMidConvoSystemMessages === true && compat.supportsMidConvoToolAdditions === true
+			? "additions"
+			: "none",
 	);
 	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 
 	let lastRole: string | null = null;
+	let systemIndex = 0;
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
@@ -1242,7 +1259,8 @@ export function convertMessages(
 		}
 
 		if (msg.role === "system") {
-			const addedTools = i > 0 && transcriptTools.anchorsAdditions ? (msg.toolsAdded ?? []) : [];
+			// transformMessages keeps system messages in order, so their position matches the transcript.
+			const addedTools = systemIndex++ >= transcriptTools.foldedSystemMessages ? (msg.toolsAdded ?? []) : [];
 			if (addedTools.length > 0) {
 				const kimiToolMessage: KimiToolSystemMessageParam = {
 					role: "system",
@@ -1414,7 +1432,7 @@ export function convertMessages(
 				const hasImages = toolMsg.content.some((c) => c.type === "image");
 
 				// Always send tool result with text (or placeholder if only images)
-				const hasText = textResult.length > 0;
+				const hasText = textResult.trim().length > 0;
 				const toolResultText = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
 				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {
@@ -1588,42 +1606,43 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | str
  */
 function detectCompat(model: Model<"openai-completions">): ResolvedOpenAICompletionsCompat {
 	const provider = model.provider;
-	const baseUrl = model.baseUrl;
+	const hostname = URL.parse(model.baseUrl)?.hostname ?? "";
+	const matchesDomain = (domain: string): boolean => hostname === domain || hostname.endsWith(`.${domain}`);
 
 	const isZai =
-		provider === "zai" ||
-		provider === "zai-coding-cn" ||
-		baseUrl.includes("api.z.ai") ||
-		baseUrl.includes("open.bigmodel.cn");
-	const isTogether =
-		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
-	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
-	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
-	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
-	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
-	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
-	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
-	const isCerebras = provider === "cerebras" || baseUrl.includes("cerebras.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
+		provider === "zai" || provider === "zai-coding-cn" || hostname === "api.z.ai" || hostname === "open.bigmodel.cn";
+	const isTogether = provider === "together" || hostname === "api.together.ai" || hostname === "api.together.xyz";
+	const isMoonshot =
+		provider === "moonshotai" ||
+		provider === "moonshotai-cn" ||
+		hostname === "api.moonshot.ai" ||
+		hostname === "api.moonshot.cn";
+	const isOpenRouter = provider === "openrouter" || matchesDomain("openrouter.ai");
+	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || hostname === "api.cloudflare.com";
+	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || hostname === "gateway.ai.cloudflare.com";
+	const isNvidia = provider === "nvidia" || hostname === "integrate.api.nvidia.com";
+	const isAntLing = provider === "ant-ling" || hostname === "api.ant-ling.com";
+	const isCerebras = provider === "cerebras" || matchesDomain("cerebras.ai");
+	const isDeepSeek = provider === "deepseek" || matchesDomain("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
 		isCerebras ||
 		provider === "xai" ||
-		baseUrl.includes("api.x.ai") ||
+		hostname === "api.x.ai" ||
 		isTogether ||
-		baseUrl.includes("chutes.ai") ||
+		matchesDomain("chutes.ai") ||
 		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
-		baseUrl.includes("opencode.ai") ||
+		matchesDomain("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
 		isAntLing;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") ||
+		matchesDomain("chutes.ai") ||
 		isDeepSeek ||
 		isMoonshot ||
 		isCloudflareAiGateway ||
@@ -1632,7 +1651,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		isAntLing ||
 		isZai;
 
-	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
+	const isGrok = provider === "xai" || hostname === "api.x.ai";
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;

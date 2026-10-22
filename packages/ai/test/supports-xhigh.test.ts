@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModel, getSupportedThinkingLevels } from "../src/compat.ts";
+import { getModel, getModels, getSupportedThinkingLevels } from "../src/compat.ts";
 import { generateModelsFixture } from "./generate-models-fixture.ts";
 
 describe("getSupportedThinkingLevels", () => {
@@ -87,7 +87,6 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it.each([
-		"gpt-5.5",
 		"gpt-5.6-sol",
 		"gpt-5.6-terra",
 		"gpt-5.6-luna",
@@ -146,7 +145,7 @@ describe("getSupportedThinkingLevels", () => {
 			},
 		});
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-		const azureModel = getModel("azure-openai-responses", "gpt-6-astra");
+		const azureModel = getModel("azure", "gpt-6-astra");
 		expect(azureModel?.contextWindow).toBe(1050000);
 		expect(getSupportedThinkingLevels(azureModel!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
 	});
@@ -177,7 +176,7 @@ describe("getSupportedThinkingLevels", () => {
 	it("does not support off for GPT-6.1 Sol", () => {
 		const expected = {
 			openai: ["low", "medium", "high", "xhigh", "max"],
-			"azure-openai-responses": ["low", "medium", "high", "xhigh", "max"],
+			azure: ["low", "medium", "high", "xhigh", "max"],
 			"openai-codex": ["minimal", "low", "medium", "high", "xhigh", "max"],
 		} as const;
 		for (const [provider, levels] of Object.entries(expected)) {
@@ -189,10 +188,11 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it.each([
-		["gpt-6-sol", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }],
-		["gpt-6-luna", { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }],
-		["gpt-6.1-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }],
-	] as const)("includes official metadata for OpenAI and Codex %s", (modelId, cost) => {
+		["gpt-6-sol", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }, 272000],
+		["gpt-6-luna", { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }, 272000],
+		// Codex serves GPT-6.1 Sol with a 500K default context window (#10840)
+		["gpt-6.1-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 500000],
+	] as const)("includes official metadata for OpenAI and Codex %s", (modelId, cost, codexContextWindow) => {
 		for (const provider of ["openai", "openai-codex"] as const) {
 			const model = getModel(provider, modelId);
 			expect(model).toMatchObject({
@@ -209,7 +209,7 @@ describe("getSupportedThinkingLevels", () => {
 						},
 					],
 				},
-				contextWindow: provider === "openai-codex" && modelId === "gpt-6.1-sol" ? 500000 : 272000,
+				contextWindow: provider === "openai-codex" ? codexContextWindow : 272000,
 				maxTokens: 128000,
 				compat: {
 					supportsAdditionalTools: true,
@@ -229,10 +229,13 @@ describe("getSupportedThinkingLevels", () => {
 		["gpt-5.6-sol", 272000],
 		["gpt-5.6-terra", 272000],
 		["gpt-5.6-luna", 272000],
-		["gpt-5.5", 272000],
-		["gpt-5.3-codex-spark", 128000],
 	] as const)("uses the model-specific Codex context window for %s", (modelId, contextWindow) => {
 		expect(getModel("openai-codex", modelId)).toMatchObject({ contextWindow, maxTokens: 128000 });
+	});
+
+	it.each(["gpt-5.5", "gpt-5.3-codex-spark"])("does not advertise retired Codex model %s", (modelId) => {
+		expect(getModels("openai-codex").map((model) => model.id)).not.toContain(modelId);
+		expect(generateModelsFixture({})["openai-codex"]).not.toHaveProperty(modelId);
 	});
 
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
@@ -295,6 +298,12 @@ describe("getSupportedThinkingLevels", () => {
 		const model = getModel("kimi-coding", "k3");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
+	});
+
+	it("excludes off for always-thinking Kimi Coding Highspeed", () => {
+		const model = getModel("kimi-coding", "kimi-for-coding-highspeed");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).not.toContain("off");
 	});
 
 	it("includes only high for OpenCode Grok Build", () => {

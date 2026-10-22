@@ -75,6 +75,25 @@ describe("Git URL Parsing", () => {
 		}
 	});
 
+	it.each([
+		"git:github.com/user/repo@--upload-pack=invalid-probe",
+		"https://github.com/user/repo@--upload-pack=invalid-probe",
+		"ssh://git@github.com/user/repo@-b",
+		"git:git@github.com:user/repo@--",
+		"git:git@example.invalid:user/repo@--upload-pack=invalid-probe",
+		"git:example.invalid/user/repo@--upload-pack=invalid-probe",
+		"https://github.com/user/repo#%2D%2Dupload-pack=invalid-probe",
+	])("should reject option-shaped refs in %s", (source) => {
+		expect(() => parseGitUrl(source)).toThrow(/Invalid Git ref .*does not start with "-"/);
+	});
+
+	it.each(["feature/branch", "release-1.0", "v1.2.3", "0123456789abcdef", "HEAD~1"])(
+		"should preserve supported ref %s",
+		(ref) => {
+			expect(parseGitUrl(`git:github.com/user/repo@${ref}`)).toMatchObject({ ref, pinned: true });
+		},
+	);
+
 	describe("unsupported without git: prefix", () => {
 		it("should reject git@host:path without git: prefix", () => {
 			expect(parseGitUrl("git@github.com:user/repo")).toBeNull();

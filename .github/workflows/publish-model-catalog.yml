@@ -12,6 +12,8 @@ on:
       - '.gitignore'
       - 'package.json'
       - 'packages/ai/**'
+      - 'scripts/check-model-catalog-compat.mjs'
+      - 'scripts/model-catalog-minimum-version.mjs'
       - 'scripts/model-catalog-protocol.ts'
       - 'scripts/publish-model-catalog.mjs'
   # Aside consumes this catalog from its own R2 bucket. Publish hourly so model
@@ -20,11 +22,6 @@ on:
     - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
-      source_ref:
-        description: 'Commit, branch, or tag to generate from'
-        required: false
-        default: 'main'
-        type: string
       publish:
         description: 'Upload the generated catalog to production R2'
         required: true
@@ -36,22 +33,20 @@ permissions:
 
 jobs:
   generate:
-    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_sha == github.sha) }}
     runs-on: ubuntu-latest
-    env:
-      SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
     steps:
-      - name: Checkout
+      - name: Checkout workflow revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.SOURCE_REF }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
-          cache: npm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -61,6 +56,11 @@ jobs:
 
       - name: Validate model catalog JSON
         run: npm run check:model-catalog
+
+      # pi.dev serves the catalog to released pi >= MINIMUM_PI_VERSION. Fail before
+      # publishing if the latest release's code cannot handle it.
+      - name: Check the model catalog against the latest release
+        run: npm run check:model-catalog-compat
 
       - name: Upload model catalog JSON
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -79,17 +79,16 @@ jobs:
       group: publish-aside-model-catalog-r2
       cancel-in-progress: true
     env:
-      SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
       AWS_EC2_METADATA_DISABLED: 'true'
       R2_ENDPOINT: https://c27bc2275be6cd4b6b94d6978b0edf19.r2.cloudflarestorage.com
     steps:
-      - name: Checkout
+      - name: Checkout workflow revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.SOURCE_REF }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Setup Node.js

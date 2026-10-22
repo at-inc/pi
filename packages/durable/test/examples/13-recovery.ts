@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createModels } from "@at-inc/pi-ai/models";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createRegistry, defineTask, Harness } from "../../src/index.ts";
+import { createRegistry, defineExtension, defineTask, Harness } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -34,17 +34,18 @@ const Ticker = defineTask<{ to: number }, { phase: "tick"; n: number }, string>(
 				console.log(`tick ${n}`);
 			}
 			reachedTick(n);
-			// Save the outcome: the next tick, or the final result.
-			await runtime.commit(
-				() =>
-					n === task.input.to
-						? { status: "terminal", outcome: { status: "completed", result: `counted to ${n}` } }
-						: { status: "running", checkpoint: { phase: "tick", n: n + 1 } },
-				taskContext,
-			);
-			// Wait a little between ticks. Closing the Harness cancels this wait;
-			// the checkpoint saved above is where the next Harness continues.
-			await runtime.sleep(Date.now() + 50, taskContext);
+			// Save the outcome: the final result, or the next tick after a short
+			// sleep. The sleep is stored with the checkpoint, so the task holds no
+			// invocation meanwhile, and a Harness opened later continues it once
+			// its time has come.
+			if (n === task.input.to) {
+				await runtime.commit(
+					() => ({ status: "terminal", outcome: { status: "completed", result: `counted to ${n}` } }),
+					taskContext,
+				);
+				return;
+			}
+			await runtime.sleepUntil(runtime.now() + 50, { phase: "tick", n: n + 1 }, taskContext);
 		},
 	},
 	abort: async (_task, runtime, taskContext) => {
@@ -52,7 +53,7 @@ const Ticker = defineTask<{ to: number }, { phase: "tick"; n: number }, string>(
 	},
 });
 const registry = createRegistry();
-registry.tasks.add(Ticker);
+registry.install(defineExtension({ name: "ticker", tasks: [Ticker] }));
 const open = async () =>
 	Harness.open(await openNodeSqliteStorage(databasePath), { models: createModels(), registry }, context);
 

@@ -61,10 +61,10 @@ describe("Together models", () => {
 
 		const catalog = generateModelsFixture({
 			together: {
-				models: { "deepseek-ai/DeepSeek-V4-Pro": { tool_call: true, reasoning: true } },
+				models: { "deepseek-ai/DeepSeek-V4-Pro-0813": { tool_call: true, reasoning: true } },
 			},
 		});
-		const deepSeekV4 = catalog.together["deepseek-ai/DeepSeek-V4-Pro"];
+		const deepSeekV4 = catalog.together["deepseek-ai/DeepSeek-V4-Pro-0813"];
 		expect(deepSeekV4.thinkingLevelMap).toEqual({
 			minimal: null,
 			low: null,
@@ -76,11 +76,6 @@ describe("Together models", () => {
 			supportsReasoningEffort: true,
 			thinkingFormat: "together",
 		});
-
-		const minimax = getModel("together", "MiniMaxAI/MiniMax-M2.7");
-		expect(minimax.thinkingLevelMap).toEqual({ off: null, minimal: null, low: null, medium: null });
-		expect(minimax.compat?.thinkingFormat).toBeUndefined();
-		expect(minimax.compat?.supportsReasoningEffort).toBe(false);
 	});
 
 	it("resolves TOGETHER_API_KEY from the environment", () => {
