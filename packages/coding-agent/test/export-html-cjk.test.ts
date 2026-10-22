@@ -8,8 +8,8 @@ import { CURRENT_SESSION_VERSION, type SessionHeader } from "../src/core/session
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function loadMarkdownParser(html: string): (text: string) => string {
-	const sessionData = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script>/)?.[1];
-	const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+	const sessionData = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script\s*>/i)?.[1];
+	const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script\s*>/gi)].map((match) => match[1]);
 	const viewer = scripts.pop();
 	if (!sessionData || !viewer) throw new Error("Missing exported session data or viewer script");
 	const context = createContext({
@@ -31,6 +31,7 @@ function loadMarkdownParser(html: string): (text: string) => string {
 // #10154
 describe("HTML export CJK emphasis", () => {
 	let tempDir: string;
+	let html: string;
 	let parse: (text: string) => string;
 
 	beforeAll(async () => {
@@ -45,7 +46,8 @@ describe("HTML export CJK emphasis", () => {
 		} satisfies SessionHeader;
 		const sessionPath = join(tempDir, "session.jsonl");
 		writeFileSync(sessionPath, `${JSON.stringify(header)}\n`);
-		parse = loadMarkdownParser(readFileSync(await exportFromFile(sessionPath, join(tempDir, "out.html")), "utf8"));
+		html = readFileSync(await exportFromFile(sessionPath, join(tempDir, "out.html")), "utf8");
+		parse = loadMarkdownParser(html);
 	});
 
 	afterAll(() => {
@@ -62,5 +64,10 @@ describe("HTML export CJK emphasis", () => {
 
 	it("keeps CommonMark flanking rules for non-CJK text", () => {
 		expect(parse("**end.**Then next")).toBe("<p>**end.**Then next</p>\n");
+	});
+
+	it("loads the parser from uppercase script tags with whitespace before closing brackets", () => {
+		const uppercase = loadMarkdownParser(html.replaceAll("<script", "<SCRIPT").replaceAll("</script>", "</SCRIPT >"));
+		expect(uppercase("**这是测试。**后面")).toBe("<p><strong>这是测试。</strong>后面</p>\n");
 	});
 });
