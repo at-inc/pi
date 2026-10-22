@@ -1,5 +1,6 @@
 import { type OpenRouterModel, openRouterCost } from "../src/providers/openrouter-api.ts";
 import type { ClassifierModel, ImageModel, Model } from "../src/types.ts";
+import { applyClassifierModelMetadata } from "./classifier-model-data.ts";
 import { getOpenRouterThinkingLevelMap, type OpenRouterReasoningMetadata } from "./openrouter-reasoning-options.ts";
 
 export interface OpenRouterModelListItem extends OpenRouterModel {
@@ -88,7 +89,7 @@ export function buildOpenRouterCatalog(
 		if (classifiers.some((entry) => entry.id === model.id)) continue;
 		if (!model.architecture?.output_modalities?.includes("decisions")) continue;
 		const input = modalities(model.architecture.input_modalities);
-		classifiers.push({
+		const classifier: ClassifierModel<"typesafe-system-one"> = {
 			type: "classifier",
 			id: model.id,
 			name: model.name,
@@ -98,7 +99,9 @@ export function buildOpenRouterCatalog(
 			input: input.length > 0 ? input : ["text"],
 			cost: openRouterCost(model.pricing),
 			contextWindow: model.top_provider?.context_length || model.context_length || 4096,
-		});
+		};
+		applyClassifierModelMetadata(classifier);
+		classifiers.push(classifier);
 	}
 
 	return { chat, images, classifiers };

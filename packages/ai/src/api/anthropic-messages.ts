@@ -2,6 +2,7 @@ import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 import type {
 	BetaInputTransformation,
 	BetaStopReason,
+	BetaSystemMessageParam,
 	BetaTool,
 	BetaCacheControlEphemeral as CacheControlEphemeral,
 	BetaContentBlockParam as ContentBlockParam,
@@ -40,8 +41,8 @@ import type {
 import { appendAssistantMessageDiagnostic, createProviderErrorDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { parseJsonWithRepair, parseStreamingJson, parseToolCallArguments } from "../utils/json-parse.ts";
-import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -93,7 +94,7 @@ function getCacheControl(
 }
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.280";
+const claudeCodeVersion = "2.1.307";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -298,14 +299,26 @@ function mergeHeaders(...headerSources: (ProviderHeaders | undefined)[]): Provid
 	const merged: ProviderHeaders = {};
 	for (const headers of headerSources) {
 		if (headers) {
-			Object.assign(merged, headers);
+			for (const [name, value] of Object.entries(headers)) {
+				const existing = Object.keys(merged).find((key) => key.toLowerCase() === name.toLowerCase());
+				if (existing !== undefined) delete merged[existing];
+				merged[name] = value;
+			}
 		}
 	}
 	return merged;
 }
 
-function mergeClientHeaders(...headerSources: (ProviderHeaders | undefined)[]): ProviderHeaders {
-	return mergeHeaders({ "User-Agent": getPiUserAgent() }, ...headerSources);
+function getAnthropicApiVersion(
+	model: Model<"anthropic-messages">,
+	options?: AnthropicOptions,
+): string | null | undefined {
+	const headers = mergeHeaders(model.headers, options?.headers);
+	for (const [name, value] of Object.entries(headers)) {
+		if (name.toLowerCase() === "anthropic-version") return value;
+	}
+	if (options?.client) return undefined;
+	return model.provider === "anthropic" ? "2026-10-21" : "2023-06-01";
 }
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
@@ -605,14 +618,16 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			let isOAuth: boolean;
 			let usageModel = model;
 			let inputTransformations: BetaInputTransformation[] | undefined;
+			const apiVersion = getAnthropicApiVersion(model, options);
+			const authHeaders = mergeHeaders(model.headers, options?.headers);
 
 			if (options?.client) {
 				client = options.client;
 				isOAuth = false;
 			} else {
 				const apiKey = options?.apiKey;
-				const federation = getAnthropicFederation(model, apiKey, options?.headers, options?.env);
-				if (!federation) assertRequestAuth(model.provider, apiKey, options?.headers);
+				const federation = getAnthropicFederation(model, apiKey, authHeaders, options?.env);
+				if (!federation) assertRequestAuth(model.provider, apiKey, authHeaders);
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -634,11 +649,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					copilotDynamicHeaders,
 					cacheSessionId,
 					federation,
+					options?.identity,
 				);
 				client = created.client;
 				isOAuth = created.isOAuthToken;
 			}
 			const requestOptions = {
+				...(apiVersion !== undefined ? { headers: { "anthropic-version": apiVersion } } : {}),
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
@@ -647,7 +664,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			let response: Response;
 			for (;;) {
 				options?.signal?.throwIfAborted();
-				const built = buildParams(model, normalizedContext, isOAuth, options, disablePreferredStrictTools);
+				const built = buildParams(
+					model,
+					normalizedContext,
+					isOAuth,
+					apiVersion,
+					options,
+					disablePreferredStrictTools,
+				);
 				if (built.providerThinkingLevel) output.providerThinkingLevel = built.providerThinkingLevel;
 				let params = built.params;
 				const nextParams = await options?.onPayload?.(params, model);
@@ -969,8 +993,9 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	if (!getAnthropicFederation(model, options?.apiKey, options?.headers, options?.env)) {
-		assertRequestAuth(model.provider, options?.apiKey, options?.headers);
+	const authHeaders = mergeHeaders(model.headers, options?.headers);
+	if (!getAnthropicFederation(model, options?.apiKey, authHeaders, options?.env)) {
+		assertRequestAuth(model.provider, options?.apiKey, authHeaders);
 	}
 
 	const base = {
@@ -1026,6 +1051,7 @@ function createClient(
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
 	federation?: AnthropicFederationConfig,
+	identity?: ClientIdentity,
 ): { client: Anthropic; isOAuthToken: boolean } {
 	// Copilot: Bearer auth.
 	if (model.provider === "github-copilot") {
@@ -1035,7 +1061,8 @@ function createClient(
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
 			fetch,
-			defaultHeaders: mergeClientHeaders(
+			defaultHeaders: mergeHeaders(
+				getIdentityHeaders(model, identity),
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -1049,7 +1076,7 @@ function createClient(
 		return { client, isOAuthToken: false };
 	}
 
-	// OAuth: Bearer auth, Claude Code identity headers
+	// OAuth: Bearer auth, Claude Code identity headers instead of the client identity.
 	if (apiKey && isOAuthToken(apiKey)) {
 		const client = new PiAnthropic({
 			apiKey: null,
@@ -1057,7 +1084,7 @@ function createClient(
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
 			fetch,
-			defaultHeaders: mergeClientHeaders(
+			defaultHeaders: mergeHeaders(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -1079,11 +1106,13 @@ function createClient(
 		const header = compat.sessionAffinityFormat === "openrouter" ? "x-session-id" : "x-session-affinity";
 		sessionAffinityHeaders[header] = sessionId;
 	}
-	const defaultHeaders = mergeClientHeaders(
+	const defaultHeaders = mergeHeaders(
+		getIdentityHeaders(model, identity),
 		{
 			accept: "application/json",
 			"anthropic-dangerous-direct-browser-access": "true",
 		},
+		model.provider !== "anthropic" ? { "X-Api-Key": apiKey ?? null, Authorization: null } : undefined,
 		sessionAffinityHeaders,
 		model.headers,
 		optionsHeaders,
@@ -1164,6 +1193,7 @@ function buildParams(
 	model: Model<"anthropic-messages">,
 	context: TranscriptContext,
 	isOAuthToken: boolean,
+	apiVersion: string | null | undefined,
 	options?: AnthropicOptions,
 	disablePreferredStrictTools = false,
 ): {
@@ -1219,7 +1249,7 @@ function buildParams(
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
-	const params: MessageCreateParamsStreaming = {
+	const params: MessageCreateParamsStreaming & { temperature?: number } = {
 		model: model.id,
 		messages: effortMessages ? insertThinkingLevelMessages(converted, activeEffort) : converted.messages,
 		max_tokens: options?.maxTokens ?? model.maxTokens,
@@ -1256,6 +1286,7 @@ function buildParams(
 
 	// Temperature is incompatible with extended thinking and unsupported on Claude Opus 4.7+.
 	if (
+		apiVersion === "2023-06-01" &&
 		options?.temperature !== undefined &&
 		!options?.thinkingEnabled &&
 		model.compat?.supportsMidConvoEffort !== true &&
@@ -1382,7 +1413,7 @@ function convertMessages(
 			// Later system messages only reach this point when the model accepts them natively;
 			// otherwise the transcript was collapsed into the leading message before conversion.
 			const text = renderSystemMessageUpdate(msg);
-			const blocks: ContentBlockParam[] = [];
+			const blocks: Exclude<BetaSystemMessageParam["content"], string | undefined> = [];
 			if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
 			if (convertToolDefinitions) {
 				const added = msg.toolsAdded ?? [];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModel, getSupportedThinkingLevels } from "../src/compat.ts";
+import { getModel, getModels, getSupportedThinkingLevels } from "../src/compat.ts";
 import { generateModelsFixture } from "./generate-models-fixture.ts";
 
 describe("getSupportedThinkingLevels", () => {
@@ -87,7 +87,6 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it.each([
-		"gpt-5.5",
 		"gpt-5.6-sol",
 		"gpt-5.6-terra",
 		"gpt-5.6-luna",
@@ -230,10 +229,13 @@ describe("getSupportedThinkingLevels", () => {
 		["gpt-5.6-sol", 272000],
 		["gpt-5.6-terra", 272000],
 		["gpt-5.6-luna", 272000],
-		["gpt-5.5", 272000],
-		["gpt-5.3-codex-spark", 128000],
 	] as const)("uses the model-specific Codex context window for %s", (modelId, contextWindow) => {
 		expect(getModel("openai-codex", modelId)).toMatchObject({ contextWindow, maxTokens: 128000 });
+	});
+
+	it.each(["gpt-5.5", "gpt-5.3-codex-spark"])("does not advertise retired Codex model %s", (modelId) => {
+		expect(getModels("openai-codex").map((model) => model.id)).not.toContain(modelId);
+		expect(generateModelsFixture({})["openai-codex"]).not.toHaveProperty(modelId);
 	});
 
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {

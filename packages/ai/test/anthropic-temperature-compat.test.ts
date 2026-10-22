@@ -48,6 +48,7 @@ async function capturePayload(
 
 	const s = streamSimple(payloadCaptureModel, makeContext(), {
 		...options,
+		headers: { "anthropic-version": "2023-06-01", ...options?.headers },
 		apiKey: "fake-key",
 		onPayload: (payload) => {
 			capturedPayload = payload as AnthropicTemperaturePayload;
@@ -84,16 +85,34 @@ describe("Anthropic temperature compatibility", () => {
 	});
 
 	it("keeps temperature for Claude Opus 4.6", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-6"), { temperature: 0 });
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-6"), {
+			temperature: 0,
+			headers: { "anthropic-version": "2023-06-01" },
+		});
 
 		expect(payload.temperature).toBe(0);
 	});
 
 	it("keeps temperature for Claude Sonnet 4.6", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-4-6"), { temperature: 0 });
+		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-4-6"), {
+			temperature: 0,
+			headers: { "anthropic-version": "2023-06-01" },
+		});
 
 		expect(payload.temperature).toBe(0);
 	});
+
+	it.each(["claude-opus-4-6", "claude-sonnet-4-6"] as const)(
+		"omits temperature for %s on API version 2026-10-21",
+		async (id) => {
+			const payload = await capturePayload(getModel("anthropic", id), {
+				temperature: 0,
+				headers: { "anthropic-version": "2026-10-21" },
+			});
+
+			expect(payload.temperature).toBeUndefined();
+		},
+	);
 
 	it("omits temperature for custom models with supportsTemperature disabled", async () => {
 		const payload = await capturePayload(makeCustomModel({ supportsTemperature: false }), { temperature: 0 });
