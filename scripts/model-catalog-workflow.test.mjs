@@ -21,20 +21,17 @@ test("manual, scheduled, and PR runs check out only their workflow revision", ()
 	for (const job of Object.values(workflow.jobs)) {
 		assert.equal(job.env?.SOURCE_REF, undefined);
 		const checkouts = job.steps.filter((step) => step.uses?.startsWith("actions/checkout@"));
-		assert.equal(checkouts.length, 2);
-		const revision = checkouts.find((step) => step.if === "${{ github.event_name != 'workflow_run' }}");
-		assert.equal(revision.with.ref, undefined);
-		assert.equal(revision.with["persist-credentials"], false);
-		const completed = checkouts.find((step) => step.if === "${{ github.event_name == 'workflow_run' }}");
-		assert.equal(completed.with.ref, "${{ github.event.workflow_run.head_sha }}");
-		assert.equal(completed.with["persist-credentials"], false);
+		assert.equal(checkouts.length, 1);
+		assert.equal(checkouts[0].if, undefined);
+		assert.equal(checkouts[0].with.ref, "${{ github.sha }}");
+		assert.equal(checkouts[0].with["persist-credentials"], false);
 	}
 });
 
 test("CI-triggered publication requires a successful main push in this repository", () => {
 	assert.equal(
 		workflow.jobs.generate.if,
-		"${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository) }}",
+		"${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_sha == github.sha) }}",
 	);
 	assert.equal(workflow.jobs.publish.needs, "generate");
 	assert.equal(workflow.jobs.publish.environment, "pi-model-upload");
