@@ -1012,7 +1012,7 @@ describe("background threshold compaction", () => {
 		chat.setup.settings.compaction = BACKGROUND;
 		const events: AgentEvent[] = [];
 		const stream = await watchEvents(chat.harness, chat.root.id, context);
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push(...batch);
 		});
 		chat.faux.summaries.push(failure("bad request"));
@@ -1181,7 +1181,7 @@ describe("blocking threshold compaction", () => {
 		chat.faux.summaries.push(gated(deferred(), summary(), reached));
 		const events: AgentEvent[] = [];
 		const stream = await watchEvents(chat.harness, chat.root.id, context);
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push(...batch);
 		});
 		const input = await chat.root.submit({ type: "input", content: text("u4", 200) }, context);
@@ -1449,9 +1449,9 @@ describe("compaction estimates and interactions", () => {
 		// The parent is untouched.
 		expect((await kinds(chat.root)).includes("pi.compaction")).toBe(false);
 		// The fork's view keeps the parent entries the summary kept.
-		const state = await fork.viewState(context);
-		expect(state.value.entries).toEqual(view.entries);
-		state.dispose();
+		const watch = await fork.watch(context);
+		expect(watch.value.entries).toEqual(view.entries);
+		await watch.stop();
 		await chat.harness.close(context);
 	});
 
@@ -1572,7 +1572,7 @@ describe("compaction events and live status", () => {
 		chat.setup.settings.retry = { enabled: true, maxRetries: 2, baseDelayMs: 60_000 };
 		const events: AgentEvent[] = [];
 		const stream = await watchEvents(chat.harness, chat.root.id, context);
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push(...batch);
 		});
 		chat.faux.summaries.push(failure("overloaded"));
@@ -1896,12 +1896,13 @@ describe("compaction and the inbox", () => {
 	it("keeps the kept entries mounted in the conversation view", async () => {
 		const chat = await open();
 		await history(chat);
-		const state = await chat.root.viewState(context);
+		const watch = await chat.root.watch(context);
+		watch.start(async () => {});
 		chat.faux.summaries.push(summary());
 		await result(chat, await chat.root.compact(undefined, context));
-		await waitFor(() => state.value.entries[0]?.kind === "pi.compaction");
-		expect(state.value.entries).toEqual((await chat.root.context(context)).entries);
-		state.dispose();
+		await waitFor(() => watch.value.entries[0]?.kind === "pi.compaction");
+		expect(watch.value.entries).toEqual((await chat.root.context(context)).entries);
+		await watch.stop();
 		await chat.harness.close(context);
 	});
 });
@@ -2032,7 +2033,7 @@ describe("compaction edge cases", () => {
 		await history(chat);
 		const events: AgentEvent[] = [];
 		const stream = await watchEvents(chat.harness, chat.root.id, context);
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push(...batch);
 		});
 		chat.faux.summaries.push(summary());
@@ -2051,7 +2052,7 @@ describe("compaction edge cases", () => {
 		chat.setup.settings.compaction = BACKGROUND;
 		const events: AgentEvent[][] = [];
 		const stream = await watchEvents(chat.harness, chat.root.id, context);
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push([...batch]);
 		});
 		// A new section makes the preparation commit append a system entry next to the compaction's status.
@@ -2357,7 +2358,7 @@ describe("blocked compaction", () => {
 		const chat = { harness, root, setup, faux: script(setup) };
 		const events: AgentEvent[] = [];
 		const stream = await watchEvents(chat.harness, chat.root.id, context);
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push(...batch);
 		});
 		const inspection = await chat.harness.inspect(context);

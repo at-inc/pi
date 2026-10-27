@@ -5,7 +5,7 @@ import {
 	PI_ATTRIBUTION,
 	withClientIdentity,
 } from "@at-inc/pi-ai/utils/identity";
-import type { AttachedReplicatedState, Context, JsonValue } from "@earendil-works/chord";
+import type { Context, JsonValue } from "@earendil-works/chord";
 import { withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import {
 	createTypedMetrics,
@@ -20,6 +20,7 @@ import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import { hostTimers } from "../timers.ts";
 import type {
+	CommitOptions,
 	ConversationId,
 	ConversationOwnership,
 	ConversationRecord,
@@ -27,6 +28,8 @@ import type {
 	EntryId,
 	EntryQuery,
 	EntryRecord,
+	Observation,
+	Observer,
 	Page,
 	ReportInfo,
 	Storage,
@@ -123,7 +126,7 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.submissions.submit(this.id, submission, context);
 	}
 
-	compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
+	async compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
 		this.#host.tasks.resume();
 		const input = { reason: "manual", ...(instructions === undefined ? {} : { instructions }) } as const;
 		return this.#host.harness.commitWith((tx) => createCompaction(tx, this.id, input), context);
@@ -138,8 +141,8 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		await this.#host.submissions.submit(this.id, { type: "write", entry }, context);
 	}
 
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
-		return this.#host.harness.commitWith(change, context, { conversationId: this.id });
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T> {
+		return this.#host.harness.commitWith(change, context, { conversationId: this.id }, options);
 	}
 
 	context(context: Context, options?: { readonly at?: EntryId }): Promise<ContextView> {
@@ -165,18 +168,14 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.create({ kind: "fork", parentId: this.id, at, ownership: options.ownership }, options, context);
 	}
 
-	abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
+	async abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
 		this.#host.tasks.resume();
 		return this.#host.tasks.abortConversation(this.id, options?.background === true, context);
 	}
 
-	waitForIdle(context: Context): Promise<void> {
+	async waitForIdle(context: Context): Promise<void> {
 		this.#host.tasks.resume();
 		return this.#host.tasks.waitForIdle(this.id, context);
-	}
-
-	viewState(context: Context): Promise<AttachedReplicatedState<ConversationView>> {
-		return this.#host.views.state(this.id, context);
 	}
 
 	watch(context: Context): Promise<ConversationWatch> {
@@ -217,8 +216,15 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		const report = safeReport(options.onReport, options.telemetry ?? NOOP_TELEMETRY_CONTEXT);
 		const now = safeNow(options.now, report);
 		const hostSettings = currentSettings(options.settings);
-		// Read at each use, as all settings are, but only this field: it is read on every commit.
-		super(rawStorage, now, () => hostSettings()?.documentRetentionMs, options.setTimer);
+		// Read at each use, as all settings are, but only these fields: they are read on every commit.
+		super(
+			rawStorage,
+			now,
+			() => hostSettings()?.documentRetentionMs,
+			options.setTimer,
+			options.readOnly === true,
+			() => hostSettings()?.progress?.persistWithinMs,
+		);
 		// Every component reads and writes through the Session's failure guard: `rawStorage` serves only `super()`.
 		const storage = this.storage;
 		this.#options = options;
@@ -246,6 +252,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
 			},
 			context: withoutAbortSignal(context),
+			readOnly: options.readOnly === true,
 		});
 		this.#submissions = new Submissions(this, storage, now, settings, () => this.#tasks.resume(), options.telemetry);
 		this.#taskGraph = new TaskGraphView(this, storage, {
@@ -341,12 +348,12 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.retry(id, context);
 	}
 
-	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
+	async waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
 		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
 	}
 
-	waitForIdle(context: Context): Promise<void> {
+	async waitForIdle(context: Context): Promise<void> {
 		this.#tasks.resume();
 		return this.#tasks.waitForIdle(undefined, context);
 	}
@@ -364,12 +371,22 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return total;
 	}
 
-	taskGraph(context: Context): Promise<AttachedReplicatedState<TaskGraph>> {
-		return this.#taskGraph.state(context);
-	}
-
 	watchTaskGraph(context: Context): Promise<TaskGraphWatch> {
 		return this.#taskGraph.watch(context);
+	}
+
+	async observeTaskGraph(observer: Observer<TaskGraph>, context: Context): Promise<Observation<TaskGraph>> {
+		this.assertUsable();
+		return this.#taskGraph.observe(observer, context);
+	}
+
+	async observeConversation(
+		id: ConversationId,
+		observer: Observer<ConversationView>,
+		context: Context,
+	): Promise<Observation<ConversationView>> {
+		this.assertUsable();
+		return this.#host.views.observe(id, observer, context);
 	}
 
 	root(
@@ -432,7 +449,10 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	}
 }
 
-/** Preserve the host callback's error containment; telemetry adapters are responsible for their own failures. */
+/**
+ * Report to `onReport`, then count it and record its event. Never throws, since reports also come from inside Storage's
+ * `adopt`: a throwing `onReport` is dropped, and so is a throwing metric or event, as reporting it would report again.
+ */
 function safeReport(
 	onReport: ((error: unknown, info: ReportInfo) => void) | undefined,
 	telemetry: TelemetryContext,
@@ -466,8 +486,12 @@ function safeReport(
 				attributes["task.id"] = info.task?.id;
 				break;
 		}
-		reports.add(1, { type: info.type });
-		context?.telemetry.addEvent("pi.durable.report", attributes);
+		try {
+			reports.add(1, { type: info.type });
+			context?.telemetry.addEvent("pi.durable.report", attributes);
+		} catch {
+			// Dropped: see above.
+		}
 	};
 }
 

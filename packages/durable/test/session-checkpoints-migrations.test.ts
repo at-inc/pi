@@ -402,7 +402,7 @@ describe("Session document migrations", () => {
 		// An observer of the older shape.
 		const watch = (await session.watchDoc(Old, context))!;
 		const frames: unknown[] = [];
-		watch.start(async (value, ops) => {
+		watch.start(async ({ value, ops }) => {
 			frames.push({ value, ops });
 		});
 		expect(await session.snapshot(Current, context)).toEqual({ count: 4 });
@@ -410,7 +410,7 @@ describe("Session document migrations", () => {
 		// An observer of the new shape: the migration changes nothing it sees.
 		const current = (await session.watchDoc(Current, context))!;
 		const currentFrames: unknown[] = [];
-		current.start(async (value) => {
+		current.start(async ({ value }) => {
 			currentFrames.push(value);
 		});
 
@@ -833,11 +833,10 @@ describe("Session tracker cache across definition versions", () => {
 	it("sends observers of an older shape a root replacement after a newer token writes", async () => {
 		const { session } = openTestSession();
 		await session.commit((tx) => tx.doc(V1Doc), context);
-		const state = (await session.documentState(V1Doc, context))!;
 		const watch = (await session.watchDoc(V1Doc, context))!;
 		const frames: (readonly unknown[])[] = [];
 		const delivered = new Promise<void>((resolve) => {
-			watch.start(async (_value, ops) => {
+			watch.start(async ({ ops }) => {
 				frames.push(ops);
 				resolve();
 			});
@@ -846,10 +845,8 @@ describe("Session tracker cache across definition versions", () => {
 			(await tx.doc(V2Doc)).names.push("second");
 		}, context);
 		await delivered;
-		expect(state.value).toEqual({ names: ["first", "second"] });
 		expect(watch.value).toEqual({ names: ["first", "second"] });
 		expect(frames).toEqual([[["r", { names: ["first", "second"] }]]]);
-		state.dispose();
 		await watch.stop();
 	});
 

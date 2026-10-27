@@ -37,6 +37,7 @@
 
 import type { TextContent } from "@at-inc/pi-ai";
 import { type Context, copyJson, type JsonValue } from "@earendil-works/chord";
+import { ownedSlice } from "@earendil-works/chord/delta";
 import {
 	type CodemodeHostCall,
 	type CodemodeOutcome,
@@ -199,7 +200,8 @@ const ARGS_PREVIEW_CHARS = 200;
 const ERROR_PREVIEW_CHARS = 500;
 
 function cut(text: string, max: number): string {
-	return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+	// A copy: the row outlives the arguments or error text it previews.
+	return text.length > max ? `${ownedSlice(text, 0, max - 3)}...` : text;
 }
 
 /** A function scripts call as a top-level global; its result is journaled. */

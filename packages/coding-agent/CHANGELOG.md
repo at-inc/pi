@@ -2,18 +2,46 @@
 
 ## [Unreleased]
 
+This fork release includes upstream AI and Durable/Chord API changes; see their Breaking Changes sections before upgrading integrations.
+
 ### Added
 
+- Added persisted message IDs and timestamps to Markdown transformer context.
 - Added explicit, non-destructive JSONL-v3 imports into experimental durable sessions, including branches, compaction, context edits, source archives, and explicit session selection.
+- Device-code login (for example GitHub Copilot) now opens the verification page and copies the code when you press Enter. Providers can turn either action off with `openBrowserOnConfirm: false` or `copyCodeOnConfirm: false` ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
+
+### Changed
+
+- Integrated upstream updates through `6c384aa30`, retaining fork package identities and native Codex image support.
+- Write forked sessions through one file descriptor to avoid repeated file-open overhead.
+- `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
+- `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
 
 ### Fixed
 
+- Declare `marked-cjk-friendly` as a runtime dependency required by the bundled TUI.
+- Updated Undici to 8.12.3 and the Gondolin example to 0.14.0 for dependency security fixes.
+- Preserve UTF-8 characters split across `pi.exec` output chunks and report process-spawn errors ([#11326](https://github.com/earendil-works/pi/issues/11326)).
+- Continue startup when a configured extension package cannot be installed, with a warning and removal guidance ([#11304](https://github.com/earendil-works/pi/issues/11304)).
+- Resolve provider/model references when provider IDs contain slashes ([#11397](https://github.com/earendil-works/pi/issues/11397)).
+- Rank exact tool-name and qualified-name suffix matches ahead of description matches.
+- Preserve provider-reported costs in usage totals and HTML exports ([#11178](https://github.com/earendil-works/pi/issues/11178), [#10286](https://github.com/earendil-works/pi/issues/10286)).
 - Refresh durable model choices after login and preserve the authenticated Codex preference for new unconfigured sessions.
 - Reject option-shaped Git package refs and terminate clone and fetch options before positional arguments.
 - Avoid repeated scans when parsing prompt defaults, skill blocks, and npm package specs.
 - Omit credential command contents from configuration resolution errors.
 - Publish the coordinator's client socket before accepting server registrations, preventing intermittent startup connection failures.
 - Pin the sandbox example's transitive `shell-quote` dependency to 1.11.0 to address GHSA-pqg4-j6r4-53mv.
+- Fixed `pi install` and `pi remove` adding ever deeper nested entries to the npm `package-lock.json` when the agent directory is reached through a symlink, such as `~/.pi` linked into a dotfiles repo. pi now passes the resolved real path to npm ([#11358](https://github.com/earendil-works/pi/issues/11358))
+- MCP sign-in now rejects authorization endpoints and other OAuth metadata URLs that are not `http:` or `https:`. Before, a malicious MCP server could supply a `file:` or custom protocol URL, which pi passed to the platform URL handler.
+- Automatic `fd` and `rg` downloads no longer fetch x86-64 binaries on ARM32 and other architectures without a prebuilt release. pi now warns and recommends installing the tool with the system package manager ([#11209](https://github.com/earendil-works/pi/issues/11209))
+- Fixed `/model` search ranking letters scattered over an earlier part of an entry above a real match, for example `opus` listing `gpt-oss-120b` and `claude-sonnet-4.5` before `claude-opus-4.1` ([#11220](https://github.com/earendil-works/pi/issues/11220), [#11296](https://github.com/earendil-works/pi/pull/11296))
+- Fixed `/resume` search matching scattered letters anywhere in session messages and IDs, for example `1024` matching inside a session UUID. Session names and working directories still match fuzzily; IDs and message text now match only as exact substrings ([#11220](https://github.com/earendil-works/pi/issues/11220), [#11024](https://github.com/earendil-works/pi/issues/11024), [#11296](https://github.com/earendil-works/pi/pull/11296))
+- Fixed HTML export showing a blank page for sessions with thousands of entries ([#11225](https://github.com/earendil-works/pi/issues/11225), [#11293](https://github.com/earendil-works/pi/pull/11293))
+- Fixed HTML export not showing system messages: the system prompt and tools, and later section updates such as after `/reload`. `pi --export` now includes the system prompt and tools too ([#11261](https://github.com/earendil-works/pi/issues/11261), [#3464](https://github.com/earendil-works/pi/issues/3464), [#11290](https://github.com/earendil-works/pi/pull/11290))
+- Fixed aborting a bash command on macOS sometimes running the next command of a list such as `long_step; next_step`. pi now stops the process group before killing it ([#11252](https://github.com/earendil-works/pi/issues/11252), [#11289](https://github.com/earendil-works/pi/pull/11289))
+- Fixed streamed tool calls re-running their call renderer on every argument delta; the interactive mode now renders the latest arguments once per frame, so a large streamed `write` no longer re-highlights its whole content per delta ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Fixed the login dialog opening sign-in URLs that are not web URLs, and printing control characters from sign-in, device-code, and info URLs, which could end a terminal hyperlink and send escape sequences to the terminal
 
 ## [1.4.0] - 2026-10-21
 
