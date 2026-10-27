@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## [1.4.1] - 2026-10-27
 
 This fork release includes upstream AI and Durable/Chord API changes; see their Breaking Changes sections before upgrading integrations.
