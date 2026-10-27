@@ -70,7 +70,7 @@ describe("fork chat model fallbacks", () => {
 		) as Record<string, Record<string, unknown>>;
 		const [fallback] = getForkChatModelFallbacks("anthropic");
 		expect(fallback).toEqual(data["anthropic-messages"]["chat:claude-haiku-5-5"]);
-		expect(fallback.supportsFastMode).toBeUndefined();
+		expect(fallback.supportsFastMode).toBe(false);
 		expect(getForkChatModelFallbacks("openai")).toEqual([]);
 	});
 

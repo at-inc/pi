@@ -1,22 +1,5 @@
 import type { AnyModel, ImageModel } from "../src/types.ts";
 
-const OPENAI_FAST_MODE_MODEL_IDS = new Set([
-	"gpt-6-astra",
-	"gpt-6-sol",
-	"gpt-6.1-sol",
-	"gpt-6-luna",
-	"gpt-5.6-sol",
-	"gpt-5.6-terra",
-	"gpt-5.6-luna",
-	"gpt-5.5",
-	"gpt-5.4",
-]);
-const ANTHROPIC_FAST_MODE_MODEL_IDS = new Set([
-	"claude-opus-5-5",
-	"claude-sonnet-5",
-	"claude-opus-4-8",
-	"claude-opus-4-6",
-]);
 const CHAT_METADATA_APIS = new Set([
 	"openai-completions",
 	"openai-responses",
@@ -53,20 +36,24 @@ export interface ForkModelData {
 	cost?: unknown;
 }
 
+function isVersionAtLeast(version: RegExpMatchArray | null, major: number, minor: number): boolean {
+	if (!version) return false;
+	const modelMajor = Number(version[1]);
+	return modelMajor > major || (modelMajor === major && Number(version[2] ?? 0) >= minor);
+}
+
 export function applyForkModelMetadata(model: ForkModelData): void {
 	if ((model.type !== undefined && model.type !== "chat") || !CHAT_METADATA_APIS.has(model.api)) return;
 	if (
 		((model.provider === "openai" || model.provider === "cloudflare-ai-gateway") &&
-			model.api === "openai-responses" &&
-			OPENAI_FAST_MODE_MODEL_IDS.has(model.id)) ||
-		(model.provider === "openai-codex" &&
-			model.api === "openai-codex-responses" &&
-			OPENAI_FAST_MODE_MODEL_IDS.has(model.id)) ||
-		(model.provider === "anthropic" &&
-			model.api === "anthropic-messages" &&
-			ANTHROPIC_FAST_MODE_MODEL_IDS.has(model.id))
+			model.api === "openai-responses") ||
+		(model.provider === "openai-codex" && model.api === "openai-codex-responses")
 	) {
-		model.supportsFastMode = true;
+		const version = model.id.match(/^gpt-(\d+)(?:\.(\d+))?(?:-|$)/);
+		if (model.id.startsWith("gpt-")) model.supportsFastMode = isVersionAtLeast(version, 5, 4);
+	} else if (model.provider === "anthropic" && model.api === "anthropic-messages") {
+		const version = model.id.replace(/-\d{8}$/, "").match(/^claude-opus-(\d+)(?:[.-](\d+))?(?:-|$)/);
+		model.supportsFastMode = isVersionAtLeast(version, 4, 6);
 	}
 
 	const responseApi =
