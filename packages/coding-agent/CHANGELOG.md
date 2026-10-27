@@ -2,18 +2,30 @@
 
 ## [Unreleased]
 
+This fork release includes upstream AI and Durable/Chord API changes; see their Breaking Changes sections before upgrading integrations.
+
 ### Added
 
+- Added persisted message IDs and timestamps to Markdown transformer context.
 - Added explicit, non-destructive JSONL-v3 imports into experimental durable sessions, including branches, compaction, context edits, source archives, and explicit session selection.
 - Device-code login (for example GitHub Copilot) now opens the verification page and copies the code when you press Enter. Providers can turn either action off with `openBrowserOnConfirm: false` or `copyCodeOnConfirm: false` ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
 
 ### Changed
 
+- Integrated upstream updates through `6c384aa30`, retaining fork package identities and native Codex image support.
+- Write forked sessions through one file descriptor to avoid repeated file-open overhead.
 - `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
 - `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
 
 ### Fixed
 
+- Declare `marked-cjk-friendly` as a runtime dependency required by the bundled TUI.
+- Updated Undici to 8.12.3 and the Gondolin example to 0.14.0 for dependency security fixes.
+- Preserve UTF-8 characters split across `pi.exec` output chunks and report process-spawn errors ([#11326](https://github.com/earendil-works/pi/issues/11326)).
+- Continue startup when a configured extension package cannot be installed, with a warning and removal guidance ([#11304](https://github.com/earendil-works/pi/issues/11304)).
+- Resolve provider/model references when provider IDs contain slashes ([#11397](https://github.com/earendil-works/pi/issues/11397)).
+- Rank exact tool-name and qualified-name suffix matches ahead of description matches.
+- Preserve provider-reported costs in usage totals and HTML exports ([#11178](https://github.com/earendil-works/pi/issues/11178), [#10286](https://github.com/earendil-works/pi/issues/10286)).
 - Refresh durable model choices after login and preserve the authenticated Codex preference for new unconfigured sessions.
 - Reject option-shaped Git package refs and terminate clone and fetch options before positional arguments.
 - Avoid repeated scans when parsing prompt defaults, skill blocks, and npm package specs.

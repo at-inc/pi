@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Publish and validate the exact packed library artifacts with source provenance, SHA-512 integrity checks, and one shared fork AI runtime in aliased consumers.
+- Publish and validate the exact packed library artifacts with source provenance, SHA-512 integrity checks, and one shared fork AI runtime in aliased consumers (already available in the fork's 1.4.0 library release).
 
 ### Fixed
 

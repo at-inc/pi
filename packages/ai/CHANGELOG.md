@@ -2,13 +2,18 @@
 
 ## [Unreleased]
 
+This fork release includes upstream API changes described below. Distribution and catalog-overlay entries carried forward here were already available in the fork's 1.4.0 library release.
+
 ### Breaking Changes
 
 - Upgrade `@anthropic-ai/sdk` to 1.1.0 and use Anthropic API version `2026-10-21` for native Anthropic requests. Sampling parameters are no longer sent on that API version; compatible providers retain their existing protocol and supported sampling options.
 - `appendGrammarToolInputJsonDelta()` (`api/constrained-sampling`) takes the input delta instead of the whole input so far and no longer closes the input; close it with the new `closeGrammarToolInputJson()` ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Removed the obsolete `OPENAI_CODEX_IMAGE_DRIVER_MODEL_ID` export. Native Codex image generation no longer depends on a chat-model driver.
 
 ### Added
 
+- Added `Usage.cost.totalFromProvider` to distinguish provider-reported charges from catalog estimates ([#11178](https://github.com/earendil-works/pi/issues/11178)).
+- Preserved `responseModel` on pi-messages terminal events ([#11265](https://github.com/earendil-works/pi/issues/11265)).
 - Added optional `openBrowserOnConfirm` and `copyCodeOnConfirm` to `device_code` auth events and `OAuthDeviceCodeInfo`. Both default to `true`; set them to `false` to stop clients from offering to open the verification page or copy the code ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
 - Added `StreamingJsonParser`, an incremental, tolerant parser for JSON text that arrives in pieces (each piece is read once; snapshots of the partial value never change once returned), and `ToolCallArgumentsStream`, which every provider now uses for streamed tool-call arguments; its `append()` also returns the changes each piece made (`JsonChange`: a value set at a path, or text appended to a string), for writers that keep their own copy ([#9265](https://github.com/earendil-works/pi/issues/9265))
 - Added GPT-6.1 Terra to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers with official pricing ($1 input, $0.05 cached input, $1.25 cache writes, $5 output, long-context tier above 272k), tool search, and mid-conversation effort changes. Unlike GPT-6.1 Sol it supports `off` (reasoning effort `none`); Codex serves it with a 500K context window
@@ -22,6 +27,10 @@
 
 ### Fixed
 
+- Fixed ChatGPT OAuth image generation and editing by using the native Codex `/images/generations` and `/images/edits` endpoints with GPT Image 2 instead of the unsupported hosted image-generation tool.
+- Use OpenRouter-reported billed costs, including BYOK upstream charges, when complete accounting is available ([#10286](https://github.com/earendil-works/pi/issues/10286)).
+- Translate string and numeric `const` constraints into Gemini-supported enums without rewriting literal schema data.
+- Stopped counting faux-provider cache writes as uncached input tokens.
 - Forward the v1.4 parent telemetry span and client identity through the fork's Codex image requests without enabling retries or prompt caching.
 - Fixed quadratic matching of long Cerebras bodyless error messages.
 - Match model compatibility endpoints by parsed hostname rather than URL substrings, preserving existing built-in model settings.

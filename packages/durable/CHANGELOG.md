@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- Preserve reserved JSON members as data without traversing `__proto__`, `constructor`, or `prototype`, and avoid merging into inherited objects.
 - Fixed a tool round with `control.handoff` ending the run on the tool-calling answer: the handoff's `pi.reset` entry is written and the same run continues with a new generation in the new context, so the submission settles with the eventual answer. Queued writes and selected steers are placed after the handoff text, follow-ups wait for the run's final boundary, and a queued reset still ends the run `unanswered` with reason `reset`. `terminate` remains the way to end a round without another model request.
 - Fixed a conversation watcher (`watchEvents()`, conversation views) holding a copy of a streamed text or tool call per partial commit, through Chord append ops that kept the whole string alive; a 140 KB answer followed by a 140 KB tool call held well over 100 MB ([#9265](https://github.com/earendil-works/pi/issues/9265))
 - Fixed a nested call's error summary keeping the call's whole output alive through a slice of it ([#9265](https://github.com/earendil-works/pi/issues/9265))
