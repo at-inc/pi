@@ -5,12 +5,20 @@
 ### Breaking Changes
 
 - Upgrade `@anthropic-ai/sdk` to 1.1.0 and use Anthropic API version `2026-10-21` for native Anthropic requests. Sampling parameters are no longer sent on that API version; compatible providers retain their existing protocol and supported sampling options.
+- `appendGrammarToolInputJsonDelta()` (`api/constrained-sampling`) takes the input delta instead of the whole input so far and no longer closes the input; close it with the new `closeGrammarToolInputJson()` ([#9265](https://github.com/earendil-works/pi/issues/9265))
+
+### Added
+
+- Added optional `openBrowserOnConfirm` and `copyCodeOnConfirm` to `device_code` auth events and `OAuthDeviceCodeInfo`. Both default to `true`; set them to `false` to stop clients from offering to open the verification page or copy the code ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
+- Added `StreamingJsonParser`, an incremental, tolerant parser for JSON text that arrives in pieces (each piece is read once; snapshots of the partial value never change once returned), and `ToolCallArgumentsStream`, which every provider now uses for streamed tool-call arguments; its `append()` also returns the changes each piece made (`JsonChange`: a value set at a path, or text appended to a string), for writers that keep their own copy ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Added GPT-6.1 Terra to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers with official pricing ($1 input, $0.05 cached input, $1.25 cache writes, $5 output, long-context tier above 272k), tool search, and mid-conversation effort changes. Unlike GPT-6.1 Sol it supports `off` (reasoning effort `none`); Codex serves it with a 500K context window
 
 ### Changed
 
 - Update the Claude Code OAuth request identity to version 2.1.307.
 - Publish and validate the exact packed library artifacts with source provenance and SHA-512 integrity checks.
 - Raised the default context window for OpenAI Codex GPT-6.1 Sol from 272,000 to 500,000 tokens.
+- The faux provider streams partial tool-call arguments, so `toolcall_delta` partials show growing arguments as real providers do ([#9265](https://github.com/earendil-works/pi/issues/9265))
 
 ### Fixed
 
@@ -19,6 +27,16 @@
 - Match model compatibility endpoints by parsed hostname rather than URL substrings, preserving existing built-in model settings.
 - Preserve the fork's Codex image model, verified Fast mode settings, thinking-level restrictions, and Azure context limits when hydrating a pinned upstream model catalog for offline builds.
 - Retain the tagged Claude Haiku 5.5 metadata when a pinned catalog omits it, without replacing supplied records or adding unverified Fast support.
+- Fixed Claude models that accept mid-conversation system messages rejecting a session with a 400 (`role 'system' must precede an 'assistant' message`) when a system update was followed by an assistant reply with nothing to send to Anthropic, such as an empty reply or another model's reasoning-only reply ([#11091](https://github.com/earendil-works/pi/issues/11091))
+- Fixed Claude models with mid-conversation effort failing with `Invalid effort level` on accounts whose organization caps effort below `high`, even at `low` or `medium` thinking, by sending a fixed `low` top-level effort ([#10063](https://github.com/earendil-works/pi/issues/10063))
+- Fixed streamed tool-call arguments being re-parsed in full on every delta, which made CPU time and memory grow quadratically with the size of a tool call (a 90 KB `write` on Anthropic peaked at about 140 MB of heap; a 500 KB one took minutes). Every provider and the pi-messages client now read each delta once, and keep the raw argument text and their other stream state (`partialJson`, `partialArgs`, `index`, `customInput`, `streamIndex`, Bedrock's encrypted reasoning bytes) off the content blocks, so it no longer reaches partial messages or transcripts of failed streams ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Fixed grammar (custom) tool input streaming copying the whole input so far on every delta ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Fixed bounded error texts (telemetry span messages, truncated provider error bodies, pi-messages diagnostics, Radius gateway errors) keeping the whole text they were cut from alive ([#9265](https://github.com/earendil-works/pi/issues/9265))
+- Fixed Kimi K3.1 Pro and K3.1 Pro Highspeed on Kimi Coding, Moonshot, and OpenCode Go using Kimi K2 request settings. They now send `reasoning_effort` (low/high/max), return earlier reasoning, accept tools added mid-conversation, and report Moonshot rates on Kimi Coding. Kimi Coding `k3-256k` now reports Kimi K3 rates.
+- Fixed OAuth logins opening server-supplied URLs that are not `http:` or `https:` URLs. Radius now checks its browser authorization endpoint and device verification URI, and GitHub Copilot, Kimi Coding, and Meta share one check
+- Fixed pi-messages streams accepting a `contentIndex` that is not the next or an existing content block, such as `__proto__` or a huge index
+- Fixed `pi-ai` CLI auth file being readable by other users. It is now written with mode `0600`
+- Fixed OpenCode DeepSeek V4.1 Flash sending `prompt_cache_retention`, which the OpenCode gateway rejects, with long cache retention
 
 ## [1.4.0] - 2026-10-21
 

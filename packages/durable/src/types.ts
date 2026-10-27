@@ -1,5 +1,5 @@
 import type { Message, Models } from "@at-inc/pi-ai";
-import type { AttachedReplicatedState, Context, Draft, JsonValue } from "@earendil-works/chord";
+import type { Context, Draft, JsonValue, WatchChange, WatchHandle } from "@earendil-works/chord";
 import type { Op } from "@earendil-works/chord/delta";
 import type { TelemetryCarrier } from "@earendil-works/pi-telemetry";
 import type { ExecutionEnv } from "./env/index.ts";
@@ -142,8 +142,11 @@ export type ReportTask = {
 	readonly conversationId: ConversationId;
 };
 
-/** A host callback, by its `HarnessOptions` name; `env` is the environment builder, `models` a provider call. */
-export type HostCallback = "now" | "settings" | "registry" | "env" | "models" | "setTimer" | "onWake";
+/**
+ * A host callback, by its `HarnessOptions` name; `env` is the environment builder, `models` a provider call, and
+ * `telemetry` a telemetry adapter call made while a commit is published, which must not fail it.
+ */
+export type HostCallback = "now" | "settings" | "registry" | "env" | "models" | "setTimer" | "onWake" | "telemetry";
 
 /**
  * What a report to `HarnessOptions.onReport` is about. `extension`, where present, names the extension whose code
@@ -267,7 +270,9 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	 * Commit on the Session line after rereading the task. Rejects when the task is terminal, the invocation ended, the
 	 * Harness is closing, or, in a run invocation, the task carries an abort mark. A returned state replaces the task's
 	 * state in the same commit; returning nothing leaves it unchanged. `tx.createTask()` defaults to the task's
-	 * conversation. Inside the callback read only through `tx`: `snapshot()`, `documentState()`, `watchDoc()`, `getTask()`, and the other Session and runtime reads may queue on the line the callback holds, and then never resolve.
+	 * conversation. Inside the callback read only through `tx`: `snapshot()`, `watchDoc()`, `getTask()`, and the other Session and runtime reads may queue on the line the callback holds, and then never resolve.
+	 * `options.persistence` may defer storing a commit that changes only documents (`CommitPersistence`); one that returns
+	 * a state is immediate.
 	 */
 	commit(
 		change: (
@@ -275,6 +280,7 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 			current: RunningTask<I, S, R>,
 		) => NextTaskState<S, R> | undefined | Promise<NextTaskState<S, R> | undefined>,
 		context: Context,
+		options?: CommitOptions,
 	): Promise<void>;
 	/** Read a durable memo of this task. */
 	memo<T extends JsonValue>(name: string, context: Context): Promise<T | undefined>;
@@ -882,7 +888,7 @@ export type DocumentCommitChange =
 			readonly ops: readonly Op[];
 	  }
 	| {
-			/** Definition-free child initialization; consumers hydrate through state or watch acquisition. */
+			/** Definition-free child initialization; consumers hydrate through watch acquisition. */
 			readonly type: "document.copy";
 			readonly record: DocumentRecord;
 			readonly conversationId: ConversationId;
@@ -897,7 +903,12 @@ export type TableCommitChange = Extract<
 
 export type CommitChange = TableCommitChange | DocumentCommitChange;
 
-/** Every immutable change from one successful Session commit. Change order is unspecified. */
+/**
+ * Every immutable change one Session storage transaction stored, with its `seq`. Change order is unspecified. A commit
+ * held in memory (`CommitPersistence`) is published once it is stored: by the next commit that reads or writes its
+ * document, alone (`seq` of its own), or with that commit, whose document change then carries the held operations
+ * followed by its own.
+ */
 export type CommitPublication = {
 	readonly seq: Seq;
 	readonly changes: readonly CommitChange[];
@@ -1004,29 +1015,39 @@ export interface Tx {
 	): Promise<void>;
 }
 
-/** Disposable, read-only Chord state bound to one committed document incarnation. */
-export type DocumentState<T extends JsonObject> = AttachedReplicatedState<Readonly<T> | null>;
+/**
+ * Watch of one document address (kind, scope, and key), from the incarnation found at acquisition on. A retirement is a
+ * call with `retired` set, the last value the watch was given and no ops (a change made in the retiring commit itself
+ * is not shown: that commit publishes the retirement only); the watch goes on, and a document created at the address
+ * later arrives as `[["r", value]]`, folded with what is pending. It ends `ended` when its scope's owner ends: a task
+ * document's watch once the retirement call of the commit that makes its task terminal returned, every watch at Session
+ * close (a pending retirement dropped); `failed` with the error that failed the Session.
+ */
+export type DocumentWatch<T extends JsonObject> = WatchHandle<Readonly<T>>;
 
-/** Terminal result of one document watch. */
-export type WatchEnd =
-	| { readonly reason: "stopped" | "cancelled" | "session_closed" | "retired" }
-	| { readonly reason: "listener_error"; readonly error: Error }
-	/** The Session failed; `error` is what failed it, usually a storage error (see `SessionFailed`). */
-	| { readonly reason: "session_failed"; readonly error: unknown };
+/**
+ * A synchronous observer of committed Durable state, for adapters such as a Chord source (`observeDoc()`,
+ * `Harness.observeConversation()`, `Harness.observeTaskGraph()`). `advance` gets every change, unfolded, as memory
+ * adopts it: for a stored commit inside Storage's `adopt`, for a deferred one before it is stored. A view or the graph
+ * gets at most one call per commit, a document observer one per change at its address (two for a commit that retires
+ * and recreates it); the task graph also advances outside any commit and `adopt`, on the Session line, when a registry
+ * change or a failed migration changes a `blocked` reason. Calls may come before the attaching promise resolves; their
+ * ops apply from `Observation.value`. `advance` must only record the change, synchronously and quickly, never await,
+ * call the Session, or throw. A throw is reported as `listener_error`, detaches the observer, and ends it with the
+ * error. `end` is called once, when the Session closes or fails (`failure`), or when the observed scope's owner ends (a
+ * task document's task, after its retirement change, inside that commit's `adopt`), and never after `detach()`.
+ */
+export type Observer<T> = {
+	advance(change: WatchChange<T>, context: Context): void;
+	end(failure: { readonly error: unknown } | undefined): void;
+};
 
-/** Serialized exact-frame observation of an immutable value with bounded pending delivery. */
-export interface WatchHandle<T> {
-	/** Acquisition revision before start; latest delivered immutable revision afterward. */
+/** An attached `Observer`: the value at attachment, which every later `advance` starts from, and how to detach it. */
+export type Observation<T> = {
 	readonly value: T;
-	/** Install the sole asynchronous listener. Never invokes it inline. */
-	start(listener: (value: T, ops: readonly Op[], context: Context) => Promise<void>): void;
-	/** Idempotently stop future callbacks and return this watch's terminal result. */
-	stop(): Promise<WatchEnd>;
-	/** Settle when the watch terminates; an already-running callback remains caller-owned. */
-	readonly closed: Promise<WatchEnd>;
-}
-
-export type DocumentWatch<T extends JsonObject> = WatchHandle<Readonly<T> | null>;
+	/** Idempotent: no `advance` or `end` follows it, not even for the rest of a commit underway. */
+	detach(): void;
+};
 
 /** Committed document reads. */
 export type DocumentReader = Pick<Session, "snapshot" | "snapshotAsOf">;
@@ -1066,12 +1087,30 @@ export interface DocumentObserver {
 /** Why a Session ended: `close()`, or a failed Storage call, whose error it carries. */
 export type SessionEnd = { readonly reason: "closed" } | { readonly reason: "failed"; readonly error: unknown };
 
+/**
+ * When a commit reaches Storage. `immediate`, the default: before `commit()` resolves. `deferred`: when every write of
+ * the commit changes an existing conversation document with `history: "latest"` and `fork: "initial"` (no creation,
+ * migration, or retirement), the Session adopts it in memory, shows it to watches and views, and resolves, but stores it
+ * later: with the next commit that reads (`tx.doc()`) or writes that document, before the document leaves memory or
+ * retires, at `close()`, and at the latest about `withinMs` after the commit (default `settings.progress.persistWithinMs`,
+ * 1,000 ms; `Infinity` waits for one of the others). A commit that writes anything else is immediate. A crash loses what
+ * is held, so only state whose loss is acceptable, such as streamed progress, should be deferred, and nothing durable may
+ * depend on it without reading it in a commit.
+ */
+export type CommitPersistence =
+	| { readonly kind: "immediate" }
+	| { readonly kind: "deferred"; readonly withinMs?: number };
+
+/** Options of one Session commit. */
+export type CommitOptions = { readonly persistence?: CommitPersistence };
+
 /** Owner of one mutation line, its records, and its tracked documents. */
 export interface Session extends DocumentObserver {
 	/**
-	 * Run one atomic transaction on the Session mutation line. Inside the callback read only through `tx`: `snapshot()`, `documentState()`, `watchDoc()`, `getTask()`, and the other Session and runtime reads may queue on the line the callback holds, and then never resolve.
+	 * Run one atomic transaction on the Session mutation line. Inside the callback read only through `tx`: `snapshot()`, `watchDoc()`, `getTask()`, and the other Session and runtime reads may queue on the line the callback holds, and then never resolve.
+	 * `options.persistence` may defer storing it (`CommitPersistence`).
 	 */
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T>;
 	/** Seal admission, settle admitted commits, then close storage. */
 	close(context: Context): Promise<void>;
 	/**
@@ -1079,7 +1118,57 @@ export interface Session extends DocumentObserver {
 	 * which closes the Session itself. A failed Session is reopened from Storage; nothing else is left to clean up.
 	 */
 	readonly closed: Promise<SessionEnd>;
-	/** Observe complete commits synchronously after adoption. The listener must not block or call Session APIs. */
+	/**
+	 * Attach a synchronous `Observer` to one document address, atomically on the Session line, as `watchDoc()` acquires
+	 * a watch: the observation's value includes every commit before it, and `advance` gets every later one, retirements
+	 * and later incarnations included. `undefined` when the address is absent. `context` governs only the attachment:
+	 * cancelled while attaching, the promise rejects and nothing stays attached.
+	 */
+	observeDoc<T extends JsonObject>(
+		token: SessionDocToken<T>,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject>(
+		token: ConversationDocToken<T>,
+		conversationId: ConversationId,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject>(
+		token: TaskDocToken<T>,
+		taskId: TaskId,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject, I extends JsonValue>(
+		token: SessionDocFamilyToken<T, I>,
+		key: string,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: ConversationId,
+		key: string,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	observeDoc<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: TaskId,
+		key: string,
+		observer: Observer<Readonly<T>>,
+		context: Context,
+	): Promise<Observation<Readonly<T>> | undefined>;
+	/**
+	 * Observe stored commits, each with exactly what it stored, except that a document the commit retires is published
+	 * as its retirement only; a commit held in memory is published when it is stored (`CommitPublication`). Storage's
+	 * adoption of the commit queues one dispatch, which runs a microtask later, before every wait the commit resolves
+	 * and every abort it queues, and calls the listeners registered by then; a commit adopted while none was registered
+	 * has no dispatch. There is no order relative to watch listeners. The listener runs synchronously and must not block
+	 * or call Session APIs.
+	 */
 	subscribeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void;
 	/**
 	 * Observe close synchronously when it begins, also when a failed Storage call closes the Session. The listener must
@@ -1116,38 +1205,6 @@ export interface Session extends DocumentObserver {
 		context: Context,
 	): Promise<Readonly<T> | undefined>;
 
-	documentState<T extends JsonObject>(
-		token: SessionDocToken<T>,
-		context: Context,
-	): Promise<DocumentState<T> | undefined>;
-	documentState<T extends JsonObject>(
-		token: ConversationDocToken<T>,
-		conversationId: ConversationId,
-		context: Context,
-	): Promise<DocumentState<T> | undefined>;
-	documentState<T extends JsonObject>(
-		token: TaskDocToken<T>,
-		taskId: TaskId,
-		context: Context,
-	): Promise<DocumentState<T> | undefined>;
-	documentState<T extends JsonObject, I extends JsonValue>(
-		token: SessionDocFamilyToken<T, I>,
-		key: string,
-		context: Context,
-	): Promise<DocumentState<T> | undefined>;
-	documentState<T extends JsonObject, I extends JsonValue>(
-		token: ConversationDocFamilyToken<T, I>,
-		conversationId: ConversationId,
-		key: string,
-		context: Context,
-	): Promise<DocumentState<T> | undefined>;
-	documentState<T extends JsonObject, I extends JsonValue>(
-		token: TaskDocFamilyToken<T, I>,
-		taskId: TaskId,
-		key: string,
-		context: Context,
-	): Promise<DocumentState<T> | undefined>;
-
 	snapshotAsOf<T extends JsonObject>(
 		token: RewindableConversationDocToken<T>,
 		conversationId: ConversationId,
@@ -1178,13 +1235,18 @@ export interface Session extends DocumentObserver {
  */
 export interface Storage {
 	/**
-	 * Atomically persist one batch and return its sequence. Once resolved, later reads through this storage observe it.
+	 * Atomically persist one batch and return its sequence. Once the batch is durable, call `adopt(seq)` exactly once,
+	 * synchronously and before this storage's next commit starts, then resolve with `seq`; a commit that fails before it
+	 * is durable never calls `adopt`. `adopt` is the caller's in-memory adoption and publication of the batch, so memory
+	 * and the Session's views always show a complete prefix of the log; it runs the Session's own observers, which call
+	 * no Storage method, and never throws. Once resolved, later reads through this storage observe the batch.
 	 */
-	commit(writes: readonly StorageWrite[], context: Context): Promise<Seq>;
+	commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq>;
 
 	/**
-	 * Return a fresh branded candidate from the Session-global numeric ID namespace, greater than every ID minted or stored
-	 * before, also across reopen: scans order by ID as creation order, and the Harness relies on it.
+	 * Return a fresh branded candidate from the Session-global numeric ID namespace, greater than every ID minted since
+	 * this storage was opened and every ID stored, also across reopen: scans order by ID as creation order, and the
+	 * Harness relies on it.
 	 */
 	mintId<I extends Id<string>>(): Promise<I>;
 

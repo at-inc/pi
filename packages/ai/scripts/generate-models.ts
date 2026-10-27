@@ -351,7 +351,11 @@ const KIMI_K3_OPENAI_COMPAT: OpenAICompletionsCompat = {
 	thinkingFormat: "openai",
 	supportsReasoningEffort: true,
 };
-const OPENROUTER_KIMI_K3_MODEL_IDS = new Set(["moonshotai/kimi-k3", "~moonshotai/kimi-latest"]);
+// Kimi K3 and its point releases (kimi-k3.1-pro, kimi-k3.1-pro-highspeed) share K3's request
+// format. https://api.moonshot.ai/v1/models reports effort levels and dynamic tool loading for all.
+function isKimiK3FamilyId(modelId: string): boolean {
+	return /^kimi-k3(?:\.\d+)?(?:-|$)/.test(modelId);
+}
 
 const ANT_LING_RING_THINKING_LEVEL_MAP = {
 	off: null,
@@ -376,6 +380,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6.1-sol",
 	"gpt-6-luna",
+	"gpt-6.1-terra",
 ]);
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
@@ -387,10 +392,17 @@ const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6.1-sol",
 	"gpt-6-luna",
+	"gpt-6.1-terra",
 ]);
 // OpenAI documents configuration_update for the GPT-6 family.
 // https://developers.openai.com/api/docs/guides/reasoning
-const OPENAI_MID_CONVO_EFFORT_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]);
+const OPENAI_MID_CONVO_EFFORT_MODEL_IDS = new Set([
+	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
+	"gpt-6.1-sol",
+	"gpt-6.1-terra",
+]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -402,6 +414,7 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6.1-sol",
 	"gpt-6-luna",
+	"gpt-6.1-terra",
 ]);
 const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -415,6 +428,7 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6.1-sol",
 	"gpt-6-luna",
+	"gpt-6.1-terra",
 ]);
 
 function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cost"] {
@@ -443,6 +457,7 @@ const OPENAI_STANDARD_COSTS: Record<string, ModelCost> = {
 	"gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
 	"gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 	"gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+	"gpt-6.1-terra": { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 },
 };
 
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
@@ -473,6 +488,7 @@ const XAI_RESPONSES_COMPAT: OpenAIResponsesCompat = {
 
 const OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
 	"opencode:deepseek-v4-flash",
+	"opencode:deepseek-v4.1-flash",
 	"opencode:deepseek-v4-pro",
 	"opencode:kimi-k2.5",
 	"opencode:kimi-k2.6",
@@ -925,9 +941,9 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
 	if (model.api !== "openai-completions") return;
 	const isKimiK3 =
-		(model.provider.startsWith("moonshot") && model.id === "kimi-k3") ||
+		(model.provider.startsWith("moonshot") && isKimiK3FamilyId(model.id)) ||
 		(model.provider === "fireworks" && model.id.includes("kimi-k3")) ||
-		((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "kimi-k3");
+		((model.provider === "opencode" || model.provider === "opencode-go") && isKimiK3FamilyId(model.id));
 	const isMoonshotKimiK2 =
 		model.provider.startsWith("moonshot") &&
 		(model.id === "kimi-k2.6" || model.id === "kimi-k2.7-code" || model.id === "kimi-k2.7-code-highspeed");
@@ -1036,13 +1052,15 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		(model.id === "gpt-6-astra" ||
 			model.id === "gpt-6-sol" ||
 			model.id === "gpt-6-luna" ||
-			model.id === "gpt-6.1-sol") &&
+			model.id === "gpt-6.1-sol" ||
+			model.id === "gpt-6.1-terra") &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses")
 	) {
 		mergeThinkingLevelMap(model, {
-			// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none".
+			// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none"; GPT-6.1 Terra accepts it. All reject
+			// "minimal" (verified on Codex, October 2026).
 			off: model.id === "gpt-6-astra" || model.id === "gpt-6.1-sol" ? null : "none",
 			minimal: null,
 			low: "low",
@@ -1732,13 +1750,12 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 // equivalent Moonshot API rates to estimate the value of subscription usage.
 const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
 	k3: KIMI_K3_COST,
+	"k3-256k": KIMI_K3_COST,
+	"k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 0 },
+	"k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 0 },
 	"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 	"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
 };
-// Models whose https://api.kimi.com/coding/v1/models entry reports effort levels and
-// dynamic tool loading (tools declared in later system messages). Highspeed reports
-// neither and rejects tool-bearing system messages with a 400.
-const KIMI_CODING_K3_STYLE_MODEL_IDS = new Set(["k3", "k3-256k", "kimi-for-coding"]);
 
 // Kimi Coding uses Chat Completions, the same protocol as the official Kimi Code client.
 function createKimiCodingModels(kimiModels: Record<string, ModelsDevModel>): Model<"openai-completions">[] {
@@ -1746,7 +1763,11 @@ function createKimiCodingModels(kimiModels: Record<string, ModelsDevModel>): Mod
 	for (const [modelId, m] of Object.entries(kimiModels)) {
 		if (m.tool_call !== true) continue;
 
-		const isK3Style = KIMI_CODING_K3_STYLE_MODEL_IDS.has(modelId);
+		// K3-style models report effort levels and dynamic tool loading (tools declared in
+		// later system messages) in https://api.kimi.com/coding/v1/models; models.dev mirrors
+		// the effort levels. kimi-for-coding-highspeed reports neither and rejects
+		// tool-bearing system messages with a 400.
+		const isK3Style = m.reasoning_options?.some((option) => option.type === "effort") === true;
 		const impliedCost = KIMI_CODING_IMPLIED_COSTS[modelId];
 		// K3-style models send reasoning_effort, so expose the effort values models.dev lists.
 		const effortLevels = isK3Style && m.reasoning_options ? getEffortThinkingLevelMap(m.reasoning_options) : undefined;
@@ -2409,7 +2430,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, m] of Object.entries(moonshotModels[key])) {
 				if (m.tool_call !== true) continue;
 
-				const isKimiK3 = modelId === "kimi-k3";
+				const isKimiK3 = isKimiK3FamilyId(modelId);
 				const compat = { ...(isKimiK3 ? KIMI_K3_OPENAI_COMPAT : KIMI_OPENAI_COMPAT) };
 				models.push({
 					id: modelId,
@@ -2419,14 +2440,16 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					cost: isKimiK3
-						? { ...KIMI_K3_COST }
-						: {
-								input: m.cost?.input || 0,
-								output: m.cost?.output || 0,
-								cacheRead: m.cost?.cache_read || 0,
-								cacheWrite: m.cost?.cache_write || 0,
-							},
+					// Preserve the fork's K3 pricing (3ac456f69); point releases use their own rates without cache-write charges.
+					cost:
+						modelId === "kimi-k3"
+							? { ...KIMI_K3_COST }
+							: {
+									input: m.cost?.input || 0,
+									output: m.cost?.output || 0,
+									cacheRead: m.cost?.cache_read || 0,
+									cacheWrite: isKimiK3 ? 0 : m.cost?.cache_write || 0,
+								},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					compat,
@@ -2806,8 +2829,10 @@ async function generateModels() {
 		}
 		// Keep Kimi K3's canonical output limit when gateway metadata is missing or incorrect.
 		if (
-			(candidate.provider === "openrouter" && OPENROUTER_KIMI_K3_MODEL_IDS.has(candidate.id)) ||
-			(candidate.provider === "vercel-ai-gateway" && candidate.id === "moonshotai/kimi-k3")
+			(candidate.provider === "openrouter" && candidate.id === "~moonshotai/kimi-latest") ||
+			((candidate.provider === "openrouter" || candidate.provider === "vercel-ai-gateway") &&
+				candidate.id.startsWith("moonshotai/") &&
+				isKimiK3FamilyId(candidate.id.slice("moonshotai/".length)))
 		) {
 			candidate.maxTokens = KIMI_K3_MAX_TOKENS;
 		}
@@ -2843,6 +2868,18 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6.1-sol"]),
+			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			maxTokens: 128000,
+		},
+		{
+			id: "gpt-6.1-terra",
+			name: "GPT-6.1 Terra",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6.1-terra"]),
 			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
 			maxTokens: 128000,
 		},
@@ -3066,7 +3103,7 @@ async function generateModels() {
 	// GPT-6.1 Sol uses the 500k default returned by /backend-api/codex/models.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
-	const CODEX_GPT_61_SOL_CONTEXT = 500000;
+	const CODEX_GPT_61_CONTEXT = 500000;
 	const CODEX_GPT_56_CONTEXT = 272000;
 	const CODEX_MAX_TOKENS = 128000;
 	const codexModels: Model<"openai-codex-responses">[] = [
@@ -3079,7 +3116,19 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6.1-sol"]),
-			contextWindow: CODEX_GPT_61_SOL_CONTEXT,
+			contextWindow: CODEX_GPT_61_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-6.1-terra",
+			name: "GPT-6.1 Terra",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS["gpt-6.1-terra"]),
+			contextWindow: CODEX_GPT_61_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{

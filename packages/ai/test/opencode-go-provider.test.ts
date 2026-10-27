@@ -32,7 +32,7 @@ describe("OpenCode Go Gemini dispatch", () => {
 		"routes %s through Google Generative AI with the OpenCode session header",
 		async (method) => {
 			const provider = opencodeGoProvider();
-			const model = provider.getModels().find((model) => model.id === "gemini-4-argon-contributor");
+			const model = provider.getModels().find((model) => model.id === "gemini-4-argon");
 			expect(model).toMatchObject({
 				api: "google-generative-ai",
 				provider: "opencode-go",

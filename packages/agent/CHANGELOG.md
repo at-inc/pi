@@ -6,6 +6,10 @@
 
 - Publish and validate the exact packed library artifacts with source provenance, SHA-512 integrity checks, and one shared fork AI runtime in aliased consumers.
 
+### Fixed
+
+- Fixed `streamProxy()` re-parsing the accumulated tool-call arguments on every delta and keeping their raw text on the partial content block ([#9265](https://github.com/earendil-works/pi/issues/9265))
+
 ## [1.4.0] - 2026-10-21
 
 ### Added
