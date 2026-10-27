@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.1] - 2026-10-27
 
 This fork release includes upstream API changes described below. Distribution and catalog-overlay entries carried forward here were already available in the fork's 1.4.0 library release.
 
