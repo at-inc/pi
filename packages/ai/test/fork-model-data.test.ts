@@ -33,6 +33,18 @@ function chat(provider: string, id: string, api: Api = "openai-responses"): Mode
 
 describe("fork model metadata", () => {
 	it.each([
+		["openai", "openai-responses", true],
+		["cloudflare-ai-gateway", "openai-responses", true],
+		["openai-codex", "openai-codex-responses", true],
+		["azure", "azure-openai-responses", undefined],
+		["github-copilot", "openai-responses", undefined],
+	] as const)("sets GPT-6.1 Terra fast-mode metadata for %s", (provider, api, expected) => {
+		const model = chat(provider, "gpt-6.1-terra", api);
+		applyForkModelMetadata(model);
+		expect(model.supportsFastMode).toBe(expected);
+	});
+
+	it.each([
 		["openai", "gpt-6-astra", "openai-responses"],
 		["openai", "gpt-6.1-sol", "openai-responses"],
 		["openai", "gpt-5.5", "openai-responses"],
