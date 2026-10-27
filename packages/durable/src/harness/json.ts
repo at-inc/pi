@@ -24,13 +24,21 @@ export function assignJson<T extends object, K extends keyof T & (string | numbe
 	plan?: AssignPlan,
 ): void {
 	if (plan?.kind === "keep") return;
+	if (key === "__proto__" || key === "constructor" || key === "prototype") {
+		throw new TypeError("Reserved JSON members must be assigned with their containing object");
+	}
 	// Every target is a document container: JSON members or items, whatever its declared type names them.
 	const slots = target as Record<string | number, JsonValue>;
-	// A `__proto__` member the target lacks reads through to Object.prototype; merging into that would pollute every
-	// object in the process. Other inherited members are functions, which are not merged into.
-	const current: JsonValue | undefined = key === "__proto__" && !Object.hasOwn(slots, key) ? undefined : slots[key];
+	const current: JsonValue | undefined = Object.hasOwn(slots, key) ? slots[key] : undefined;
 	const fields = plan?.kind === "fields" ? plan.fields : undefined;
-	if (isRecord(current) && isRecord(value)) {
+	// Preserve reserved JSON members as data by replacing their container, never traversing prototype-shaped keys.
+	if (
+		isRecord(current) &&
+		isRecord(value) &&
+		!Object.hasOwn(value, "__proto__") &&
+		!Object.hasOwn(value, "constructor") &&
+		!Object.hasOwn(value, "prototype")
+	) {
 		for (const name of Object.keys(current)) if (!Object.hasOwn(value, name)) delete current[name];
 		for (const [name, child] of Object.entries(value)) assignJson(current, name, child, fields?.get(name));
 		return;

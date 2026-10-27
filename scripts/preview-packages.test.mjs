@@ -31,6 +31,7 @@ function writePackage(repo, directory, manifest) {
 async function startServer(t, { refsSha = sha, uploadBody } = {}) {
 	const requests = [];
 	const server = createServer(async (req, res) => {
+		res.setHeader("Content-Type", "application/json");
 		let body = "";
 		for await (const chunk of req) body += chunk;
 		requests.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
