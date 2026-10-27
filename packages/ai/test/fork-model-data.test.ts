@@ -33,6 +33,36 @@ function chat(provider: string, id: string, api: Api = "openai-responses"): Mode
 
 describe("fork model metadata", () => {
 	it.each([
+		["openai", "gpt-4o", false],
+		["openai", "gpt-5", false],
+		["openai", "gpt-5.3", false],
+		["openai", "gpt-5.3-codex", false],
+		["openai", "gpt-5.4", true],
+		["openai", "gpt-5.4-mini", true],
+		["openai", "gpt-5.4-20260305", true],
+		["openai", "gpt-5.10", true],
+		["openai", "gpt-6", true],
+		["openai", "gpt-6-unknown", true],
+		["openai", "gpt-10", true],
+		["anthropic", "claude-opus-4-5", false],
+		["anthropic", "claude-opus-4-20250514", false],
+		["anthropic", "claude-opus-4-6", true],
+		["anthropic", "claude-opus-4.6", true],
+		["anthropic", "claude-opus-4-6-20260205", true],
+		["anthropic", "claude-opus-4-10", true],
+		["anthropic", "claude-opus-5", true],
+		["anthropic", "claude-opus-10", true],
+		["anthropic", "claude-sonnet-5", false],
+		["anthropic", "claude-haiku-5-5", false],
+		["anthropic", "claude-fable-5-1", false],
+	] as const)("derives fast-mode support from the family and version of %s/%s", (provider, id, expected) => {
+		const model = chat(provider, id, provider === "anthropic" ? "anthropic-messages" : "openai-responses");
+		model.supportsFastMode = !expected;
+		applyForkModelMetadata(model);
+		expect(model.supportsFastMode).toBe(expected);
+	});
+
+	it.each([
 		["openai", "openai-responses", true],
 		["cloudflare-ai-gateway", "openai-responses", true],
 		["openai-codex", "openai-codex-responses", true],
@@ -51,7 +81,6 @@ describe("fork model metadata", () => {
 		["cloudflare-ai-gateway", "gpt-6-sol", "openai-responses"],
 		["openai-codex", "gpt-6-luna", "openai-codex-responses"],
 		["anthropic", "claude-opus-5-5", "anthropic-messages"],
-		["anthropic", "claude-sonnet-5", "anthropic-messages"],
 	] as const)("keeps verified fast-mode support for %s/%s", (provider, id, api) => {
 		const model = chat(provider, id, api);
 		applyForkModelMetadata(model);
@@ -59,16 +88,16 @@ describe("fork model metadata", () => {
 	});
 
 	it.each([
-		["azure", "gpt-6-astra", "azure-openai-responses"],
-		["github-copilot", "gpt-6-astra", "openai-responses"],
-		["cloudflare-ai-gateway", "claude-opus-5-5", "anthropic-messages"],
-		["openai", "gpt-6-unknown", "openai-responses"],
-		["anthropic", "claude-sonnet-5-5", "anthropic-messages"],
-		["anthropic", "claude-haiku-5-5", "anthropic-messages"],
-	] as const)("does not infer fast-mode support for %s/%s", (provider, id, api) => {
+		["azure", "gpt-6-astra", "azure-openai-responses", undefined],
+		["github-copilot", "gpt-6-astra", "openai-responses", undefined],
+		["cloudflare-ai-gateway", "claude-opus-5-5", "anthropic-messages", undefined],
+		["openai", "gpt-6-astra", "openai-completions", undefined],
+		["anthropic", "claude-sonnet-5-5", "anthropic-messages", false],
+		["anthropic", "claude-haiku-5-5", "anthropic-messages", false],
+	] as const)("does not infer fast-mode support for %s/%s", (provider, id, api, expected) => {
 		const model = chat(provider, id, api);
 		applyForkModelMetadata(model);
-		expect(model.supportsFastMode).toBeUndefined();
+		expect(model.supportsFastMode).toBe(expected);
 	});
 
 	it("retains thinking exclusions without replacing unrelated levels or metadata", () => {
