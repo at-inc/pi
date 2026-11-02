@@ -271,7 +271,16 @@ describe("getSupportedThinkingLevels", () => {
 	it("includes low/high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
 		const catalog = generateModelsFixture({
 			"opencode-go": {
-				models: { "deepseek-v4-flash": { tool_call: true, reasoning: true } },
+				models: {
+					"deepseek-v4-flash": {
+						id: "deepseek-v4-flash",
+						type: "chat",
+						name: "DeepSeek V4 Flash",
+						modalities: { input: ["text"], output: ["text"] },
+						capabilities: { tools: { supported: true }, reasoning: { supported: true } },
+						api: { "chat-completions": { base_url: "https://opencode.ai/zen/go/v1" } },
+					},
+				},
 			},
 		});
 		const model = catalog["opencode-go"]["deepseek-v4-flash"];

@@ -26,6 +26,10 @@ export default defineConfig({
 			{ find: /^@at-inc\/pi-ai$/, replacement: aiSrcIndex },
 			{ find: /^@at-inc\/pi-ai\/compat$/, replacement: aiSrcCompat },
 			{
+				find: /^@at-inc\/pi-ai\/providers\/faux$/,
+				replacement: fileURLToPath(new URL("../ai/src/providers/faux.ts", import.meta.url)),
+			},
+			{
 				find: /^@at-inc\/pi-ai\/utils\/uuid$/,
 				replacement: fileURLToPath(new URL("../ai/src/utils/uuid.ts", import.meta.url)),
 			},

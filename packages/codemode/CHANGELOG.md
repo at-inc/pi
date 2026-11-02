@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- README: the codemode tool example builds its parameters with `@earendil-works/pi-schema` instead of TypeBox.
+
 ## [1.4.1] - 2026-10-27
 
 ## [1.4.0] - 2026-10-21

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- README: the `AgentTool` wrapping example passes the MCP input schema as plain JSON Schema instead of through TypeBox's `Type.Unsafe`.
+
 ## [1.4.1] - 2026-10-27
 
 ### Fixed

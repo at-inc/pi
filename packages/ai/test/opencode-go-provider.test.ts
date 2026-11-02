@@ -36,7 +36,7 @@ describe("OpenCode Go Gemini dispatch", () => {
 			expect(model).toMatchObject({
 				api: "google-generative-ai",
 				provider: "opencode-go",
-				baseUrl: "https://opencode.ai/inference/go/v1",
+				baseUrl: "https://opencode.ai/inference/go/google/v1beta",
 			});
 			if (!model) throw new Error("OpenCode Go Gemini model is missing");
 			const context = normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] });

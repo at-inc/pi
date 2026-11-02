@@ -19,18 +19,24 @@ afterEach(() => vi.unstubAllGlobals());
 describe("Kimi K3 cache-write pricing", () => {
 	it("uses the approved rates when generating from stale upstream metadata", () => {
 		const stale = {
-			tool_call: true,
-			reasoning: true,
-			cost: { input: 3, output: 15, cache_read: 0.3, cache_write: 0 },
+			type: "chat",
+			name: "Kimi K3",
+			modalities: { input: ["text"], output: ["text"] },
+			capabilities: { tools: { supported: true }, reasoning: { supported: true } },
+			api: {},
+			cost: { text: { input: { price: 3, cache: { read: 0.3, write: 0 } }, output: { price: 15 } } },
 		};
 		const catalog = generateModelsFixture({
-			moonshotai: { models: { "kimi-k3": stale } },
-			"moonshotai-cn": { models: { "kimi-k3": stale } },
-			"kimi-code-plan-global": { models: { k3: stale } },
+			moonshotai: { models: { "kimi-k3": { ...stale, id: "kimi-k3" } } },
+			"moonshotai-cn": { models: { "kimi-k3": { ...stale, id: "kimi-k3" } } },
+			"kimi-code-plan-global": {
+				models: { k3: { ...stale, id: "k3" }, "k3-256k": { ...stale, id: "k3-256k" } },
+			},
 		});
 		for (const [provider, id] of targets) {
 			expect(catalog[provider][id].cost).toEqual({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 });
 		}
+		expect(catalog["kimi-coding"]["k3-256k"].cost).toEqual({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 });
 	});
 
 	it("corrects immutable catalog hydration without changing other rates or the catalog bytes", () => {

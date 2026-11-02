@@ -2,9 +2,9 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/06-configuration.ts
 
-import { Type } from "@at-inc/pi-ai";
 import { createModels } from "@at-inc/pi-ai/models";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
 	AgentDoc,
 	createRegistry,
@@ -26,7 +26,7 @@ function exampleTool(name: string, description: string): AppTool {
 	const tool = defineTool({
 		name,
 		description,
-		parameters: Type.Object({ path: Type.String() }),
+		parameters: obj({ path: str() }),
 		execute: async (args) => ({ output: [{ type: "text", text: `${name} ${args.path}` }] }),
 	});
 	return { ...tool, snippet: `Use ${name} for files.` };

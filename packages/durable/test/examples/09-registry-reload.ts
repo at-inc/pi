@@ -2,9 +2,9 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/09-registry-reload.ts
 
-import { Type } from "@at-inc/pi-ai";
 import { createModels } from "@at-inc/pi-ai/models";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { obj, str } from "@earendil-works/pi-schema";
 import { createRegistry, defineExtension, defineTool, Harness, MemoryStorage, wrapTool } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -13,7 +13,7 @@ function exampleTool(name: string, description: string) {
 	return defineTool({
 		name,
 		description,
-		parameters: Type.Object({ path: Type.String() }),
+		parameters: obj({ path: str() }),
 		execute: async (args) => ({ output: [{ type: "text", text: `${name} ${args.path}` }] }),
 	});
 }

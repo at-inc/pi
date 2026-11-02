@@ -1,5 +1,6 @@
-import { createModels, Type } from "@at-inc/pi-ai";
+import { createModels } from "@at-inc/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@at-inc/pi-ai/providers/faux";
+import { obj } from "@earendil-works/pi-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Agent } from "../src/agent.ts";
 import { type ProxyAssistantMessageEvent, streamProxy } from "../src/proxy.ts";
@@ -28,7 +29,7 @@ describe("malformed final tool arguments", () => {
 		models.setProvider(faux.provider);
 		const execute = vi.fn(async () => ({ content: [{ type: "text" as const, text: "unexpected" }], details: {} }));
 		const prepareArguments = vi.fn(() => ({}));
-		const parameters = Type.Object({});
+		const parameters = obj({});
 		const tool: AgentTool<typeof parameters> = {
 			name: "unsafe",
 			label: "Unsafe",

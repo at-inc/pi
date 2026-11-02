@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- The main entry no longer re-exports TypeBox (`Type`, `Static`, `TSchema`), and `typebox` is no longer a dependency. `Tool.parameters` is any JSON Schema object (`Tool<TParameters extends object>`): `@earendil-works/pi-schema`'s builders, which also type the arguments through pi-schema's `Static`, TypeBox schemas, or plain objects. `validateToolCall()`/`validateToolArguments()` validate with pi-schema (`compile(schema, { coerce: true }).parse()`): every schema gets the same coercion, the superset of TypeBox's `Value.Convert` rules (which only applied to TypeBox-built schemas) and pi-ai's own, so plain JSON Schema tools (MCP tools) now also get, for example, `null` to `"null"` for a required string, `"3.5"` to 3 for an integer and a single value wrapped into an array. The error text lists pi-schema's messages (`- edits.0.oldText: missing`, `- limit: expected number, got string`) instead of TypeBox's. `StringEnum()` returns a pi-schema `Schema<T>` with the same JSON (`{ type: "string", enum }`). The model and compat schemas (`providers/model-schema`, `providers/compat-schema`) are built with pi-schema, with the same JSON Schema, and their types come from pi-schema's `Static`; `ProviderCompat` is exported. Migration:
+
+  ```ts
+  // Before
+  import { Type, type Static, StringEnum } from "@earendil-works/pi-ai";
+  const params = Type.Object({ path: Type.String(), mode: StringEnum(["a", "b"]) });
+  type Params = Static<typeof params>;
+
+  // After: pi-schema builders (closed objects; pass { open: true } to allow other properties)
+  import { StringEnum } from "@earendil-works/pi-ai";
+  import { obj, type Static, str } from "@earendil-works/pi-schema";
+  const params = obj({ path: str(), mode: StringEnum(["a", "b"]) });
+  type Params = Static<typeof params>;
+
+  // Or keep TypeBox, imported from typebox itself (its schemas are JSON Schema)
+  import { Type, type Static } from "typebox";
+  ```
+- Tool arguments are validated as JSON Schema only; nothing runs through TypeBox's own validator any more, so TypeBox features outside JSON Schema no longer apply to tool arguments:
+  - `Type.Refine()` refinements are not run: arguments they would reject are accepted.
+  - `Type.BigInt()`, `Type.Undefined()` and `Type.Void()` reject every JSON argument (TypeBox converted to them).
+  - Codecs (`Type.Codec()`) do not decode: the tool receives the encoded JSON value.
+  - Formats registered with TypeBox's `Format.Set()` are not checked; the standard formats plus `url` and `json-pointer-uri-fragment` are.
+  - Property names are names, not regular expressions: `"a.b"` no longer also converts the argument `axb`.
+  - `additionalProperties` converts only undeclared properties; TypeBox also converted declared ones with it when an object had more than one property.
+- A `$ref` that names nothing (a missing definition, an external document) rejects only arguments at its place (`- t: unresolved reference #/definitions/Missing`) instead of failing every call of the tool, as TypeBox's rejection did before.
+
+### Changed
+
+- The built-in model catalog is generated from models.dev's v2 catalog, and its per-provider rules moved from `scripts/generate-models.ts` into one TypeScript definition per provider under `catalog/`. Models that models.dev types as realtime or image models (`gpt-realtime-2.1`, `gemini-3.1-flash-live-preview`, `gemini-3.1-flash-lite-image`) are no longer offered as chat models, and models.dev's newer OpenAI and Google chat models (`chat-latest`, `gpt-5.6-cyber`, `gemini-robotics-er-2-preview`) are now included
+
+### Fixed
+
+- Fixed GPT-5.4 and GPT-5.5 failing with `Missing namespace for function_call` after switching from another model that called tools. On the OpenAI and OpenCode providers they now declare their tools in the top-level tool list instead of loading them through `additional_tools` or tool search ([#11415](https://github.com/earendil-works/pi/issues/11415))
+- Fixed Bedrock requests failing when `strict: "prefer"` tools exceed Claude's strict tool limits, such as more than 16 optional parameters across all strict tools; requests now retry once with preferred tools non-strict while keeping `strict: "require"` tools strict, as the Anthropic provider already does ([#11416](https://github.com/earendil-works/pi/issues/11416))
+- Fixed OpenRouter's `~anthropic/claude-*-latest` aliases losing Claude's earlier thinking after each tool call. They used the Chat Completions API, where pi dropped the thinking signature, and OpenRouter then ignored the unsigned thinking. They now use the Anthropic Messages API with adaptive thinking, like the versioned Claude models ([#9534](https://github.com/earendil-works/pi/issues/9534))
+
 ## [1.4.1] - 2026-10-27
 
 This fork release includes upstream API changes described below. Distribution and catalog-overlay entries carried forward here were already available in the fork's 1.4.0 library release.

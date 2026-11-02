@@ -6,21 +6,36 @@ import * as aiCompat from "@at-inc/pi-ai/compat";
 import * as aiModels from "@at-inc/pi-ai/models";
 import * as aiOAuth from "@at-inc/pi-ai/oauth";
 import * as aiProviders from "@at-inc/pi-ai/providers/all";
+import { Type } from "typebox";
+import { Compile } from "typebox/compile";
 import { describe, expect, it } from "vitest";
 import { loadExtensions } from "../src/core/extensions/loader.ts";
+import * as aiExtensionView from "../src/core/extensions/pi-ai-extension-view.ts";
 import { VIRTUAL_MODULES } from "../src/core/extensions/virtual-modules.ts";
 
 describe("fork extension imports", () => {
 	it.each([
 		["@at-inc/pi-agent-core", "@mariozechner/pi-agent-core", agentCore],
-		["@at-inc/pi-ai", "@mariozechner/pi-ai", aiCompat],
-		["@at-inc/pi-ai/compat", "@mariozechner/pi-ai/compat", aiCompat],
+		["@at-inc/pi-ai", "@mariozechner/pi-ai", aiExtensionView],
+		["@at-inc/pi-ai/compat", "@mariozechner/pi-ai/compat", aiExtensionView],
 		["@at-inc/pi-ai/models", "@mariozechner/pi-ai/models", aiModels],
 		["@at-inc/pi-ai/oauth", "@mariozechner/pi-ai/oauth", aiOAuth],
 		["@at-inc/pi-ai/providers/all", "@mariozechner/pi-ai/providers/all", aiProviders],
 	] as const)("maps %s and %s to the fork module", (specifier, legacySpecifier, module) => {
 		expect(VIRTUAL_MODULES[specifier]).toBe(module);
 		expect(VIRTUAL_MODULES[legacySpecifier]).toBe(module);
+	});
+
+	it("preserves compat exports and TypeBox schema construction in the extension view", () => {
+		const extensionExports = new Map(Object.entries(aiExtensionView));
+		for (const [name, value] of Object.entries(aiCompat)) {
+			if (name !== "StringEnum") expect(extensionExports.get(name)).toBe(value);
+		}
+		expect(aiExtensionView.Type).toBe(Type);
+		const schema = Type.Object({ action: aiExtensionView.StringEnum(["list", "add"] as const) });
+		const validator = Compile(schema);
+		expect(validator.Check({ action: "list" })).toBe(true);
+		expect(validator.Check({ action: "delete" })).toBe(false);
 	});
 
 	it("keeps the fork coding-agent alias", () => {

@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `Component.capturesViewportInput`. While a component that sets it has focus, `TuiAltScreen` sends viewport keys such as PageUp/PageDown to it instead of scrolling the transcript, as it already does for focused overlays. `SelectList`, `SettingsList`, and `Editor` with open autocomplete set it ([#7629](https://github.com/earendil-works/pi/issues/7629), based on [#7680](https://github.com/earendil-works/pi/pull/7680) by [@muyiyr](https://github.com/muyiyr))
+- Added `getSelectPageIndex()` to compute the selection after a `tui.select.pageUp` or `tui.select.pageDown` key ([#7629](https://github.com/earendil-works/pi/issues/7629), based on [#7680](https://github.com/earendil-works/pi/pull/7680) by [@muyiyr](https://github.com/muyiyr))
+
+### Fixed
+
+- Fixed `Shift+Enter` queueing a follow-up in Apple Terminal setups that send `ESC` + Return. When local native Shift detection is available (Apple Terminal, native Windows), `ProcessTerminal` now treats `ESC` + Return with Shift held as `Shift+Enter`; without Shift it remains `Alt+Enter` ([#11559](https://github.com/earendil-works/pi/issues/11559))
+- Fixed regular-mode `TUI` writing OSC 133 prompt markers from rendered lines to the terminal. Terminals treat `133;A` as a new shell prompt and drop the OSC 7501 program status, so the working indicator disappeared during runs. Fullscreen still uses the markers for prompt navigation and already stripped them ([#11519](https://github.com/earendil-works/pi/issues/11519))
+- Fixed display math wider than the content width being wrapped row by row, which split fractions and sums apart. It now falls back to the raw LaTeX source ([#11483](https://github.com/earendil-works/pi/issues/11483))
+- Fixed `tui.select.pageUp` and `tui.select.pageDown` being ignored by `SelectList`, `SettingsList`, and editor autocomplete ([#7629](https://github.com/earendil-works/pi/issues/7629), based on [#7680](https://github.com/earendil-works/pi/pull/7680) by [@muyiyr](https://github.com/muyiyr))
+- Fixed `wrapTextWithAnsi()` starting the next line with a space when a styled word ended exactly at the wrap width, and strikethrough continuing into the right padding of wrapped lines ([#10925](https://github.com/earendil-works/pi/issues/10925))
+- Fixed `Markdown` styling, highlighting, and wrapping every block on each render. It now reuses the top-level blocks of its last render, so a streaming message renders only its changed last block, and a resize reuses highlighted code. Reused blocks are held weakly and dropped by `invalidate()`, which a theme change must call because `MarkdownTheme.highlightCode` results are reused until then ([#10971](https://github.com/earendil-works/pi/issues/10971))
+- Fixed `Text.setText()` with unchanged text dropping the wrapped lines, so renderers that set the same text on every update wrapped it again ([#10971](https://github.com/earendil-works/pi/issues/10971))
+
 ## [1.4.1] - 2026-10-27
 
 ### Added

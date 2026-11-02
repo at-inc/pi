@@ -60,8 +60,17 @@ describe("Together models", () => {
 		});
 
 		const catalog = generateModelsFixture({
-			together: {
-				models: { "deepseek-ai/DeepSeek-V4-Pro-0813": { tool_call: true, reasoning: true } },
+			togetherai: {
+				models: {
+					"deepseek-ai/DeepSeek-V4-Pro-0813": {
+						id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+						type: "chat",
+						name: "DeepSeek V4 Pro",
+						modalities: { input: ["text"], output: ["text"] },
+						capabilities: { tools: { supported: true }, reasoning: { supported: true } },
+						api: {},
+					},
+				},
 			},
 		});
 		const deepSeekV4 = catalog.together["deepseek-ai/DeepSeek-V4-Pro-0813"];

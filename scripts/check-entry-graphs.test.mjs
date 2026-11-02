@@ -9,6 +9,8 @@ async function check(t, target, utilities) {
 	const root = await mkdtemp(join(tmpdir(), "pi-entry-graphs-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const files = {
+		"packages/schema/package.json": JSON.stringify({ exports: { ".": "./dist/index.js" } }),
+		"packages/schema/src/index.ts": "export {};\n",
 		"packages/ai/package.json": JSON.stringify({
 			exports: { "./models": "./dist/models.js", "./utils/*": target },
 		}),

@@ -109,7 +109,7 @@ describe("fork classifier model metadata", () => {
 			)};
 globalThis.fetch = async (input) => {
   const url = String(input);
-  if (url === "https://models.dev/api.json") return Response.json({});
+  if (url === "https://models.dev/experimental/v2.0/api.json") return Response.json({});
   if (url === "https://models.dev/models.json?type=decision") return Response.json({ "typesafe/jev-latest": { name: "Jev", type: "decision", limit: { context: 64000 } } });
   if (url === "https://openrouter.ai/api/v1/models?output_modalities=decisions") return Response.json({ data: decisions });
   if (url.startsWith("https://openrouter.ai/api/v1/models") || url === "https://ai-gateway.vercel.sh/v1/models") return Response.json({ data: [] });
@@ -123,7 +123,7 @@ globalThis.fetch = async (input) => {
 			[
 				"--import",
 				pathToFileURL(preloadPath).href,
-				"scripts/generate-models.ts",
+				"catalog/generate.ts",
 				"--json-only",
 				"--json-output",
 				outputPath,

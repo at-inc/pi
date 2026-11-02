@@ -1,7 +1,7 @@
 import { globSync } from "node:fs";
-import { resolve } from "node:path";
-import { Type } from "@at-inc/pi-ai";
+import { isAbsolute, relative, resolve } from "node:path";
 import { defineTool } from "@at-inc/pi";
+import { obj, oneOf, str } from "@earendil-works/pi-schema";
 import { expect } from "vitest";
 import { describeEval, toolCalls } from "vitest-evals";
 import { createPiCodingAgentHarness } from "../src/harness.ts";
@@ -12,13 +12,10 @@ const submitAudit = defineTool({
 	label: "Submit documentation audit",
 	description: "Submit the final verdict after completing the documentation investigation.",
 	promptSnippet: "Submit the final documentation audit as validated structured data",
-	parameters: Type.Object(
-		{
-			verdict: Type.Union([Type.Literal("match"), Type.Literal("mismatch"), Type.Literal("inconclusive")]),
-			explanation: Type.String({ minLength: 1, maxLength: 2000 }),
-		},
-		{ additionalProperties: false },
-	),
+	parameters: obj({
+		verdict: oneOf(["match", "mismatch", "inconclusive"]),
+		explanation: str({ minLength: 1, maxLength: 2000 }),
+	}),
 	constrainedSampling: { type: "json_schema", strict: "prefer" },
 	async execute(_toolCallId, params) {
 		return {
@@ -31,6 +28,7 @@ const submitAudit = defineTool({
 
 const repositoryRoot = resolve(import.meta.dirname, "../../..");
 const docsRoot = resolve(repositoryRoot, "packages/coding-agent/docs");
+const sourceRoot = resolve(repositoryRoot, "packages/coding-agent/src");
 const pages = globSync("**/*.md", { cwd: docsRoot })
 	.map((path) => ({ path: path.replaceAll("\\", "/") }))
 	.sort((left, right) => left.path.localeCompare(right.path));
@@ -56,7 +54,20 @@ For a mismatch, quote the claim, cite the implementation path and symbol, and st
 
 Call ${TOOL_NAME} exactly once as your final action. Do not return prose.`);
 
-		const auditCalls = toolCalls(result).filter((call) => call.name === TOOL_NAME);
+		const calls = toolCalls(result);
+		const readPaths = calls.flatMap((call) => {
+			const path = call.name === "read" && call.status === "ok" ? call.arguments?.path : undefined;
+			return typeof path === "string" ? [resolve(path)] : [];
+		});
+		expect(readPaths).toContain(documentationPath);
+		expect(
+			readPaths.some((readPath) => {
+				const sourceRelative = relative(sourceRoot, readPath);
+				return sourceRelative !== "" && !sourceRelative.startsWith("..") && !isAbsolute(sourceRelative);
+			}),
+		).toBe(true);
+
+		const auditCalls = calls.filter((call) => call.name === TOOL_NAME);
 		expect(auditCalls).toHaveLength(1);
 		const auditCall = auditCalls[0];
 		expect(auditCall?.status).toBe("ok");
