@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-02
+
 ### Added
 
 - Added `Component.capturesViewportInput`. While a component that sets it has focus, `TuiAltScreen` sends viewport keys such as PageUp/PageDown to it instead of scrolling the transcript, as it already does for focused overlays. `SelectList`, `SettingsList`, and `Editor` with open autocomplete set it ([#7629](https://github.com/earendil-works/pi/issues/7629), based on [#7680](https://github.com/earendil-works/pi/pull/7680) by [@muyiyr](https://github.com/muyiyr))
@@ -16,6 +18,9 @@
 - Fixed `wrapTextWithAnsi()` starting the next line with a space when a styled word ended exactly at the wrap width, and strikethrough continuing into the right padding of wrapped lines ([#10925](https://github.com/earendil-works/pi/issues/10925))
 - Fixed `Markdown` styling, highlighting, and wrapping every block on each render. It now reuses the top-level blocks of its last render, so a streaming message renders only its changed last block, and a resize reuses highlighted code. Reused blocks are held weakly and dropped by `invalidate()`, which a theme change must call because `MarkdownTheme.highlightCode` results are reused until then ([#10971](https://github.com/earendil-works/pi/issues/10971))
 - Fixed `Text.setText()` with unchanged text dropping the wrapped lines, so renderers that set the same text on every update wrapped it again ([#10971](https://github.com/earendil-works/pi/issues/10971))
+- Fixed Orca terminals falling back to text for inline images. Orca is now recognized as supporting true color and hyperlinks, and Kitty images when it advertises `ORCA_IMAGE_PROTOCOL=kitty` ([#9329](https://github.com/earendil-works/pi/pull/9329) by [@XRX193](https://github.com/XRX193))
+- Fixed bare Markdown URLs swallowing following CJK punctuation and text; explicit Markdown links and angle autolinks are unchanged ([#10934](https://github.com/earendil-works/pi/pull/10934) by [@haoqixu](https://github.com/haoqixu))
+- Fixed Kitty-protocol F1–F12 shortcuts, including modified function keys, not being recognized, and F13+ and other functional keys inserting invisible private-use characters into the editor ([#11419](https://github.com/earendil-works/pi/issues/11419), [#11345](https://github.com/earendil-works/pi/issues/11345))
 
 ## [1.4.1] - 2026-10-27
 

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-02
+
 ### Breaking Changes
 
 - The main entry no longer re-exports TypeBox (`Type`, `Static`, `TSchema`), and `typebox` is no longer a dependency. `Tool.parameters` is any JSON Schema object (`Tool<TParameters extends object>`): `@earendil-works/pi-schema`'s builders, which also type the arguments through pi-schema's `Static`, TypeBox schemas, or plain objects. `validateToolCall()`/`validateToolArguments()` validate with pi-schema (`compile(schema, { coerce: true }).parse()`): every schema gets the same coercion, the superset of TypeBox's `Value.Convert` rules (which only applied to TypeBox-built schemas) and pi-ai's own, so plain JSON Schema tools (MCP tools) now also get, for example, `null` to `"null"` for a required string, `"3.5"` to 3 for an integer and a single value wrapped into an array. The error text lists pi-schema's messages (`- edits.0.oldText: missing`, `- limit: expected number, got string`) instead of TypeBox's. `StringEnum()` returns a pi-schema `Schema<T>` with the same JSON (`{ type: "string", enum }`). The model and compat schemas (`providers/model-schema`, `providers/compat-schema`) are built with pi-schema, with the same JSON Schema, and their types come from pi-schema's `Static`; `ProviderCompat` is exported. Migration:
@@ -40,6 +42,9 @@
 - Fixed GPT-5.4 and GPT-5.5 failing with `Missing namespace for function_call` after switching from another model that called tools. On the OpenAI and OpenCode providers they now declare their tools in the top-level tool list instead of loading them through `additional_tools` or tool search ([#11415](https://github.com/earendil-works/pi/issues/11415))
 - Fixed Bedrock requests failing when `strict: "prefer"` tools exceed Claude's strict tool limits, such as more than 16 optional parameters across all strict tools; requests now retry once with preferred tools non-strict while keeping `strict: "require"` tools strict, as the Anthropic provider already does ([#11416](https://github.com/earendil-works/pi/issues/11416))
 - Fixed OpenRouter's `~anthropic/claude-*-latest` aliases losing Claude's earlier thinking after each tool call. They used the Chat Completions API, where pi dropped the thinking signature, and OpenRouter then ignored the unsigned thinking. They now use the Anthropic Messages API with adaptive thinking, like the versioned Claude models ([#9534](https://github.com/earendil-works/pi/issues/9534))
+- Fixed OpenCode Zen and OpenCode Go requests using shared endpoints instead of their protocol-specific OpenAI, Anthropic, Google, and System One endpoints ([#11434](https://github.com/earendil-works/pi/pull/11434) by [@vimtor](https://github.com/vimtor))
+- Fixed Zhipu/Z.ai usage-limit errors (code `1308`) being treated as transient HTTP 429 errors, causing automatic retries that cannot succeed until the usage cap resets ([#11537](https://github.com/earendil-works/pi/issues/11537))
+- Fixed LiteLLM's `ContextWindowExceededError` not being recognized as context overflow ([#11492](https://github.com/earendil-works/pi/issues/11492))
 
 ## [1.4.1] - 2026-10-27
 
