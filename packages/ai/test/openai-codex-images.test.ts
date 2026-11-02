@@ -1,3 +1,4 @@
+import OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
 import { generateImages } from "../src/api/openai-codex-images.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
@@ -174,6 +175,27 @@ describe("OpenAI Codex images", () => {
 		expect(result).toMatchObject({
 			stopReason: "error",
 			errorMessage: "ChatGPT image generation timed out after 25ms",
+			output: [],
+		});
+		expect(fetch).toHaveBeenCalledOnce();
+	});
+
+	it("normalizes an SDK timeout before the image timeout signal fires", async () => {
+		const fetch = vi.fn<typeof globalThis.fetch>(
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.error(new OpenAI.APIConnectionTimeoutError());
+						},
+					}),
+					{ headers: { "content-type": "application/json" } },
+				),
+		);
+		const result = await generateImages(MODEL, CONTEXT, { apiKey: mockToken(), fetch, timeoutMs: 60_000 });
+		expect(result).toMatchObject({
+			stopReason: "error",
+			errorMessage: "ChatGPT image generation timed out after 60000ms",
 			output: [],
 		});
 		expect(fetch).toHaveBeenCalledOnce();

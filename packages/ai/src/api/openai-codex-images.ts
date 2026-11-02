@@ -115,7 +115,10 @@ export const generateImages: ImagesFunction = async (model, context, options) =>
 			await options?.onResponse?.({ status: error.status, headers: headersToRecord(error.headers) }, model);
 			output.responseId = error.headers.get("x-codex-imagegen-request-id") ?? undefined;
 		}
-		const timedOut = timeoutSignal?.aborted && !options?.signal?.aborted;
+		const timedOut =
+			timeoutMs > 0 &&
+			!options?.signal?.aborted &&
+			(timeoutSignal?.aborted || error instanceof OpenAI.APIConnectionTimeoutError);
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 		output.errorMessage = timedOut
 			? `ChatGPT image generation timed out after ${timeoutMs}ms`
