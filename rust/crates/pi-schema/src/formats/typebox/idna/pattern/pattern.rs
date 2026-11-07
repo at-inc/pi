@@ -4,7 +4,9 @@
 //! Rust strings hold Unicode scalar values only, so `RE_HIGH_SURROGATE` can never match, and a pattern without the
 //! `u` flag sees an astral character as one character where JavaScript sees two UTF-16 units: `RE_RULE_NOT_RESERVED_ACE`
 //! (`..` is two units in JavaScript) differs on a label whose first character is astral, which `RE_ASCII_LDH` rejects
-//! anyway. JavaScript's `.` is spelled `[^\n\r\u{2028}\u{2029}]`. The lookaround rules need `fancy_regex`.
+//! anyway. JavaScript's `.` is spelled `[^\n\r\u{2028}\u{2029}]`. The lookaround rules need `fancy_regex`. The
+//! `\p{...}` classes use the Rust Unicode tables (Unicode 16), while Node 24 uses Unicode 17: a character new in 17
+//! is not a letter, mark or digit here.
 
 // /*--------------------------------------------------------------------------
 //

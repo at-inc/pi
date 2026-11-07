@@ -2,6 +2,10 @@
 //! PORT-STATUS: ported
 //!
 //! `URL.canParse` is the `url` crate's WHATWG parser; it can differ from V8's where rust-url lags the URL Standard.
+//! Known: rust-url rejects hosts V8 accepts, namely invalid `xn--` labels (`http://xn--a/`) and hosts failing the IDNA
+//! bidi rule.
+//! rust-url rejects a reference with three or more leading slashes, which the URL Standard reads against the `http`
+//! base as `//` (its special authority ignore slashes state), so the reference is passed with two.
 
 // /*--------------------------------------------------------------------------
 //
@@ -48,6 +52,9 @@ pub fn is_iri_reference(value: &str) -> bool {
 	!INVALID_IRI_CHARS.is_match(value).unwrap_or(false)
 		&& !MALFORMED_SCHEME.is_match(value)
 		&& ::url::Url::parse("http://example.com")
-			.and_then(|base| base.join(value))
+			.and_then(|base| match value.trim_start_matches('/') {
+				rest if value.len() - rest.len() > 2 => base.join(&format!("//{rest}")),
+				_ => base.join(value),
+			})
 			.is_ok()
 }

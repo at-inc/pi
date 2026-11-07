@@ -177,8 +177,27 @@ pub fn indirect(slot: &Slot) -> Check {
 	let slot: Weak<RefCell<Option<Check>>> = Rc::downgrade(slot);
 	Rc::new(move |v| {
 		let check = slot.upgrade().and_then(|slot| slot.borrow().clone());
-		check.is_some_and(|check| check(v))
+		let key = Weak::as_ptr(&slot) as *const () as usize;
+		check.is_some_and(|check| reentering(key, v, || check(v)).unwrap_or(false))
 	})
+}
+
+thread_local! {
+	static ENTERED: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `f()` with the indirection `key` marked as checking `v`, or `None` when it already is: the check would recurse
+/// without end (a schema such as `{"$ref": "#"}`), where the TypeScript runs out of stack and throws a RangeError.
+/// The check fails instead of overflowing the stack.
+pub fn reentering<T>(key: usize, v: &Value, f: impl FnOnce() -> T) -> Option<T> {
+	let entry = (key, v as *const Value as usize);
+	if ENTERED.with(|entered| entered.borrow().contains(&entry)) {
+		return None;
+	}
+	ENTERED.with(|entered| entered.borrow_mut().push(entry));
+	let result = f();
+	ENTERED.with(|entered| entered.borrow_mut().pop());
+	Some(result)
 }
 
 /// `check` with `uri` pushed onto the dynamic scope while it runs (only for schemas with `$dynamicRef`).

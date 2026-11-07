@@ -7,16 +7,26 @@
 //!
 //! Rust-only: [`JsRegex`] stands in for the ECMAScript `RegExp`. It parses the ECMAScript pattern syntax (with and
 //! without the `u` flag, including the Annex B rules that apply without it), rejects what `new RegExp` rejects, and
-//! translates the pattern to `fancy_regex` syntax with JavaScript's meaning of `.`, `\d`, `\w`, `\s` and `\b`.
-//! Known gaps: patterns run on Unicode scalar values, so lone surrogates cannot occur and a non-`u` pattern sees an
-//! astral character as one character, not two UTF-16 units; a backreference to a group that did not participate
-//! fails instead of matching empty; `\p{...}` names are checked by shape and by the Rust Unicode tables, not by
-//! ECMAScript's exact list; case-insensitive matching uses Unicode simple case folding in both modes. Error messages
-//! follow V8's `Invalid regular expression: /source/flags: reason` form; some reasons are worded differently.
+//! translates the pattern to `fancy_regex` syntax with JavaScript's meaning of `.`, `\d`, `\w`, `\s`, `\b`, `^`/`$`
+//! with `m`, and backreferences (by number, empty when the group did not participate). Like V8 it never gives up
+//! on a slow match. Known gaps:
+//! - Patterns run on Unicode scalar values, so lone surrogates cannot occur and a non-`u` pattern sees an astral
+//!   character as one character, not two UTF-16 units.
+//! - A quantifier does not reset the groups inside it on each iteration, so a backreference can see the capture of
+//!   an earlier iteration: `^(?:(a)|b)+\1$` does not match `"ab"`.
+//! - `\p{...}` names are checked against ECMAScript's list (V8, Unicode 17) but match by the Rust Unicode tables
+//!   (Unicode 16); `Changes_When_NFKC_Casefolded` is not in them, so a pattern using it does not compile.
+//! - With `i`, `\P{...}` is the complement of the case-closed property, where JavaScript case-closes the complement:
+//!   `/^\P{Lu}$/ui` does not match `"A"`.
+//! - Case-insensitive matching uses Unicode simple case folding in both modes.
+//!
+//! Error messages follow V8's `Invalid regular expression: /source/flags: reason` form; a pattern the Rust engine
+//! cannot build reports the engine's reason.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use std::sync::LazyLock;
 
 use pi_host::{PiError, PiResult};
 
@@ -46,6 +56,9 @@ pub fn shared_regex_count() -> usize {
 	REGEXES.with(|regexes| regexes.borrow().len())
 }
 
+// Counted repetitions expand into the compiled program, so a bound such as `{1,100000}` needs room V8 never needs.
+const DELEGATE_SIZE_LIMIT: usize = 256 << 20;
+
 /// An ECMAScript regular expression (see the file header).
 #[derive(Debug)]
 pub struct JsRegex {
@@ -60,6 +73,7 @@ impl JsRegex {
 		let mut unicode = false;
 		let mut prefix = String::new();
 		let mut dot_all = false;
+		let mut multiline = false;
 		let mut seen = String::new();
 		for flag in flags.chars() {
 			if seen.contains(flag) || !"dgimsuy".contains(flag) {
@@ -72,25 +86,29 @@ impl JsRegex {
 			match flag {
 				'u' => unicode = true,
 				'i' => prefix.push('i'),
-				'm' => prefix.push('m'),
+				'm' => multiline = true,
 				's' => dot_all = true,
 				_ => {}
 			}
 		}
+		// V8 names the flags in its canonical order.
+		let ordered: String = "dgimsuy".chars().filter(|flag| seen.contains(*flag)).collect();
 		let fail = |reason: &str| {
 			PiError::named(
 				"SyntaxError",
-				format!("Invalid regular expression: /{source}/{flags}: {reason}"),
+				format!("Invalid regular expression: /{source}/{ordered}: {reason}"),
 			)
 		};
-		let translated = Translator::run(source, unicode, dot_all).map_err(|reason| fail(&reason))?;
+		let translated = Translator::run(source, unicode, dot_all, multiline).map_err(|reason| fail(&reason))?;
 		let pattern = if prefix.is_empty() {
 			translated
 		} else {
 			format!("(?{prefix}){translated}")
 		};
 		let regex = fancy_regex::RegexBuilder::new(&pattern)
-			.backtrack_limit(100_000_000)
+			// V8 never gives up on a match, however long it takes.
+			.backtrack_limit(usize::MAX)
+			.delegate_size_limit(DELEGATE_SIZE_LIMIT)
 			.build()
 			.map_err(|error| fail(&error.to_string()))?;
 		Ok(JsRegex {
@@ -161,6 +179,8 @@ const WORD_RANGES: &[(u32, u32)] = &[(0x30, 0x39), (0x41, 0x5a), (0x5f, 0x5f), (
 enum ClassEscape {
 	Ranges(&'static [(u32, u32)], bool),
 	Property(String, bool),
+	/// Script=Unknown: the unassigned and private-use code points.
+	UnknownScript(bool),
 }
 
 impl ClassEscape {
@@ -171,9 +191,31 @@ impl ClassEscape {
 			ClassEscape::Ranges(ranges, true) => format!("[^{}]", ranges_text(ranges)),
 			ClassEscape::Property(name, false) => format!("\\p{{{name}}}"),
 			ClassEscape::Property(name, true) => format!("\\P{{{name}}}"),
+			ClassEscape::UnknownScript(false) => "[\\p{Cn}\\p{Co}]".into(),
+			ClassEscape::UnknownScript(true) => "[^\\p{Cn}\\p{Co}]".into(),
 		}
 	}
 }
+
+// `\p{name}` (or `\P` when negated) for a name valid_property() accepted, in the terms of the Rust Unicode tables.
+fn property_escape(name: String, negated: bool) -> ClassEscape {
+	let value = name.rsplit('=').next().expect("rsplit yields at least one part");
+	match value {
+		// A Rust string holds no surrogates.
+		"Cs" | "Surrogate" => ClassEscape::Ranges(if negated { ALL_RANGES } else { &[] }, false),
+		"Unknown" | "Zzzz" => ClassEscape::UnknownScript(negated),
+		// Scripts new in Unicode 17, whose characters the Rust tables (Unicode 16) do not assign.
+		"Berf" | "Beria_Erfe" | "Sidt" | "Sidetic" | "Tayo" | "Tai_Yo" | "Tols" | "Tolong_Siki" => {
+			ClassEscape::Ranges(if negated { ALL_RANGES } else { &[] }, false)
+		}
+		_ => match general_category_alias(value) {
+			Some(category) => ClassEscape::Property(category.to_string(), negated),
+			None => ClassEscape::Property(name, negated),
+		},
+	}
+}
+
+const ALL_RANGES: &[(u32, u32)] = &[(0, 0x10ffff)];
 
 fn ranges_text(ranges: &[(u32, u32)]) -> String {
 	let mut out = String::new();
@@ -207,36 +249,46 @@ enum ClassAtom {
 	Escape(ClassEscape),
 }
 
+// V8's maximum string length (2^29 - 24 UTF-16 units): no repetition bound above it can make a difference.
+const MAX_STRING_LENGTH: u64 = 536_870_888;
+
 /// The parser of an ECMAScript pattern that writes its fancy_regex translation.
 struct Translator {
 	chars: Vec<char>,
 	pos: usize,
 	unicode: bool,
-	/// The number of capturing groups and their names, from a scan before parsing.
+	/// The number of capturing groups and the named ones with their numbers, from a scan before parsing.
 	groups: usize,
-	names: Vec<String>,
+	named: Vec<(String, usize)>,
 	dot_all: Vec<bool>,
+	multiline: Vec<bool>,
+	/// The names of the named groups parsed so far.
+	defined: Vec<String>,
 	out: String,
 }
 
-/// What a term was: an assertion that may not be quantified, a lookahead (quantifiable without `u`), or an atom.
+/// What a term was: an assertion that may not be quantified, a lookbehind (an assertion V8 reports differently), a
+/// lookahead (quantifiable without `u`), or an atom.
 enum Term {
 	Assertion,
+	Lookbehind,
 	Lookahead,
 	Atom,
 }
 
 impl Translator {
-	fn run(source: &str, unicode: bool, dot_all: bool) -> Result<String, String> {
+	fn run(source: &str, unicode: bool, dot_all: bool, multiline: bool) -> Result<String, String> {
 		let chars: Vec<char> = source.chars().collect();
-		let (groups, names) = scan_groups(&chars);
+		let (groups, named) = scan_groups(&chars);
 		let mut t = Translator {
 			chars,
 			pos: 0,
 			unicode,
 			groups,
-			names,
+			named,
 			dot_all: vec![dot_all],
+			multiline: vec![multiline],
+			defined: Vec::new(),
 			out: String::new(),
 		};
 		t.disjunction()?;
@@ -246,11 +298,6 @@ impl Translator {
 			} else {
 				"Unexpected character".into()
 			});
-		}
-		for name in &t.names {
-			if t.names.iter().filter(|n| *n == name).count() > 1 {
-				return Err("Duplicate capture group name".into());
-			}
 		}
 		Ok(t.out)
 	}
@@ -272,12 +319,20 @@ impl Translator {
 		}
 	}
 
+	// Each alternative sees only the names defined before the disjunction: a name may repeat in another alternative,
+	// since both groups can never participate in one match.
 	fn disjunction(&mut self) -> Result<(), String> {
-		self.alternative()?;
-		while self.eat('|') {
-			self.out.push('|');
+		let before = self.defined.len();
+		let mut added = Vec::new();
+		loop {
 			self.alternative()?;
+			added.extend(self.defined.drain(before..));
+			if !self.eat('|') {
+				break;
+			}
+			self.out.push('|');
 		}
+		self.defined.extend(added);
 		Ok(())
 	}
 
@@ -298,7 +353,13 @@ impl Translator {
 		match c {
 			'^' | '$' => {
 				self.pos += 1;
-				self.out.push(c);
+				// With `m`, JavaScript's lines also end at \r, U+2028 and U+2029, not only at \n.
+				let multiline = *self.multiline.last().expect("the multiline stack is never empty");
+				match (c, multiline) {
+					('^', true) => self.out.push_str("(?:^|(?<=[\\n\\r\\x{2028}\\x{2029}]))"),
+					(_, true) => self.out.push_str("(?:$|(?=[\\n\\r\\x{2028}\\x{2029}]))"),
+					_ => self.out.push(c),
+				}
 				Ok(Term::Assertion)
 			}
 			'(' => self.group(),
@@ -393,10 +454,18 @@ impl Translator {
 					if max.is_some_and(|max| max < min) {
 						return Err("numbers out of order in {} quantifier".into());
 					}
-					let text: String = self.chars[self.pos..self.pos + len].iter().collect();
 					self.pos += len - 1;
+					// No string is longer than V8's maximum, so a larger bound is no bound (and one beyond the
+					// regex crate's counts would not compile).
+					let text = match max.filter(|max| *max <= MAX_STRING_LENGTH) {
+						_ if min > MAX_STRING_LENGTH => String::new(),
+						Some(max) if max == min => format!("{{{min}}}"),
+						Some(max) => format!("{{{min},{max}}}"),
+						None => format!("{{{min},}}"),
+					};
 					(min, text)
 				}
+				None if self.unicode && !matches!(term, Term::Assertion) => return Err("Incomplete quantifier".into()),
 				None => return Ok(()),
 			},
 			_ => return Ok(()),
@@ -405,17 +474,30 @@ impl Translator {
 		let lazy = self.eat('?');
 		match term {
 			Term::Assertion => return Err("Nothing to repeat".into()),
+			Term::Lookbehind => return Err("Invalid quantifier".into()),
 			Term::Lookahead if self.unicode => return Err("Invalid quantifier".into()),
-			// A repeated assertion is the assertion once, or nothing when it may repeat zero times.
+			// A repeated assertion is the assertion once, or an optional one when it may repeat zero times (its
+			// groups stay, so later group numbers do not change).
 			Term::Lookahead => {
 				if min == 0 {
-					self.out.truncate(start);
+					let atom = self.out.split_off(start);
+					// fancy_regex does not repeat a lookaround: an alternation with the empty pattern is the same choice.
+					self.out.push_str(&if lazy {
+						format!("(?:|{atom})")
+					} else {
+						format!("(?:{atom}|)")
+					});
 				}
 				return Ok(());
 			}
 			Term::Atom => {}
 		}
 		let atom = self.out.split_off(start);
+		// A minimum no string can reach never matches; the atom stays for its group numbers.
+		if text.is_empty() {
+			self.out.push_str(&format!("{NOTHING}(?:{atom})"));
+			return Ok(());
+		}
 		self.out.push_str("(?:");
 		self.out.push_str(&atom);
 		self.out.push(')');
@@ -456,12 +538,17 @@ impl Translator {
 				self.out.push_str(if c == '=' { "(?<=" } else { "(?<!" });
 				self.disjunction()?;
 				self.close_group()?;
-				Ok(Term::Assertion)
+				Ok(Term::Lookbehind)
 			}
 			Some('<') => {
 				self.pos += 1;
 				let name = self.group_name()?;
-				self.out.push_str(&format!("(?P<{}>", rust_group_name(&name)));
+				if self.defined.contains(&name) {
+					return Err("Duplicate capture group name".into());
+				}
+				self.defined.push(name);
+				// A plain group: `\k<name>` becomes its number (see atom_escape).
+				self.out.push('(');
 				self.disjunction()?;
 				self.close_group()?;
 				Ok(Term::Atom)
@@ -479,7 +566,7 @@ impl Translator {
 			match self.peek() {
 				Some(c @ ('i' | 'm' | 's')) => {
 					if add.contains(c) || remove.contains(c) {
-						return Err("Repeated flag in modifiers".into());
+						return Err("Repeated flag in flag group".into());
 					}
 					if removing {
 						remove.push(c)
@@ -488,7 +575,8 @@ impl Translator {
 					}
 					self.pos += 1;
 				}
-				Some('-') if !removing => {
+				Some('-') if removing => return Err("Multiple dashes in flag group".into()),
+				Some('-') => {
 					removing = true;
 					self.pos += 1;
 				}
@@ -500,16 +588,14 @@ impl Translator {
 			}
 		}
 		if removing && remove.is_empty() && add.is_empty() {
-			return Err("Invalid group".into());
+			return Err("Invalid flag group".into());
 		}
 		if !removing && add.is_empty() {
 			return Err("Invalid group".into());
 		}
-		let mut flags = String::new();
-		for c in add.chars().filter(|c| *c != 's') {
-			flags.push(c);
-		}
-		let negative: String = remove.chars().filter(|c| *c != 's').collect();
+		let flags: String = add.chars().filter(|c| *c == 'i').collect();
+		let mut flags = flags;
+		let negative: String = remove.chars().filter(|c| *c == 'i').collect();
 		if !negative.is_empty() {
 			flags.push('-');
 			flags.push_str(&negative);
@@ -522,6 +608,14 @@ impl Translator {
 			*self.dot_all.last().expect("the dotAll stack is never empty")
 		};
 		self.dot_all.push(dot_all);
+		let multiline = if add.contains('m') {
+			true
+		} else if remove.contains('m') {
+			false
+		} else {
+			*self.multiline.last().expect("the multiline stack is never empty")
+		};
+		self.multiline.push(multiline);
 		if flags.is_empty() {
 			self.out.push_str("(?:");
 		} else {
@@ -530,6 +624,7 @@ impl Translator {
 		self.disjunction()?;
 		self.close_group()?;
 		self.dot_all.pop();
+		self.multiline.pop();
 		Ok(Term::Atom)
 	}
 
@@ -543,24 +638,7 @@ impl Translator {
 
 	// A group name after `(?<` or `\k<`, through the closing `>`.
 	fn group_name(&mut self) -> Result<String, String> {
-		let mut name = String::new();
-		loop {
-			match self.peek() {
-				Some('>') => {
-					self.pos += 1;
-					break;
-				}
-				Some(c) if is_name_char(c, name.is_empty()) => {
-					name.push(c);
-					self.pos += 1;
-				}
-				_ => return Err("Invalid capture group name".into()),
-			}
-		}
-		if name.is_empty() {
-			return Err("Invalid capture group name".into());
-		}
-		Ok(name)
+		read_group_name(&self.chars, &mut self.pos).ok_or_else(|| "Invalid capture group name".into())
 	}
 
 	fn atom_escape(&mut self) -> Result<Term, String> {
@@ -587,7 +665,7 @@ impl Translator {
 					self.pos += 1;
 				}
 				if n <= self.groups {
-					self.out.push_str(&format!("\\{n}"));
+					self.out.push_str(&backreference(n));
 					return Ok(Term::Atom);
 				}
 				if self.unicode {
@@ -598,24 +676,37 @@ impl Translator {
 				self.literal(value);
 				return Ok(Term::Atom);
 			}
-			'k' if self.unicode || !self.names.is_empty() => {
+			'k' if self.unicode || !self.named.is_empty() => {
 				self.pos += 1;
 				if !self.eat('<') {
 					return Err("Invalid named reference".into());
 				}
 				let name = self.group_name().map_err(|_| "Invalid named reference".to_string())?;
-				if !self.names.contains(&name) {
+				// By number, so a reference may precede its group; a name used in several alternatives refers to
+				// whichever group participated.
+				let numbers: Vec<String> = self
+					.named
+					.iter()
+					.filter(|(known, _)| *known == name)
+					.map(|(_, number)| backreference(*number))
+					.collect();
+				if numbers.is_empty() {
 					return Err("Invalid named capture referenced".into());
 				}
-				self.out.push_str(&format!("\\k<{}>", rust_group_name(&name)));
+				self.out.push_str(&format!("(?:{})", numbers.concat()));
 				return Ok(Term::Atom);
 			}
 			_ => {}
 		}
 		if let Some(escape) = self.class_escape()? {
-			self.out.push('[');
-			self.out.push_str(&escape.items());
-			self.out.push(']');
+			let items = escape.items();
+			if items.is_empty() {
+				self.out.push_str(NOTHING);
+			} else {
+				self.out.push('[');
+				self.out.push_str(&items);
+				self.out.push(']');
+			}
 			return Ok(Term::Atom);
 		}
 		let value = self.character_escape(false)?;
@@ -678,11 +769,7 @@ impl Translator {
 				if !valid_property(&name) {
 					return Err("Invalid property name".into());
 				}
-				let name = match name.rsplit('=').next().and_then(general_category_alias) {
-					Some(category) => category.to_string(),
-					None => name,
-				};
-				return Ok(Some(ClassEscape::Property(name, c == 'P')));
+				return Ok(Some(property_escape(name, c == 'P')));
 			}
 			_ => return Ok(None),
 		};
@@ -713,7 +800,7 @@ impl Translator {
 					return Ok(u32::from(other) % 32);
 				}
 				if self.unicode {
-					return Err("Invalid unicode escape".into());
+					return Err("Invalid Unicode escape".into());
 				}
 				// Annex B: "\c" not followed by a control letter is a backslash and a "c".
 				self.pos -= 1;
@@ -757,7 +844,7 @@ impl Translator {
 					}
 					return Err("Invalid escape".into());
 				}
-				if c == 'k' && !self.names.is_empty() {
+				if c == 'k' && !self.named.is_empty() {
 					return Err("Invalid named reference".into());
 				}
 				Ok(u32::from(c))
@@ -846,7 +933,7 @@ impl Translator {
 		}
 		match (empty || items.is_empty(), negated) {
 			// `[]` matches nothing and `[^]` any character.
-			(true, false) => self.out.push_str("(?!)"),
+			(true, false) => self.out.push_str(NOTHING),
 			(true, true) => self.out.push_str("(?s:.)"),
 			(false, false) => self.out.push_str(&format!("[{items}]")),
 			(false, true) => self.out.push_str(&format!("[^{items}]")),
@@ -868,6 +955,9 @@ impl Translator {
 			return Ok(ClassAtom::Char(0x08));
 		}
 		if !self.unicode && self.peek() == Some('k') {
+			if !self.named.is_empty() {
+				return Err("Invalid escape".into());
+			}
 			self.pos += 1;
 			return Ok(ClassAtom::Char(u32::from('k')));
 		}
@@ -882,7 +972,7 @@ impl Translator {
 		match char::from_u32(value) {
 			Some(c) if c.is_ascii_alphanumeric() || c == '_' || c == ' ' => self.out.push(c),
 			Some(_) => self.out.push_str(&format!("\\x{{{value:X}}}")),
-			None => self.out.push_str("(?!)"),
+			None => self.out.push_str(NOTHING),
 		}
 	}
 }
@@ -894,15 +984,24 @@ fn push_class_atom(items: &mut String, atom: &ClassAtom) {
 	}
 }
 
+// A backreference to group `n`: empty when the group did not participate, as in JavaScript (a conditional, so a
+// digit after it does not extend the number).
+fn backreference(n: usize) -> String {
+	format!("(?({n})\\{n}|)")
+}
+
+// A class that matches no character. Unlike `(?!)`, fancy_regex lets it be repeated.
+const NOTHING: &str = "[^\\x{0}-\\x{10FFFF}]";
+
 // JavaScript's `\b` and `\B`: boundaries between ASCII word characters and the rest.
 const WORD_BOUNDARY: &str = "(?:(?<=[0-9A-Za-z_])(?![0-9A-Za-z_])|(?<![0-9A-Za-z_])(?=[0-9A-Za-z_]))";
 const NOT_WORD_BOUNDARY: &str = "(?:(?<=[0-9A-Za-z_])(?=[0-9A-Za-z_])|(?<![0-9A-Za-z_])(?![0-9A-Za-z_]))";
 
-// The number of capturing groups and the names of the named ones, counted before parsing (a backreference may
+// The number of capturing groups and the named ones with their numbers, counted before parsing (a backreference may
 // precede its group).
-fn scan_groups(chars: &[char]) -> (usize, Vec<String>) {
+fn scan_groups(chars: &[char]) -> (usize, Vec<(String, usize)>) {
 	let mut groups = 0;
-	let mut names = Vec::new();
+	let mut named = Vec::new();
 	let mut i = 0;
 	let mut in_class = false;
 	while i < chars.len() {
@@ -915,69 +1014,705 @@ fn scan_groups(chars: &[char]) -> (usize, Vec<String>) {
 					groups += 1;
 				} else if chars.get(i + 2) == Some(&'<') && !matches!(chars.get(i + 3), Some('=') | Some('!')) {
 					groups += 1;
-					let mut name = String::new();
-					let mut j = i + 3;
-					while j < chars.len() && chars[j] != '>' {
-						name.push(chars[j]);
-						j += 1;
+					let mut end = i + 3;
+					if let Some(name) = read_group_name(chars, &mut end) {
+						named.push((name, groups));
 					}
-					names.push(name);
 				}
 			}
 			_ => {}
 		}
 		i += 1;
 	}
-	(groups, names)
+	(groups, named)
 }
 
-// IdentifierStart / IdentifierPart of a group name.
-fn is_name_char(c: char, first: bool) -> bool {
-	if c == '$' || c == '_' {
-		return true;
-	}
-	if first {
-		c.is_alphabetic()
-	} else {
-		c.is_alphanumeric() || c == '\u{200c}' || c == '\u{200d}'
-	}
-}
-
-// fancy_regex group names are ASCII words: other names are encoded.
-fn rust_group_name(name: &str) -> String {
-	if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !name.starts_with(|c: char| c.is_ascii_digit()) {
-		return name.to_string();
-	}
-	let mut out = String::from("g");
-	for c in name.chars() {
-		out.push_str(&format!("_{:x}", u32::from(c)));
-	}
-	out
-}
-
-// The shape ECMAScript allows in `\p{...}`, and a name the Rust Unicode tables know.
-fn valid_property(name: &str) -> bool {
-	let value = match name.split_once('=') {
-		Some((key, value)) => {
-			if general_category_alias(value).is_some() {
-				return matches!(key, "General_Category" | "gc");
+// The group name at `pos` through its closing `>` (consumed), with its `\u` escapes decoded, or `None` when it is not
+// a RegExpIdentifierName.
+fn read_group_name(chars: &[char], pos: &mut usize) -> Option<String> {
+	let mut name = String::new();
+	loop {
+		let c = *chars.get(*pos)?;
+		*pos += 1;
+		match c {
+			'>' => break,
+			'\\' => {
+				if chars.get(*pos) != Some(&'u') {
+					return None;
+				}
+				*pos += 1;
+				name.push(char::from_u32(name_escape(chars, pos)?)?);
 			}
-			if !matches!(
-				key,
-				"General_Category" | "gc" | "Script" | "sc" | "Script_Extensions" | "scx"
-			) {
-				return false;
-			}
-			value
+			c => name.push(c),
 		}
-		None if general_category_alias(name).is_some() => return true,
-		None => name,
-	};
-	if value.is_empty() || value.contains('=') || !value.starts_with(|c: char| c.is_ascii_uppercase()) {
-		return false;
 	}
-	::regex::Regex::new(&format!("\\p{{{name}}}")).is_ok()
+	ID_NAME.is_match(&name).then_some(name)
 }
+
+// RegExpIdentifierName: ID_Start, `$` or `_`, then ID_Continue, `$`, ZWNJ or ZWJ.
+static ID_NAME: LazyLock<regex::Regex> = LazyLock::new(|| {
+	regex::Regex::new(r"^[\p{ID_Start}$_][\p{ID_Continue}$\x{200C}\x{200D}]*$").expect("the pattern is valid")
+});
+
+// After `\u` in a group name (always with the `u` rules): `{hex}`, four hex digits, or a surrogate pair of two escapes.
+fn name_escape(chars: &[char], pos: &mut usize) -> Option<u32> {
+	let hex = |pos: &mut usize, n: usize| -> Option<u32> {
+		let mut value = 0;
+		for i in 0..n {
+			value = value * 16 + chars.get(*pos + i)?.to_digit(16)?;
+		}
+		*pos += n;
+		Some(value)
+	};
+	if chars.get(*pos) == Some(&'{') {
+		let mut value: u32 = 0;
+		let mut i = *pos + 1;
+		while let Some(d) = chars.get(i).and_then(|d| d.to_digit(16)) {
+			value = value.saturating_mul(16).saturating_add(d);
+			i += 1;
+		}
+		if i == *pos + 1 || chars.get(i) != Some(&'}') || value > 0x10ffff {
+			return None;
+		}
+		*pos = i + 1;
+		return Some(value);
+	}
+	let high = hex(pos, 4)?;
+	if (0xd800..=0xdbff).contains(&high) && chars.get(*pos) == Some(&'\\') && chars.get(*pos + 1) == Some(&'u') {
+		let mut after = *pos + 2;
+		if let Some(low) = hex(&mut after, 4).filter(|low| (0xdc00..=0xdfff).contains(low)) {
+			*pos = after;
+			return Some(0x10000 + ((high - 0xd800) << 10) + (low - 0xdc00));
+		}
+	}
+	Some(high)
+}
+
+// Whether ECMAScript allows the name in `\p{...}`: its exact names (case-sensitive, no loose matching), as V8 (Unicode
+// 17) accepts them.
+fn valid_property(name: &str) -> bool {
+	match name.split_once('=') {
+		Some(("General_Category" | "gc", value)) => GENERAL_CATEGORIES.contains(&value),
+		Some(("Script" | "sc" | "Script_Extensions" | "scx", value)) => SCRIPTS.contains(&value),
+		Some(_) => false,
+		None => LONE_PROPERTIES.contains(&name),
+	}
+}
+
+// The names allowed alone: binary properties and General_Category values with their aliases.
+const LONE_PROPERTIES: [&str; 179] = [
+	"AHex",
+	"ASCII",
+	"ASCII_Hex_Digit",
+	"Alpha",
+	"Alphabetic",
+	"Any",
+	"Assigned",
+	"Bidi_C",
+	"Bidi_Control",
+	"Bidi_M",
+	"Bidi_Mirrored",
+	"C",
+	"CI",
+	"CWCF",
+	"CWCM",
+	"CWKCF",
+	"CWL",
+	"CWT",
+	"CWU",
+	"Case_Ignorable",
+	"Cased",
+	"Cased_Letter",
+	"Cc",
+	"Cf",
+	"Changes_When_Casefolded",
+	"Changes_When_Casemapped",
+	"Changes_When_Lowercased",
+	"Changes_When_NFKC_Casefolded",
+	"Changes_When_Titlecased",
+	"Changes_When_Uppercased",
+	"Close_Punctuation",
+	"Cn",
+	"Co",
+	"Combining_Mark",
+	"Connector_Punctuation",
+	"Control",
+	"Cs",
+	"Currency_Symbol",
+	"DI",
+	"Dash",
+	"Dash_Punctuation",
+	"Decimal_Number",
+	"Default_Ignorable_Code_Point",
+	"Dep",
+	"Deprecated",
+	"Dia",
+	"Diacritic",
+	"EBase",
+	"EComp",
+	"EMod",
+	"EPres",
+	"Emoji",
+	"Emoji_Component",
+	"Emoji_Modifier",
+	"Emoji_Modifier_Base",
+	"Emoji_Presentation",
+	"Enclosing_Mark",
+	"Ext",
+	"ExtPict",
+	"Extended_Pictographic",
+	"Extender",
+	"Final_Punctuation",
+	"Format",
+	"Gr_Base",
+	"Gr_Ext",
+	"Grapheme_Base",
+	"Grapheme_Extend",
+	"Hex",
+	"Hex_Digit",
+	"IDC",
+	"IDS",
+	"IDSB",
+	"IDST",
+	"IDS_Binary_Operator",
+	"IDS_Trinary_Operator",
+	"ID_Continue",
+	"ID_Start",
+	"Ideo",
+	"Ideographic",
+	"Initial_Punctuation",
+	"Join_C",
+	"Join_Control",
+	"L",
+	"LC",
+	"LOE",
+	"Letter",
+	"Letter_Number",
+	"Line_Separator",
+	"Ll",
+	"Lm",
+	"Lo",
+	"Logical_Order_Exception",
+	"Lower",
+	"Lowercase",
+	"Lowercase_Letter",
+	"Lt",
+	"Lu",
+	"M",
+	"Mark",
+	"Math",
+	"Math_Symbol",
+	"Mc",
+	"Me",
+	"Mn",
+	"Modifier_Letter",
+	"Modifier_Symbol",
+	"N",
+	"NChar",
+	"Nd",
+	"Nl",
+	"No",
+	"Noncharacter_Code_Point",
+	"Nonspacing_Mark",
+	"Number",
+	"Open_Punctuation",
+	"Other",
+	"Other_Letter",
+	"Other_Number",
+	"Other_Punctuation",
+	"Other_Symbol",
+	"P",
+	"Paragraph_Separator",
+	"Pat_Syn",
+	"Pat_WS",
+	"Pattern_Syntax",
+	"Pattern_White_Space",
+	"Pc",
+	"Pd",
+	"Pe",
+	"Pf",
+	"Pi",
+	"Po",
+	"Private_Use",
+	"Ps",
+	"Punctuation",
+	"QMark",
+	"Quotation_Mark",
+	"RI",
+	"Radical",
+	"Regional_Indicator",
+	"S",
+	"SD",
+	"STerm",
+	"Sc",
+	"Sentence_Terminal",
+	"Separator",
+	"Sk",
+	"Sm",
+	"So",
+	"Soft_Dotted",
+	"Space_Separator",
+	"Spacing_Mark",
+	"Surrogate",
+	"Symbol",
+	"Term",
+	"Terminal_Punctuation",
+	"Titlecase_Letter",
+	"UIdeo",
+	"Unassigned",
+	"Unified_Ideograph",
+	"Upper",
+	"Uppercase",
+	"Uppercase_Letter",
+	"VS",
+	"Variation_Selector",
+	"WSpace",
+	"White_Space",
+	"XIDC",
+	"XIDS",
+	"XID_Continue",
+	"XID_Start",
+	"Z",
+	"Zl",
+	"Zp",
+	"Zs",
+	"cntrl",
+	"digit",
+	"punct",
+	"space",
+];
+
+// The General_Category values and aliases allowed after `General_Category=` or `gc=`.
+const GENERAL_CATEGORIES: [&str; 80] = [
+	"C",
+	"Cased_Letter",
+	"Cc",
+	"Cf",
+	"Close_Punctuation",
+	"Cn",
+	"Co",
+	"Combining_Mark",
+	"Connector_Punctuation",
+	"Control",
+	"Cs",
+	"Currency_Symbol",
+	"Dash_Punctuation",
+	"Decimal_Number",
+	"Enclosing_Mark",
+	"Final_Punctuation",
+	"Format",
+	"Initial_Punctuation",
+	"L",
+	"LC",
+	"Letter",
+	"Letter_Number",
+	"Line_Separator",
+	"Ll",
+	"Lm",
+	"Lo",
+	"Lowercase_Letter",
+	"Lt",
+	"Lu",
+	"M",
+	"Mark",
+	"Math_Symbol",
+	"Mc",
+	"Me",
+	"Mn",
+	"Modifier_Letter",
+	"Modifier_Symbol",
+	"N",
+	"Nd",
+	"Nl",
+	"No",
+	"Nonspacing_Mark",
+	"Number",
+	"Open_Punctuation",
+	"Other",
+	"Other_Letter",
+	"Other_Number",
+	"Other_Punctuation",
+	"Other_Symbol",
+	"P",
+	"Paragraph_Separator",
+	"Pc",
+	"Pd",
+	"Pe",
+	"Pf",
+	"Pi",
+	"Po",
+	"Private_Use",
+	"Ps",
+	"Punctuation",
+	"S",
+	"Sc",
+	"Separator",
+	"Sk",
+	"Sm",
+	"So",
+	"Space_Separator",
+	"Spacing_Mark",
+	"Surrogate",
+	"Symbol",
+	"Titlecase_Letter",
+	"Unassigned",
+	"Uppercase_Letter",
+	"Z",
+	"Zl",
+	"Zp",
+	"Zs",
+	"cntrl",
+	"digit",
+	"punct",
+];
+
+// The Script values and aliases allowed after `Script=`, `sc=`, `Script_Extensions=` or `scx=`.
+const SCRIPTS: [&str; 344] = [
+	"Adlam",
+	"Adlm",
+	"Aghb",
+	"Ahom",
+	"Anatolian_Hieroglyphs",
+	"Arab",
+	"Arabic",
+	"Armenian",
+	"Armi",
+	"Armn",
+	"Avestan",
+	"Avst",
+	"Bali",
+	"Balinese",
+	"Bamu",
+	"Bamum",
+	"Bass",
+	"Bassa_Vah",
+	"Batak",
+	"Batk",
+	"Beng",
+	"Bengali",
+	"Berf",
+	"Beria_Erfe",
+	"Bhaiksuki",
+	"Bhks",
+	"Bopo",
+	"Bopomofo",
+	"Brah",
+	"Brahmi",
+	"Brai",
+	"Braille",
+	"Bugi",
+	"Buginese",
+	"Buhd",
+	"Buhid",
+	"Cakm",
+	"Canadian_Aboriginal",
+	"Cans",
+	"Cari",
+	"Carian",
+	"Caucasian_Albanian",
+	"Chakma",
+	"Cham",
+	"Cher",
+	"Cherokee",
+	"Chorasmian",
+	"Chrs",
+	"Common",
+	"Copt",
+	"Coptic",
+	"Cpmn",
+	"Cprt",
+	"Cuneiform",
+	"Cypriot",
+	"Cypro_Minoan",
+	"Cyrillic",
+	"Cyrl",
+	"Deseret",
+	"Deva",
+	"Devanagari",
+	"Diak",
+	"Dives_Akuru",
+	"Dogr",
+	"Dogra",
+	"Dsrt",
+	"Dupl",
+	"Duployan",
+	"Egyp",
+	"Egyptian_Hieroglyphs",
+	"Elba",
+	"Elbasan",
+	"Elym",
+	"Elymaic",
+	"Ethi",
+	"Ethiopic",
+	"Gara",
+	"Garay",
+	"Geor",
+	"Georgian",
+	"Glag",
+	"Glagolitic",
+	"Gong",
+	"Gonm",
+	"Goth",
+	"Gothic",
+	"Gran",
+	"Grantha",
+	"Greek",
+	"Grek",
+	"Gujarati",
+	"Gujr",
+	"Gukh",
+	"Gunjala_Gondi",
+	"Gurmukhi",
+	"Guru",
+	"Gurung_Khema",
+	"Han",
+	"Hang",
+	"Hangul",
+	"Hani",
+	"Hanifi_Rohingya",
+	"Hano",
+	"Hanunoo",
+	"Hatr",
+	"Hatran",
+	"Hebr",
+	"Hebrew",
+	"Hira",
+	"Hiragana",
+	"Hluw",
+	"Hmng",
+	"Hmnp",
+	"Hung",
+	"Imperial_Aramaic",
+	"Inherited",
+	"Inscriptional_Pahlavi",
+	"Inscriptional_Parthian",
+	"Ital",
+	"Java",
+	"Javanese",
+	"Kaithi",
+	"Kali",
+	"Kana",
+	"Kannada",
+	"Katakana",
+	"Kawi",
+	"Kayah_Li",
+	"Khar",
+	"Kharoshthi",
+	"Khitan_Small_Script",
+	"Khmer",
+	"Khmr",
+	"Khoj",
+	"Khojki",
+	"Khudawadi",
+	"Kirat_Rai",
+	"Kits",
+	"Knda",
+	"Krai",
+	"Kthi",
+	"Lana",
+	"Lao",
+	"Laoo",
+	"Latin",
+	"Latn",
+	"Lepc",
+	"Lepcha",
+	"Limb",
+	"Limbu",
+	"Lina",
+	"Linb",
+	"Linear_A",
+	"Linear_B",
+	"Lisu",
+	"Lyci",
+	"Lycian",
+	"Lydi",
+	"Lydian",
+	"Mahajani",
+	"Mahj",
+	"Maka",
+	"Makasar",
+	"Malayalam",
+	"Mand",
+	"Mandaic",
+	"Mani",
+	"Manichaean",
+	"Marc",
+	"Marchen",
+	"Masaram_Gondi",
+	"Medefaidrin",
+	"Medf",
+	"Meetei_Mayek",
+	"Mend",
+	"Mende_Kikakui",
+	"Merc",
+	"Mero",
+	"Meroitic_Cursive",
+	"Meroitic_Hieroglyphs",
+	"Miao",
+	"Mlym",
+	"Modi",
+	"Mong",
+	"Mongolian",
+	"Mro",
+	"Mroo",
+	"Mtei",
+	"Mult",
+	"Multani",
+	"Myanmar",
+	"Mymr",
+	"Nabataean",
+	"Nag_Mundari",
+	"Nagm",
+	"Nand",
+	"Nandinagari",
+	"Narb",
+	"Nbat",
+	"New_Tai_Lue",
+	"Newa",
+	"Nko",
+	"Nkoo",
+	"Nshu",
+	"Nushu",
+	"Nyiakeng_Puachue_Hmong",
+	"Ogam",
+	"Ogham",
+	"Ol_Chiki",
+	"Ol_Onal",
+	"Olck",
+	"Old_Hungarian",
+	"Old_Italic",
+	"Old_North_Arabian",
+	"Old_Permic",
+	"Old_Persian",
+	"Old_Sogdian",
+	"Old_South_Arabian",
+	"Old_Turkic",
+	"Old_Uyghur",
+	"Onao",
+	"Oriya",
+	"Orkh",
+	"Orya",
+	"Osage",
+	"Osge",
+	"Osma",
+	"Osmanya",
+	"Ougr",
+	"Pahawh_Hmong",
+	"Palm",
+	"Palmyrene",
+	"Pau_Cin_Hau",
+	"Pauc",
+	"Perm",
+	"Phag",
+	"Phags_Pa",
+	"Phli",
+	"Phlp",
+	"Phnx",
+	"Phoenician",
+	"Plrd",
+	"Prti",
+	"Psalter_Pahlavi",
+	"Qaac",
+	"Qaai",
+	"Rejang",
+	"Rjng",
+	"Rohg",
+	"Runic",
+	"Runr",
+	"Samaritan",
+	"Samr",
+	"Sarb",
+	"Saur",
+	"Saurashtra",
+	"Sgnw",
+	"Sharada",
+	"Shavian",
+	"Shaw",
+	"Shrd",
+	"Sidd",
+	"Siddham",
+	"Sidetic",
+	"Sidt",
+	"SignWriting",
+	"Sind",
+	"Sinh",
+	"Sinhala",
+	"Sogd",
+	"Sogdian",
+	"Sogo",
+	"Sora",
+	"Sora_Sompeng",
+	"Soyo",
+	"Soyombo",
+	"Sund",
+	"Sundanese",
+	"Sunu",
+	"Sunuwar",
+	"Sylo",
+	"Syloti_Nagri",
+	"Syrc",
+	"Syriac",
+	"Tagalog",
+	"Tagb",
+	"Tagbanwa",
+	"Tai_Le",
+	"Tai_Tham",
+	"Tai_Viet",
+	"Tai_Yo",
+	"Takr",
+	"Takri",
+	"Tale",
+	"Talu",
+	"Tamil",
+	"Taml",
+	"Tang",
+	"Tangsa",
+	"Tangut",
+	"Tavt",
+	"Tayo",
+	"Telu",
+	"Telugu",
+	"Tfng",
+	"Tglg",
+	"Thaa",
+	"Thaana",
+	"Thai",
+	"Tibetan",
+	"Tibt",
+	"Tifinagh",
+	"Tirh",
+	"Tirhuta",
+	"Tnsa",
+	"Todhri",
+	"Todr",
+	"Tolong_Siki",
+	"Tols",
+	"Toto",
+	"Tulu_Tigalari",
+	"Tutg",
+	"Ugar",
+	"Ugaritic",
+	"Unknown",
+	"Vai",
+	"Vaii",
+	"Vith",
+	"Vithkuqi",
+	"Wancho",
+	"Wara",
+	"Warang_Citi",
+	"Wcho",
+	"Xpeo",
+	"Xsux",
+	"Yezi",
+	"Yezidi",
+	"Yi",
+	"Yiii",
+	"Zanabazar_Square",
+	"Zanb",
+	"Zinh",
+	"Zyyy",
+	"Zzzz",
+];
 
 // The General_Category value aliases that start in lowercase (`\p{digit}` is `\p{Nd}`), as the Rust category they name.
 fn general_category_alias(value: &str) -> Option<&'static str> {

@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use pi_host::{PiError, PiResult};
 
-use crate::types::{CompileOptions, Draft, Node, SchemaObject, UnresolvedRefs};
+use crate::types::{CompileOptions, Draft, Node, SchemaObject, UnresolvedRefs, js_order};
 
 /// A schema and the base URI its references resolve against.
 #[derive(Clone, Debug)]
@@ -107,7 +107,7 @@ impl Resolver {
 		self.indexed.set(true);
 		if let Some(schemas) = &self.options.schemas {
 			let mut registry = self.registry.borrow_mut();
-			for uri in schemas.keys() {
+			for (uri, _) in js_order(schemas.iter()) {
 				registry.insert(document_of(&resolve_uri(uri, DEFAULT_BASE)).to_string(), uri.clone());
 			}
 		}

@@ -1,9 +1,11 @@
 //! Port of `packages/schema/src/formats/typebox/idn_email.ts`.
 //! PORT-STATUS: ported
 //!
-//! The pattern needs lookbehind, so it runs on `fancy_regex`. Its JavaScript `.` (with `u`: any code point but a
-//! line terminator) is spelled `[^\n\r\u{2028}\u{2029}]`; `\u{0080}-\u{10FFFF}` excludes the surrogates, which a Rust
-//! string cannot hold.
+//! The JavaScript `.` of the pattern (with `u`: any code point but a line terminator) is spelled
+//! `[^\n\r\u{2028}\u{2029}]`; `\u{0080}-\u{10FFFF}` excludes the surrogates, which a Rust string cannot hold. A domain
+//! label's `(?:[\p{L}\p{N}-]{0,62})(?<!-)` is spelled `(?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?`, the same labels without
+//! a lookbehind, so the pattern runs on the `regex` crate, which has no backtracking limit to give up at on a long
+//! value.
 
 // /*--------------------------------------------------------------------------
 //
@@ -34,16 +36,16 @@
 // ---------------------------------------------------------------------------*/
 use std::sync::LazyLock;
 
-use fancy_regex::Regex;
+use ::regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
 static IDN_EMAIL: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r#"(?i)^(?:[A-Za-z0-9!#$%&'*+/=?^_`{|}~\x{0080}-\x{10FFFF}-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~\x{0080}-\x{10FFFF}-]+)*|"(?:[^"\\]|\\[^\n\r\x{2028}\x{2029}])*")@[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})(?<!-)(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})(?<!-))*$"#)
+	Regex::new(r#"(?i)^(?:[A-Za-z0-9!#$%&'*+/=?^_`{|}~\x{0080}-\x{10FFFF}-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~\x{0080}-\x{10FFFF}-]+)*|"(?:[^"\\]|\\[^\n\r\x{2028}\x{2029}])*")@[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?)*$"#)
 		.expect("IDN_EMAIL is a valid pattern")
 });
 
 /// Returns true if the value is an IdnEmail
 /// @specification https://datatracker.ietf.org/doc/html/rfc4952
 pub fn is_idn_email(value: &str) -> bool {
-	IDN_EMAIL.is_match(&value.nfc().collect::<String>()).unwrap_or(false)
+	IDN_EMAIL.is_match(&value.nfc().collect::<String>())
 }

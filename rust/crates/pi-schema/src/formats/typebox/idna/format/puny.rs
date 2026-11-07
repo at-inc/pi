@@ -2,9 +2,9 @@
 //! PORT-STATUS: ported
 //!
 //! The arithmetic stays in `f64` like the JavaScript numbers it ports. `Decode` walks UTF-16 code units as
-//! `charCodeAt` does. `String.fromCodePoint` of a surrogate code point yields a lone surrogate in JavaScript; Rust
-//! cannot hold one, so it becomes U+FFFD, which every caller treats the same way (neither is a letter, mark, digit
-//! or RTL character).
+//! `charCodeAt` does. `String.fromCodePoint` builds UTF-16, where two decoded surrogate code points in a row form
+//! one astral character; the Rust port does the same, and a lone surrogate, which Rust cannot hold, becomes U+FFFD,
+//! which every caller treats the same way (neither is a letter, mark, digit or RTL character).
 
 // /*--------------------------------------------------------------------------
 //
@@ -145,18 +145,20 @@ pub fn decode(value: &str) -> PiResult<String> {
 		output.insert(i as usize, n);
 		i += 1.0;
 	}
-	output
-		.into_iter()
-		.map(|code_point| {
-			if code_point.fract() != 0.0 || !(0.0..=1_114_111.0).contains(&code_point) {
-				return Err(PiError::named(
-					"RangeError",
-					format!("Invalid code point {}", number_to_string(code_point)),
-				));
-			}
-			Ok(char::from_u32(code_point as u32).unwrap_or(char::REPLACEMENT_CHARACTER))
-		})
-		.collect()
+	let mut units = Vec::with_capacity(output.len());
+	for code_point in output {
+		if code_point.fract() != 0.0 || !(0.0..=1_114_111.0).contains(&code_point) {
+			return Err(PiError::named(
+				"RangeError",
+				format!("Invalid code point {}", number_to_string(code_point)),
+			));
+		}
+		match char::from_u32(code_point as u32) {
+			Some(c) => units.extend_from_slice(c.encode_utf16(&mut [0; 2])),
+			None => units.push(code_point as u16),
+		}
+	}
+	Ok(String::from_utf16_lossy(&units))
 }
 // ------------------------------------------------------------------
 // DigitToChar

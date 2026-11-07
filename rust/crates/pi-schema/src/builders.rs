@@ -6,12 +6,15 @@
 //!
 //! Rust port: the static types the TypeScript builders carry (`Schema<T>`'s brand, `Static<S>`, `StaticObject<P>`) have
 //! no runtime effect and are dropped; `Schema` is a JSON value. The option bags (`Annotations`, `LengthBounds`,
-//! `NumberBounds` and each builder's extra keys) are JSON objects spread into the schema in the caller's key order, as
-//! `{ type: "string", ...options }` spreads them; a value that is not an object spreads nothing (as `undefined` and
-//! `null` do). `Properties` is a list of named `Property` values.
+//! `NumberBounds` and each builder's extra keys) are JSON objects spread into the schema as
+//! `{ type: "string", ...options }` spreads them, so the schema's keys come in JavaScript order (array-index keys
+//! first, ascending); a value that is not an object spreads nothing (as `undefined` and `null` do). `Properties` is a
+//! list of named `Property` values, iterated in the same order `Object.entries` gives.
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
+
+use crate::types::js_order;
 
 /// A JSON Schema object (the TypeScript type also carries the type of its valid values).
 pub type Schema = Value;
@@ -163,14 +166,14 @@ pub fn obj<K: Into<String>>(properties: impl IntoIterator<Item = (K, Property)>,
 		.collect();
 	let mut props = Map::new();
 	let mut required = Vec::new();
-	for (name, property) in properties {
+	for (name, property) in js_order(properties.iter()) {
 		match property {
 			Property::Optional(optional) => {
-				props.insert(name, optional.schema);
+				props.insert(name.clone(), optional.schema.clone());
 			}
 			Property::Schema(schema) => {
-				props.insert(name.clone(), schema);
-				required.push(Value::String(name));
+				props.insert(name.clone(), schema.clone());
+				required.push(Value::String(name.clone()));
 			}
 		}
 	}
@@ -190,12 +193,17 @@ fn with_type(name: &str, options: Value) -> Schema {
 	object(Map::from_iter([("type".to_string(), Value::from(name))]), options)
 }
 
-/// `{ ...entries, ...options }`.
+/// `{ ...entries, ...options }`, in JavaScript key order.
 fn object(mut entries: Map<String, Value>, options: Value) -> Schema {
 	if let Value::Object(options) = options {
 		for (key, value) in options {
 			entries.insert(key, value);
 		}
 	}
-	Value::Object(entries)
+	Value::Object(
+		js_order(entries.iter())
+			.into_iter()
+			.map(|(key, value)| (key.clone(), value.clone()))
+			.collect(),
+	)
 }

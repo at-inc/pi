@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
-use pi_host::PiResult;
 use pi_host::js::{json_stringify, number_to_string, utf16_len};
+use pi_host::{PiError, PiResult};
 use serde_json::{Map, Value};
 
 use crate::annotations::new_annotations;
@@ -21,8 +21,9 @@ use crate::checks::{
 	js_string, never, strict_equals, type_check_of, unique_check,
 };
 use crate::compiler::Compiler;
+use crate::resolver::Resolved;
 use crate::shared::shared_regex;
-use crate::types::{Draft, Node, SchemaObject, ValidationError};
+use crate::types::{Draft, Node, SchemaObject, ValidationError, js_order};
 
 type Memo = HashMap<usize, HashMap<usize, (String, Vec<ValidationError>)>>;
 
@@ -33,6 +34,8 @@ pub struct Explainer {
 	/// The errors of `$ref` targets for object values, within one errors() call: a recursive union explains each branch
 	/// to pick the one to blame, and every branch would explain the same children again, exponentially in the depth.
 	memo: RefCell<Option<Memo>>,
+	/// The `$ref` targets walk_ref() is walking, with the address of their value (see walk_ref).
+	entered: RefCell<Vec<(usize, usize)>>,
 }
 
 impl Explainer {
@@ -43,6 +46,7 @@ impl Explainer {
 			c: compiler,
 			schema,
 			memo: RefCell::new(None),
+			entered: RefCell::new(Vec::new()),
 		})
 	}
 
@@ -187,6 +191,22 @@ impl Explainer {
 			push(out, path, "$ref", format!("unresolved reference {reference}"));
 			return Ok(());
 		}
+		// The same target for the same value inside itself recurses without end (a schema such as `{"$ref": "#"}`),
+		// where the TypeScript runs out of stack.
+		let Some(object) = target.node.as_object() else {
+			return self.walk(&target.node, &target.base, v, path, out);
+		};
+		let entry = (object.id(), v as *const Value as usize);
+		if self.entered.borrow().contains(&entry) {
+			return Err(PiError::named("RangeError", "Maximum call stack size exceeded"));
+		}
+		self.entered.borrow_mut().push(entry);
+		let walked = self.walk_target(&target, v, path, out);
+		self.entered.borrow_mut().pop();
+		walked
+	}
+
+	fn walk_target(&self, target: &Resolved, v: &Value, path: &str, out: &mut Vec<ValidationError>) -> PiResult<()> {
 		let Some(node) = target.node.as_object().filter(|_| v.is_object() || v.is_array()) else {
 			return self.walk(&target.node, &target.base, v, path, out);
 		};
@@ -282,7 +302,7 @@ impl Explainer {
 			.object("patternProperties")
 			.map(|p| p.entries().collect())
 			.unwrap_or_default();
-		for (k, x) in o {
+		for (k, x) in js_order(o.iter()) {
 			let mut matched = properties.has(k);
 			for (p, s) in &patterns {
 				if shared_regex(p)?.test(k) {
@@ -337,7 +357,8 @@ impl Explainer {
 				dependencies.insert(k.clone(), d.clone());
 			}
 		}
-		for (k, d) in &dependencies {
+		// One object in the TypeScript (`{...dependentRequired, ...dependencies}`), so in JavaScript key order.
+		for (k, d) in js_order(dependencies.iter()) {
 			if !o.contains_key(k) {
 				continue;
 			}
@@ -595,7 +616,7 @@ impl Explainer {
 			&& let Some(unevaluated) = unevaluated_properties
 			&& !a.all_props
 		{
-			for (k, x) in o {
+			for (k, x) in js_order(o.iter()) {
 				if a.props.as_ref().is_some_and(|props| props.contains(k)) {
 					continue;
 				}

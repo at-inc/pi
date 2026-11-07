@@ -10,7 +10,7 @@ use std::rc::{Rc, Weak};
 use indexmap::IndexSet;
 use serde_json::Value;
 
-use crate::checks::is_object;
+use crate::checks::{is_object, reentering};
 use crate::shared::JsRegex;
 use crate::types::Check;
 
@@ -80,7 +80,8 @@ pub fn indirect_annotating(slot: &AnnotatingSlot) -> AnnotatingCheck {
 	let slot: Weak<RefCell<Option<AnnotatingCheck>>> = Rc::downgrade(slot);
 	Rc::new(move |v, a| {
 		let check = slot.upgrade().and_then(|slot| slot.borrow().clone());
-		check.is_some_and(|check| check(v, a))
+		let key = Weak::as_ptr(&slot) as *const () as usize;
+		check.is_some_and(|check| reentering(key, v, || check(v, a)).unwrap_or(false))
 	})
 }
 

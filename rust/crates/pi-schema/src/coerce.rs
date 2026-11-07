@@ -789,9 +789,7 @@ fn string_to_number(s: &str) -> f64 {
 			if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
 				return f64::NAN;
 			}
-			return digits.chars().fold(0.0, |n, c| {
-				n * f64::from(radix) + f64::from(c.to_digit(radix).unwrap_or(0))
-			});
+			return radix_integer(digits, radix);
 		}
 	}
 	let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
@@ -806,6 +804,24 @@ fn string_to_number(s: &str) -> f64 {
 		return f64::NAN;
 	}
 	s.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+// An integer in base 2, 8 or 16, rounded to the nearest double once, as JavaScript does (an f64 fold would round at
+// every digit). The digits past 128 bits only matter as a sticky bit below the rounding position.
+fn radix_integer(digits: &str, radix: u32) -> f64 {
+	let width = radix.trailing_zeros();
+	let mut mantissa: u128 = 0;
+	let mut exponent: i32 = 0;
+	let mut sticky = false;
+	for digit in digits.chars().filter_map(|c| c.to_digit(radix)) {
+		if mantissa >> (128 - width) == 0 {
+			mantissa = (mantissa << width) | u128::from(digit);
+		} else {
+			exponent = exponent.saturating_add(width as i32);
+			sticky |= digit != 0;
+		}
+	}
+	(mantissa | u128::from(sticky)) as f64 * 2f64.powi(exponent)
 }
 
 /// StrUnsignedDecimalLiteral: `1`, `1.`, `.5`, `1.5e-3`.

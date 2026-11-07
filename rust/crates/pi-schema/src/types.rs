@@ -3,7 +3,8 @@
 //!
 //! Public types: the schema accepted by compile(), its options, and the errors a failed value produces.
 //!
-//! Rust-only addition: [`Node`] and [`SchemaObject`]. The TypeScript compiler keys its caches, resource index and memo
+//! Rust-only addition: [`Node`], [`SchemaObject`] and [`js_order`] (JSON objects iterate in JavaScript's key order).
+//! [`Node`] and [`SchemaObject`]: the TypeScript compiler keys its caches, resource index and memo
 //! tables by schema object identity (`Map<object, ...>`). A `serde_json::Value` tree has no stable identity that a
 //! closure built from it may keep, so compile() first copies the schema into a [`Node`] tree whose objects sit behind
 //! an `Rc`; the identity of a schema object is the address of its `Rc`. `ParseResult<T>` and `Static<T>` lose their
@@ -127,11 +128,14 @@ impl Node {
 		match value {
 			Value::Null => Node::Null,
 			Value::Bool(b) => Node::Bool(*b),
-			Value::Number(n) => Node::Number(n.clone()),
+			Value::Number(n) => Node::Number(js_number(n)),
 			Value::String(s) => Node::String(Rc::from(s.as_str())),
 			Value::Array(items) => Node::Array(items.iter().map(Node::from_value).collect()),
 			Value::Object(map) => Node::Object(SchemaObject(Rc::new(
-				map.iter().map(|(k, v)| (k.clone(), Node::from_value(v))).collect(),
+				js_order(map.iter())
+					.into_iter()
+					.map(|(k, v)| (k.clone(), Node::from_value(v)))
+					.collect(),
 			))),
 		}
 	}
@@ -261,5 +265,33 @@ impl SchemaObject {
 	/// A new schema object of `entries`.
 	pub fn from_entries(entries: IndexMap<String, Node>) -> SchemaObject {
 		SchemaObject(Rc::new(entries))
+	}
+}
+
+/// `entries` of an object in JavaScript's property order: array-index keys (`"0"`, `"1"`, ...) first in ascending
+/// order, then the other keys in insertion order. Schemas and values are JSON objects, whose `Object.keys` order this is.
+pub fn js_order<'a, T>(entries: impl Iterator<Item = (&'a String, T)>) -> Vec<(&'a String, T)> {
+	let mut entries: Vec<_> = entries.collect();
+	if entries.iter().any(|(key, _)| array_index(key).is_some()) {
+		entries.sort_by_key(|(key, _)| array_index(key).map_or((1, 0), |index| (0, index)));
+	}
+	entries
+}
+
+// A canonical array index: "0", or digits without a leading zero below 2^32 - 1.
+fn array_index(key: &str) -> Option<u32> {
+	if key != "0" && (key.starts_with('0') || key.is_empty() || !key.bytes().all(|c| c.is_ascii_digit())) {
+		return None;
+	}
+	key.parse::<u32>().ok().filter(|index| *index != u32::MAX)
+}
+
+// A JSON number as JavaScript reads it: an integer beyond 2^53 becomes the nearest double.
+fn js_number(n: &serde_json::Number) -> serde_json::Number {
+	match (n.as_i64(), n.as_u64(), n.as_f64()) {
+		(Some(i), _, _) if i.unsigned_abs() <= 1 << 53 => n.clone(),
+		(_, Some(u), _) if u <= 1 << 53 => n.clone(),
+		(_, _, Some(x)) if n.is_i64() || n.is_u64() => serde_json::Number::from_f64(x).unwrap_or_else(|| n.clone()),
+		_ => n.clone(),
 	}
 }
