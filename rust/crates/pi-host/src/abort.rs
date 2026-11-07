@@ -122,29 +122,27 @@ impl AbortSignal {
 		signal
 	}
 
-	/// `AbortSignal.timeout(ms)` with Node's `validateUint32(delay)` check: a `RangeError` (`ERR_OUT_OF_RANGE`) for a
-	/// delay that is not an integer in `0..=4294967295`, else [`AbortSignal::timeout`].
+	/// `AbortSignal.timeout(ms)` with Node's `validateUint32(delay)`: a `RangeError` with code `ERR_OUT_OF_RANGE` when
+	/// `ms` is not an integer in `0..=4294967295`.
 	pub fn try_timeout(ms: f64) -> PiResult<AbortSignal> {
 		let range = if ms.fract() != 0.0 || !ms.is_finite() {
 			"an integer"
 		} else if !(0.0..=4_294_967_295.0).contains(&ms) {
 			">= 0 && <= 4294967295"
 		} else {
-			return Ok(Self::timeout(ms));
+			return Ok(AbortSignal::timeout(ms));
 		};
-		let text = crate::js::number_to_string(ms);
-		let received = if ms.fract() == 0.0 && ms.abs() > 4_294_967_296.0 {
-			let start = usize::from(text.starts_with('-'));
-			let mut end = text.len();
+		let mut received = crate::js::number_to_string(ms);
+		if ms.fract() == 0.0 && ms.abs() > 4_294_967_296.0 {
+			let start = usize::from(received.starts_with('-'));
+			let mut end = received.len();
 			let mut grouped = String::new();
 			while end >= start + 4 {
-				grouped = format!("_{}{grouped}", &text[end - 3..end]);
+				grouped = format!("_{}{grouped}", &received[end - 3..end]);
 				end -= 3;
 			}
-			format!("{}{grouped}", &text[..end])
-		} else {
-			text
-		};
+			received = format!("{}{grouped}", &received[..end]);
+		}
 		Err(PiError::named(
 			"RangeError",
 			format!("The value of \"delay\" is out of range. It must be {range}. Received {received}"),
@@ -239,28 +237,6 @@ mod tests {
 	use std::cell::Cell;
 
 	#[test]
-	fn try_timeout_rejects_delays_node_rejects() {
-		let message = |ms: f64| {
-			AbortSignal::try_timeout(ms)
-				.err()
-				.map(|error| (error.name, error.message))
-		};
-		let range = |rule: &str, received: &str| {
-			Some((
-				"RangeError".to_string(),
-				format!("The value of \"delay\" is out of range. It must be {rule}. Received {received}"),
-			))
-		};
-		assert_eq!(message(1.5), range("an integer", "1.5"));
-		assert_eq!(message(f64::NAN), range("an integer", "NaN"));
-		assert_eq!(message(f64::NEG_INFINITY), range("an integer", "-Infinity"));
-		assert_eq!(message(-1.0), range(">= 0 && <= 4294967295", "-1"));
-		assert_eq!(message(4_294_967_296.0), range(">= 0 && <= 4294967295", "4294967296"));
-		assert_eq!(message(-1e10), range(">= 0 && <= 4294967295", "-10_000_000_000"));
-		assert_eq!(message(1e21), range(">= 0 && <= 4294967295", "1e_+21"));
-	}
-
-	#[test]
 	fn listeners_fire_once_and_any_follows_inputs() {
 		let a = AbortController::new();
 		let b = AbortController::new();
@@ -282,5 +258,37 @@ mod tests {
 		controller.abort_with(PiError::new("stop"));
 		let reason = futures::executor::block_on(signal.aborted_future());
 		assert_eq!(reason.message, "stop");
+	}
+
+	#[test]
+	fn try_timeout_rejects_delays_node_rejects() {
+		let message = |ms: f64| {
+			AbortSignal::try_timeout(ms)
+				.err()
+				.map(|error| (error.name, error.message))
+		};
+		let range = |rule: &str, received: &str| {
+			Some((
+				"RangeError".to_string(),
+				format!("The value of \"delay\" is out of range. It must be {rule}. Received {received}"),
+			))
+		};
+		assert_eq!(message(25.7), range("an integer", "25.7"));
+		assert_eq!(message(1.5), range("an integer", "1.5"));
+		assert_eq!(message(f64::NAN), range("an integer", "NaN"));
+		assert_eq!(message(f64::NEG_INFINITY), range("an integer", "-Infinity"));
+		assert_eq!(message(-1.0), range(">= 0 && <= 4294967295", "-1"));
+		assert_eq!(message(-1e10), range(">= 0 && <= 4294967295", "-10_000_000_000"));
+		assert_eq!(message(f64::INFINITY), range("an integer", "Infinity"));
+		assert_eq!(message(4_294_967_296.0), range(">= 0 && <= 4294967295", "4294967296"));
+		assert_eq!(
+			message(4_294_967_297.0),
+			range(">= 0 && <= 4294967295", "4_294_967_297")
+		);
+		assert_eq!(message(1e21), range(">= 0 && <= 4294967295", "1e_+21"));
+		assert_eq!(
+			AbortSignal::try_timeout(0.5).unwrap_err().data,
+			Some(serde_json::json!({ "code": "ERR_OUT_OF_RANGE" }))
+		);
 	}
 }

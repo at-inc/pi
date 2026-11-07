@@ -4,11 +4,28 @@
 //! `models.rs` functions. Not ported: `sends max to the Codex Responses API for %s`, which captures the request
 //! through the openai-codex-responses API (wave-3, `w3-openai-responses`).
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use base64::Engine;
+use pi_ai::api::openai_codex_responses::stream_simple as stream_simple_openai_codex_responses;
 use pi_ai::models::{clamp_thinking_level, get_supported_thinking_levels};
 use pi_ai::providers::all::get_builtin_model;
-use pi_ai::providers::model_schema::{ModelThinkingLevel, ThinkingLevelMap};
-use pi_ai::types::{BaseModel, Model, ModelCost, ModelInputModality};
+use pi_ai::providers::model_schema::{ModelThinkingLevel, ThinkingLevel, ThinkingLevelMap};
+use pi_ai::types::{
+	BaseModel, Context, Model, ModelCost, ModelInputModality, OnPayload, ProviderRequestOptions, SimpleStreamOptions,
+	StreamOptions,
+};
+use pi_ai::utils::transcript::normalize_context;
+use pi_host::{LocalBoxFuture, PiError, PiResult};
 use serde_json::{Value, json};
+
+fn mock_token() -> String {
+	let payload = base64::engine::general_purpose::STANDARD.encode(pi_host::js::json_stringify(
+		&json!({ "https://api.openai.com/auth": { "chatgpt_account_id": "acc_test" } }),
+	));
+	format!("aaa.{payload}.bbb")
+}
 
 /// `expect(actual).toMatchObject(expected)` for JSON values; numbers compare as `f64`, like JS numbers.
 fn assert_match_object(actual: &Value, expected: &Value) {
@@ -97,5 +114,61 @@ mod max_thinking_level {
 			[Off, Minimal, Low, Medium, High, Max]
 		);
 		assert_eq!(clamp_thinking_level(&model, Xhigh), Max);
+	}
+
+	#[test]
+	fn sends_max_to_the_codex_responses_api() {
+		for model_id in [
+			"gpt-5.6-sol",
+			"gpt-6-astra",
+			"gpt-6-sol",
+			"gpt-6-luna",
+			"gpt-6.1-sol",
+			"gpt-6.1-terra",
+		] {
+			pi_host::testing::run(|_host| async move {
+				let model = get_builtin_model("openai-codex", model_id).expect("model is defined");
+				let context = normalize_context(&Context {
+					system_prompt: Some("You are a helpful assistant.".into()),
+					messages: vec![
+						serde_json::from_value(
+							json!({ "role": "user", "content": "Hello", "timestamp": pi_host::now_ms() }),
+						)
+						.unwrap(),
+					],
+					tools: None,
+				});
+				let payload: Rc<RefCell<Option<Value>>> = Rc::default();
+				let captured = payload.clone();
+				let on_payload: OnPayload = Rc::new(
+					move |request: Value, _model: &Model| -> LocalBoxFuture<'static, PiResult<Option<Value>>> {
+						*captured.borrow_mut() = Some(request);
+						Box::pin(async { Err(PiError::new("payload captured")) })
+					},
+				);
+
+				let options = SimpleStreamOptions {
+					base: StreamOptions {
+						base: ProviderRequestOptions {
+							api_key: Some(mock_token()),
+							on_payload: Some(on_payload),
+							..ProviderRequestOptions::default()
+						},
+						..StreamOptions::default()
+					},
+					reasoning: Some(ThinkingLevel::Max),
+					..SimpleStreamOptions::default()
+				};
+				stream_simple_openai_codex_responses(&model, &context, Some(options))
+					.unwrap()
+					.result()
+					.await;
+
+				assert_match_object(
+					payload.borrow().as_ref().expect("payload was captured"),
+					&json!({ "reasoning": { "effort": "max", "summary": "auto" } }),
+				);
+			});
+		}
 	}
 }

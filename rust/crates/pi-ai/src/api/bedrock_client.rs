@@ -259,10 +259,18 @@ static SHAPES: LazyLock<HashMap<&'static str, Shape>> = LazyLock::new(|| {
 			}
 			let name = words.next().expect("a model line starts with a shape name");
 			let union = words.next() == Some("union");
-			current = Some((name, Shape { union, members: Vec::new() }));
+			current = Some((
+				name,
+				Shape {
+					union,
+					members: Vec::new(),
+				},
+			));
 		}
 		let (_, shape) = current.as_mut().expect("the model starts with a shape");
-		shape.members.extend(words.map(|word| word.split_once(':').expect("a member is name:type")));
+		shape
+			.members
+			.extend(words.map(|word| word.split_once(':').expect("a member is name:type")));
 	}
 	if let Some((name, shape)) = current {
 		shapes.insert(name, shape);
@@ -303,7 +311,9 @@ fn ty(name: &'static str) -> Ty {
 }
 
 fn shape(name: &str) -> &'static Shape {
-	SHAPES.get(name).expect("the client names only shapes the model defines")
+	SHAPES
+		.get(name)
+		.expect("the client names only shapes the model defines")
 }
 
 fn is_primitive(ty: Ty) -> bool {
@@ -345,7 +355,11 @@ fn write_value(out: &mut Vec<u8>, ty: Ty, value: &Value) {
 			Ty::List(item_ty) => write_list(out, Some(item_ty), items),
 			Ty::Document => write_list(out, None, items),
 			Ty::Map(value_ty) => {
-				let indexed = items.iter().enumerate().map(|(index, item)| (index.to_string(), item.clone())).collect();
+				let indexed = items
+					.iter()
+					.enumerate()
+					.map(|(index, item)| (index.to_string(), item.clone()))
+					.collect();
 				write_map(out, Some(value_ty), &indexed);
 			}
 			_ => write_ascii(out, &json_stringify(value)),
@@ -353,9 +367,10 @@ fn write_value(out: &mut Vec<u8>, ty: Ty, value: &Value) {
 		// Blobs hold base64 text in the Rust port (see the file header), written as the SDK writes the bytes.
 		Value::String(text) if matches!(ty, Ty::Blob) => write_ascii_quoted(out, text),
 		Value::String(text) => write_json_string(out, text),
-		Value::Number(number) => {
-			write_ascii(out, &number_to_string(number.as_f64().expect("a JSON number reads as f64")))
-		}
+		Value::Number(number) => write_ascii(
+			out,
+			&number_to_string(number.as_f64().expect("a JSON number reads as f64")),
+		),
 		Value::Bool(flag) => out.extend_from_slice(if *flag { b"true" } else { b"false" }),
 	}
 }
@@ -439,8 +454,11 @@ fn write_list(out: &mut Vec<u8>, item_ty: Option<&'static str>, items: &[Value])
 fn write_map(out: &mut Vec<u8>, value_ty: Option<&'static str>, entries: &Map<String, Value>) {
 	let value_ty = value_ty.map(ty);
 	if value_ty.is_some_and(is_primitive) {
-		let kept: Map<String, Value> =
-			entries.iter().filter(|(_, item)| !item.is_null()).map(|(key, item)| (key.clone(), item.clone())).collect();
+		let kept: Map<String, Value> = entries
+			.iter()
+			.filter(|(_, item)| !item.is_null())
+			.map(|(key, item)| (key.clone(), item.clone()))
+			.collect();
 		out.extend_from_slice(json_stringify(&kept).as_bytes());
 		return;
 	}
@@ -554,12 +572,20 @@ fn read_value(value_ty: Ty, value: Value) -> PiResult<Value> {
 	match (value_ty, value) {
 		(Ty::Shape(shape), Value::Object(record)) => read_struct(shape, record),
 		(Ty::Shape(shape), Value::Array(items)) => {
-			let record = items.into_iter().enumerate().map(|(index, item)| (index.to_string(), item)).collect();
+			let record = items
+				.into_iter()
+				.enumerate()
+				.map(|(index, item)| (index.to_string(), item))
+				.collect();
 			read_struct(shape, record)
 		}
 		(Ty::List(item_ty), Value::Array(items)) => {
 			let item_ty = ty(item_ty);
-			items.into_iter().map(|item| read_value(item_ty, item)).collect::<PiResult<Vec<_>>>().map(Value::Array)
+			items
+				.into_iter()
+				.map(|item| read_value(item_ty, item))
+				.collect::<PiResult<Vec<_>>>()
+				.map(Value::Array)
 		}
 		(Ty::Map(value_ty), Value::Object(entries)) => {
 			let value_ty = ty(value_ty);
@@ -607,7 +633,9 @@ fn read_struct(shape: &Shape, record: Map<String, Value>) -> PiResult<Value> {
 /// Node's `Buffer` base64 decoder: lenient about non-canonical trailing bits.
 const BASE64_DECODER: GeneralPurpose = GeneralPurpose::new(
 	&base64::alphabet::STANDARD,
-	GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true).with_decode_padding_mode(DecodePaddingMode::Indifferent),
+	GeneralPurposeConfig::new()
+		.with_decode_allow_trailing_bits(true)
+		.with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
 
 /// `fromBase64(input)` of `@smithy/util-base64` (Node).
@@ -647,13 +675,18 @@ fn parse_ini(ini_data: &str) -> PiResult<IniData> {
 	let mut current_section: Option<String> = None;
 	let mut current_sub_section: Option<String> = None;
 	for ini_line in ini_data.split('\n').map(|line| line.strip_suffix('\r').unwrap_or(line)) {
-		let uncommented = COMMENT.find(ini_line).map_or(ini_line, |found| &ini_line[..found.start()]);
+		let uncommented = COMMENT
+			.find(ini_line)
+			.map_or(ini_line, |found| &ini_line[..found.start()]);
 		let trimmed_line = js_trim(uncommented);
 		if trimmed_line.len() >= 2 && trimmed_line.starts_with('[') && trimmed_line.ends_with(']') {
 			current_section = None;
 			current_sub_section = None;
 			let section_name = &trimmed_line[1..trimmed_line.len() - 1];
-			match PREFIX_KEY.captures(section_name).filter(|captures| captures[2] == captures[4]) {
+			match PREFIX_KEY
+				.captures(section_name)
+				.filter(|captures| captures[2] == captures[4])
+			{
 				Some(captures) => {
 					if INI_SECTION_TYPES.contains(&&captures[1]) {
 						current_section = Some(format!("{}.{}", &captures[1], &captures[3]));
@@ -704,7 +737,11 @@ fn get_config_data(data: IniData) -> IniData {
 		if !INI_SECTION_TYPES.contains(&prefix) {
 			continue;
 		}
-		let updated_key = if prefix == "profile" { name.to_string() } else { key.clone() };
+		let updated_key = if prefix == "profile" {
+			name.to_string()
+		} else {
+			key.clone()
+		};
 		config.insert(updated_key, value);
 	}
 	config
@@ -745,17 +782,29 @@ impl SharedConfigFiles {
 	async fn load(profile: Option<&str>) -> Self {
 		let home_dir = get_home_dir();
 		let resolve = |path: String| match path.strip_prefix("~/") {
-			Some(rest) => std::path::Path::new(&home_dir).join(rest).to_string_lossy().into_owned(),
+			Some(rest) => std::path::Path::new(&home_dir)
+				.join(rest)
+				.to_string_lossy()
+				.into_owned(),
 			None => path,
 		};
-		let default_path =
-			|file: &str| std::path::Path::new(&home_dir).join(".aws").join(file).to_string_lossy().into_owned();
-		let config_path =
-			pi_host::env("AWS_CONFIG_FILE").filter(|path| !path.is_empty()).unwrap_or_else(|| default_path("config"));
+		let default_path = |file: &str| {
+			std::path::Path::new(&home_dir)
+				.join(".aws")
+				.join(file)
+				.to_string_lossy()
+				.into_owned()
+		};
+		let config_path = pi_host::env("AWS_CONFIG_FILE")
+			.filter(|path| !path.is_empty())
+			.unwrap_or_else(|| default_path("config"));
 		let credentials_path = pi_host::env("AWS_SHARED_CREDENTIALS_FILE")
 			.filter(|path| !path.is_empty())
 			.unwrap_or_else(|| default_path("credentials"));
-		let config_file = read_ini(&resolve(config_path)).await.map(get_config_data).unwrap_or_default();
+		let config_file = read_ini(&resolve(config_path))
+			.await
+			.map(get_config_data)
+			.unwrap_or_default();
 		let credentials_file = read_ini(&resolve(credentials_path)).await.unwrap_or_default();
 		let profile = profile
 			.filter(|profile| !profile.is_empty())
@@ -787,9 +836,11 @@ impl SharedConfigFiles {
 			return Some(Setting::Env(env_key.to_string(), value));
 		}
 		let profile = self.profile_settings(preferred);
-		config_keys
-			.iter()
-			.find_map(|key| profile.get(*key).map(|value| Setting::Config(key.to_string(), value.clone())))
+		config_keys.iter().find_map(|key| {
+			profile
+				.get(*key)
+				.map(|value| Setting::Config(key.to_string(), value.clone()))
+		})
 	}
 
 	/// A boolean setting (`booleanSelector`), `false` when unset.
@@ -819,7 +870,11 @@ impl SharedConfigFiles {
 			}
 			return Ok(parsed);
 		}
-		let Some(value) = self.profile_settings(PreferredFile::Config).get("max_attempts").cloned() else {
+		let Some(value) = self
+			.profile_settings(PreferredFile::Config)
+			.get("max_attempts")
+			.cloned()
+		else {
 			return Ok(3.0);
 		};
 		let parsed = js_parse_int(&value);
@@ -991,7 +1046,9 @@ fn partition(region: &str) -> &'static Partition {
 		.find(|partition| !partition.global_region.is_empty() && partition.global_region == region)
 		.or_else(|| {
 			PARTITIONS.iter().find(|partition| {
-				Regex::new(&format!("(?-u){}", partition.region_regex)).expect("valid regex").is_match(region)
+				Regex::new(&format!("(?-u){}", partition.region_regex))
+					.expect("valid regex")
+					.is_match(region)
 			})
 		})
 		.unwrap_or(&PARTITIONS[0])
@@ -1001,15 +1058,24 @@ fn partition(region: &str) -> &'static Partition {
 fn resolve_endpoint(endpoint: Option<&str>, region: &str, use_fips: bool, use_dual_stack: bool) -> PiResult<Url> {
 	if let Some(endpoint) = endpoint {
 		if use_fips {
-			return Err(PiError::new("Invalid Configuration: FIPS and custom endpoint are not supported"));
+			return Err(PiError::new(
+				"Invalid Configuration: FIPS and custom endpoint are not supported",
+			));
 		}
 		if use_dual_stack {
-			return Err(PiError::new("Invalid Configuration: Dualstack and custom endpoint are not supported"));
+			return Err(PiError::new(
+				"Invalid Configuration: Dualstack and custom endpoint are not supported",
+			));
 		}
 		// `parseUrl` keeps protocol, host, port and path; the rule set parses the rebuilt string again.
 		let parsed = Url::parse(endpoint).map_err(|_| PiError::type_error("Invalid URL"))?;
 		let port = parsed.port().map(|port| format!(":{port}")).unwrap_or_default();
-		let rebuilt = format!("{}://{}{port}{}", parsed.scheme(), parsed.host_str().unwrap_or(""), parsed.path());
+		let rebuilt = format!(
+			"{}://{}{port}{}",
+			parsed.scheme(),
+			parsed.host_str().unwrap_or(""),
+			parsed.path()
+		);
 		return Url::parse(&rebuilt).map_err(|_| PiError::type_error("Invalid URL"));
 	}
 	let partition = partition(region);
@@ -1044,7 +1110,10 @@ enum Identity {
 const AUTH_SCHEMES: [&str; 2] = ["sigv4", "httpBearerAuth"];
 
 /// `defaultProvider(init)()`: environment variables (unless a profile is set), then the profile's static keys.
-fn default_credentials(files: &SharedConfigFiles, profile_set: bool) -> PiResult<(AwsCredentialIdentity, &'static str)> {
+fn default_credentials(
+	files: &SharedConfigFiles,
+	profile_set: bool,
+) -> PiResult<(AwsCredentialIdentity, &'static str)> {
 	if !profile_set {
 		let access_key_id = pi_host::env("AWS_ACCESS_KEY_ID").filter(|value| !value.is_empty());
 		let secret_access_key = pi_host::env("AWS_SECRET_ACCESS_KEY").filter(|value| !value.is_empty());
@@ -1082,7 +1151,15 @@ fn default_credentials(files: &SharedConfigFiles, profile_set: bool) -> PiResult
 		Some("web identity")
 	} else if has("credential_process") {
 		Some("credential process")
-	} else if ["sso_start_url", "sso_account_id", "sso_session", "sso_region", "sso_role_name"].iter().any(|key| has(key))
+	} else if [
+		"sso_start_url",
+		"sso_account_id",
+		"sso_session",
+		"sso_region",
+		"sso_role_name",
+	]
+	.iter()
+	.any(|key| has(key))
 	{
 		Some("SSO")
 	} else if has("login_session") {
@@ -1110,15 +1187,26 @@ fn escape_user_agent(name: &str, version: Option<&str>) -> String {
 		LazyLock::new(|| Regex::new(r"[^!$%&'*+\-.^_`|~A-Za-z0-9]").expect("valid regex"));
 	static VALUE_ESCAPE: LazyLock<Regex> =
 		LazyLock::new(|| Regex::new(r"[^!$%&'*+\-.^_`|~A-Za-z0-9#]").expect("valid regex"));
-	let name = name.split('/').map(|part| NAME_ESCAPE.replace_all(part, "-")).collect::<Vec<_>>().join("/");
+	let name = name
+		.split('/')
+		.map(|part| NAME_ESCAPE.replace_all(part, "-"))
+		.collect::<Vec<_>>()
+		.join("/");
 	let version = version.map(|version| VALUE_ESCAPE.replace_all(version, "-").into_owned());
 	let (prefix, ua_name) = match name.split_once('/') {
 		Some((prefix, rest)) => (prefix.to_string(), rest.to_string()),
 		None => (String::new(), name.clone()),
 	};
-	let ua_name = if prefix == "api" { ua_name.to_lowercase() } else { ua_name };
+	let ua_name = if prefix == "api" {
+		ua_name.to_lowercase()
+	} else {
+		ua_name
+	};
 	let mut out = String::new();
-	let items = [Some(prefix), Some(ua_name), version].into_iter().flatten().filter(|item| !item.is_empty());
+	let items = [Some(prefix), Some(ua_name), version]
+		.into_iter()
+		.flatten()
+		.filter(|item| !item.is_empty());
 	for (index, item) in items.enumerate() {
 		out = match index {
 			0 => item,
@@ -1158,8 +1246,10 @@ fn user_agent_headers(
 	if let Some(app_id) = app_id {
 		sections.push((format!("app/{app_id}"), None));
 	}
-	let mut default_user_agent: Vec<String> =
-		sections.iter().map(|(name, version)| escape_user_agent(name, version.as_deref())).collect();
+	let mut default_user_agent: Vec<String> = sections
+		.iter()
+		.map(|(name, version)| escape_user_agent(name, version.as_deref()))
+		.collect();
 	let mut encoded_features = String::new();
 	for feature in features {
 		if encoded_features.len() + feature.len() + 1 > 1024 {
@@ -1179,7 +1269,12 @@ fn user_agent_headers(
 		.iter()
 		.map(|(name, version)| escape_user_agent(name, version.as_deref()))
 		.collect();
-	let user_agent = default_user_agent.iter().chain(&custom).cloned().collect::<Vec<_>>().join(" ");
+	let user_agent = default_user_agent
+		.iter()
+		.chain(&custom)
+		.cloned()
+		.collect::<Vec<_>>()
+		.join(" ");
 	let x_amz_user_agent = default_user_agent
 		.iter()
 		.filter(|section| section.starts_with("aws-sdk-"))
@@ -1199,21 +1294,33 @@ fn crc32(bytes: &[u8]) -> u32 {
 	static TABLE: LazyLock<[u32; 256]> = LazyLock::new(|| {
 		let mut table = [0u32; 256];
 		for (index, entry) in (0u32..).zip(table.iter_mut()) {
-			*entry = (0..8).fold(index, |value, _| if value & 1 == 1 { 0xEDB8_8320 ^ (value >> 1) } else { value >> 1 });
+			*entry = (0..8).fold(index, |value, _| {
+				if value & 1 == 1 {
+					0xEDB8_8320 ^ (value >> 1)
+				} else {
+					value >> 1
+				}
+			});
 		}
 		table
 	});
-	!bytes.iter().fold(!0u32, |crc, byte| TABLE[usize::from((crc as u8) ^ byte)] ^ (crc >> 8))
+	!bytes
+		.iter()
+		.fold(!0u32, |crc, byte| TABLE[usize::from((crc as u8) ^ byte)] ^ (crc >> 8))
 }
 
 /// `splitMessage(message)`: the length and checksum checks of one framed message.
 fn split_message(message: &[u8]) -> PiResult<()> {
 	if message.len() < 16 {
-		return Err(PiError::new("Provided message too short to accommodate event stream message overhead"));
+		return Err(PiError::new(
+			"Provided message too short to accommodate event stream message overhead",
+		));
 	}
 	let read_u32 = |offset: usize| u32::from_be_bytes(message[offset..offset + 4].try_into().expect("four bytes"));
 	if read_u32(0) as usize != message.len() {
-		return Err(PiError::new("Reported message length does not match received message length"));
+		return Err(PiError::new(
+			"Reported message length does not match received message length",
+		));
 	}
 	let expected_prelude_checksum = read_u32(8);
 	let prelude_checksum = crc32(&message[..8]);
@@ -1247,7 +1354,10 @@ impl MessageReader {
 			if self.buffer.len() >= 4 {
 				let size = u32::from_be_bytes(self.buffer[..4].try_into().expect("four bytes")) as usize;
 				if size < 4 {
-					return Err(PiError::named("RangeError", "Offset is outside the bounds of the DataView"));
+					return Err(PiError::named(
+						"RangeError",
+						"Offset is outside the bounds of the DataView",
+					));
 				}
 				if self.buffer.len() >= size {
 					let bytes: Vec<u8> = self.buffer.drain(..size).collect();
@@ -1301,7 +1411,11 @@ fn unmarshal_message(message: &Message) -> PiResult<Option<Value>> {
 		"error" => {
 			let error_message = message_header(message, ":error-message")?;
 			let code = message_header(message, ":error-code")?;
-			let error_message = if error_message.is_empty() { "UnknownError".into() } else { error_message };
+			let error_message = if error_message.is_empty() {
+				"UnknownError".into()
+			} else {
+				error_message
+			};
 			Err(PiError::named(code, error_message))
 		}
 		"exception" => {
@@ -1313,7 +1427,8 @@ fn unmarshal_message(message: &Message) -> PiResult<Option<Value>> {
 		}
 		"event" => {
 			let event_type = message_header(message, ":event-type")?;
-			Ok(read_event_member(&event_type, payload)?.map(|(_, value)| Value::Object(Map::from_iter([(event_type, value)]))))
+			Ok(read_event_member(&event_type, payload)?
+				.map(|(_, value)| Value::Object(Map::from_iter([(event_type, value)]))))
 		}
 		_ => Err(PiError::new(format!(
 			"Unrecognizable event type: {}",
@@ -1325,10 +1440,18 @@ fn unmarshal_message(message: &Message) -> PiResult<Option<Value>> {
 /// `EventStreamSerde.readEventMember` for a member of `ConverseStreamOutput`: its shape name and value, `None` for a
 /// member this SDK version does not know. Error members become the exception's own properties.
 fn read_event_member(member: &str, payload: &[u8]) -> PiResult<Option<(&'static str, Value)>> {
-	let Some(&(_, shape_name)) = shape("ConverseStreamOutput").members.iter().find(|(name, _)| *name == member) else {
+	let Some(&(_, shape_name)) = shape("ConverseStreamOutput")
+		.members
+		.iter()
+		.find(|(name, _)| *name == member)
+	else {
 		return Ok(None);
 	};
-	let data = if payload.is_empty() { Value::Object(Map::new()) } else { read_json(ty(shape_name), payload)? };
+	let data = if payload.is_empty() {
+		Value::Object(Map::new())
+	} else {
+		read_json(ty(shape_name), payload)?
+	};
 	let Some(fault) = error_fault(shape_name) else {
 		return Ok(Some((shape_name, data)));
 	};
@@ -1336,7 +1459,11 @@ fn read_event_member(member: &str, payload: &[u8]) -> PiResult<Option<(&'static 
 		Value::Object(data) => data,
 		_ => Map::new(),
 	};
-	let message = data.get("message").or_else(|| data.get("Message")).cloned().unwrap_or_else(|| "Unknown".into());
+	let message = data
+		.get("message")
+		.or_else(|| data.get("Message"))
+		.cloned()
+		.unwrap_or_else(|| "Unknown".into());
 	let mut exception = Map::new();
 	exception.insert("$fault".into(), fault.into());
 	exception.insert("message".into(), message);
@@ -1346,19 +1473,26 @@ fn read_event_member(member: &str, payload: &[u8]) -> PiResult<Option<(&'static 
 
 /// The `error` trait of an error shape.
 fn error_fault(shape_name: &str) -> Option<&'static str> {
-	ERROR_SHAPES.iter().find(|(name, _)| *name == shape_name).map(|(_, fault)| *fault)
+	ERROR_SHAPES
+		.iter()
+		.find(|(name, _)| *name == shape_name)
+		.map(|(_, fault)| *fault)
 }
 
 /// A modeled exception (an instance of a `BedrockRuntimeServiceException` subclass) from its properties.
 fn service_exception(name: &str, properties: &Value) -> PiError {
 	let message = properties.get("message").map(js_string).unwrap_or_default();
-	PiError::named(name, message).with_data(json!({ "$fault": properties.get("$fault").cloned().unwrap_or(Value::Null) }))
+	PiError::named(name, message)
+		.with_data(json!({ "$fault": properties.get("$fault").cloned().unwrap_or(Value::Null) }))
 }
 
 /// The error a stream item of an exception member (`{ throttlingException: {...} }`) stands for, as `throw
 /// item.throttlingException` throws it.
 pub fn stream_item_exception(member: &str, properties: &Value) -> Option<PiError> {
-	let &(_, shape_name) = shape("ConverseStreamOutput").members.iter().find(|(name, _)| *name == member)?;
+	let &(_, shape_name) = shape("ConverseStreamOutput")
+		.members
+		.iter()
+		.find(|(name, _)| *name == member)?;
 	error_fault(shape_name)?;
 	Some(service_exception(shape_name, properties))
 }
@@ -1389,7 +1523,9 @@ impl ResponseMetadata {
 		let header = |name: &str| headers.get(name).cloned();
 		Self {
 			http_status_code: Some(status),
-			request_id: header("x-amzn-requestid").or_else(|| header("x-amzn-request-id")).or_else(|| header("x-amz-request-id")),
+			request_id: header("x-amzn-requestid")
+				.or_else(|| header("x-amzn-request-id"))
+				.or_else(|| header("x-amz-request-id")),
 			extended_request_id: header("x-amz-id-2"),
 			cf_id: header("x-amz-cf-id"),
 			..Self::default()
@@ -1452,7 +1588,10 @@ fn load_rest_json_error_code(headers: &IndexMap<String, String>, data: &Map<Stri
 		}
 		clean
 	};
-	if let Some((_, value)) = headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("x-amzn-errortype")) {
+	if let Some((_, value)) = headers
+		.iter()
+		.find(|(name, _)| name.eq_ignore_ascii_case("x-amzn-errortype"))
+	{
 		return Some(sanitize(value.clone()));
 	}
 	if let Some((_, value)) = data.iter().find(|(key, _)| key.to_lowercase() == "code") {
@@ -1486,7 +1625,10 @@ fn decorate_deserialization_error(mut error: PiError, status: u16, headers: &Ind
 	error.message.push_str(DESERIALIZATION_HINT);
 	let find_header = |pattern: &str| {
 		let pattern = Regex::new(pattern).expect("valid regex");
-		headers.iter().find(|(name, _)| pattern.is_match(name)).map(|(_, value)| value.clone())
+		headers
+			.iter()
+			.find(|(name, _)| pattern.is_match(name))
+			.map(|(_, value)| value.clone())
 	};
 	let metadata = ResponseMetadata {
 		http_status_code: Some(status),
@@ -1624,13 +1766,18 @@ impl BedrockRuntimeClient {
 			)));
 		}
 		let identity = self.resolve_identity(&files)?;
-		let use_fips = is_fips_region(&provided_region) || files.boolean_setting("AWS_USE_FIPS_ENDPOINT", "use_fips_endpoint")?;
+		let use_fips =
+			is_fips_region(&provided_region) || files.boolean_setting("AWS_USE_FIPS_ENDPOINT", "use_fips_endpoint")?;
 		let use_dual_stack = files.boolean_setting("AWS_USE_DUALSTACK_ENDPOINT", "use_dualstack_endpoint")?;
 		let endpoint = resolve_endpoint(config.endpoint.as_deref(), &region, use_fips, use_dual_stack)?;
 		let serialized = serialize_converse_stream(input, endpoint.path())?;
 
 		let app_id = files
-			.setting("AWS_SDK_UA_APP_ID", &["sdk_ua_app_id", "sdk-ua-app-id"], PreferredFile::Config)
+			.setting(
+				"AWS_SDK_UA_APP_ID",
+				&["sdk_ua_app_id", "sdk-ua-app-id"],
+				PreferredFile::Config,
+			)
 			.map(|setting| setting.value().to_string())
 			.filter(|app_id| !app_id.is_empty());
 		let mut features = Vec::new();
@@ -1665,7 +1812,10 @@ impl BedrockRuntimeClient {
 		let mut retry_count = 0.0;
 		let mut total_retry_delay = 0.0;
 		loop {
-			headers.insert("amz-sdk-request".to_string(), format!("attempt={}; max={max_attempts}", retry_count + 1.0));
+			headers.insert(
+				"amz-sdk-request".to_string(),
+				format!("attempt={}; max={max_attempts}", retry_count + 1.0),
+			);
 			let failure = match self.attempt(&headers, &url, &body, &identity, &region, signal).await {
 				Ok(mut output) => {
 					output.metadata.attempts = Some(retry_count + 1.0);
@@ -1705,7 +1855,11 @@ impl BedrockRuntimeClient {
 			Some(preference) => preference.clone(),
 			None if pi_host::env("AWS_BEARER_TOKEN_BEDROCK").is_some() => vec!["httpBearerAuth".to_string()],
 			None => files
-				.setting("AWS_AUTH_SCHEME_PREFERENCE", &["auth_scheme_preference"], PreferredFile::Config)
+				.setting(
+					"AWS_AUTH_SCHEME_PREFERENCE",
+					&["auth_scheme_preference"],
+					PreferredFile::Config,
+				)
 				.map(|setting| comma_separated(setting.value()))
 				.unwrap_or_default(),
 		};
@@ -1718,7 +1872,10 @@ impl BedrockRuntimeClient {
 			return match (&config.token, pi_host::env("AWS_BEARER_TOKEN_BEDROCK")) {
 				(Some(token), _) => Ok(Identity::Bearer(token.clone(), None)),
 				(None, Some(token)) => Ok(Identity::Bearer(token, Some("3"))),
-				(None, None) => Err(PiError::named("TokenProviderError", "Could not load token from any providers")),
+				(None, None) => Err(PiError::named(
+					"TokenProviderError",
+					"Could not load token from any providers",
+				)),
 			};
 		}
 		if let Some(credentials) = &config.credentials {
@@ -1749,9 +1906,13 @@ impl BedrockRuntimeClient {
 		if signal.is_some_and(AbortSignal::aborted) {
 			return Err(request_aborted().into());
 		}
-		let response = pi_host::fetch(request, None)
-			.await
-			.map_err(|error| if signal.is_some_and(AbortSignal::aborted) { request_aborted() } else { error })?;
+		let response = pi_host::fetch(request, None).await.map_err(|error| {
+			if signal.is_some_and(AbortSignal::aborted) {
+				request_aborted()
+			} else {
+				error
+			}
+		})?;
 		let status = response.status;
 		let response_headers = response.headers.clone();
 		for middleware in &self.deserialize_middleware {
@@ -1776,7 +1937,11 @@ impl BedrockRuntimeClient {
 	}
 
 	/// `schemaDeserializationMiddleware` with `deserializeResponse` of the event stream output.
-	async fn deserialize(&self, response: HttpResponse, signal: Option<&AbortSignal>) -> PiResult<ConverseStreamOutput> {
+	async fn deserialize(
+		&self,
+		response: HttpResponse,
+		signal: Option<&AbortSignal>,
+	) -> PiResult<ConverseStreamOutput> {
 		let status = response.status;
 		let headers = response.headers.clone();
 		let decorate = |error: PiError| decorate_deserialization_error(error, status, &headers);
@@ -1854,7 +2019,8 @@ impl BedrockRuntimeClient {
 			})
 			.map(|(name, value)| (name.as_str(), value.as_str()))
 			.collect();
-		let signing_error = |error: &dyn std::fmt::Display| PiError::new(format!("Failed to sign the request: {error}"));
+		let signing_error =
+			|error: &dyn std::fmt::Display| PiError::new(format!("Failed to sign the request: {error}"));
 		let identity = Credentials::new(
 			credentials.access_key_id.clone(),
 			credentials.secret_access_key.clone(),
@@ -1878,9 +2044,16 @@ impl BedrockRuntimeClient {
 			.into();
 		let request = SignableRequest::new("POST", url, signable.into_iter(), SignableBody::Bytes(body))
 			.map_err(|error| signing_error(&error))?;
-		let (instructions, _) = sign(request, &params).map_err(|error| signing_error(&error))?.into_parts();
+		let (instructions, _) = sign(request, &params)
+			.map_err(|error| signing_error(&error))?
+			.into_parts();
 		let (signing_headers, _) = instructions.into_parts();
-		for name in ["x-amz-date", "x-amz-security-token", "x-amz-content-sha256", "authorization"] {
+		for name in [
+			"x-amz-date",
+			"x-amz-security-token",
+			"x-amz-content-sha256",
+			"authorization",
+		] {
 			if let Some(header) = signing_headers.iter().find(|header| header.name() == name) {
 				signed.insert(name.to_string(), header.value().to_string());
 			}
@@ -1919,7 +2092,12 @@ fn retry_error_type(error: &PiError) -> RetryErrorType {
 	if status == Some(429.0) || THROTTLING_ERROR_CODES.contains(&error.name.as_str()) {
 		return RetryErrorType::Throttling;
 	}
-	let code = error.data.as_ref().and_then(|data| data.get("code")).and_then(Value::as_str).unwrap_or("");
+	let code = error
+		.data
+		.as_ref()
+		.and_then(|data| data.get("code"))
+		.and_then(Value::as_str)
+		.unwrap_or("");
 	let clock_skew_corrected = error
 		.data
 		.as_ref()
@@ -1930,10 +2108,23 @@ fn retry_error_type(error: &PiError) -> RetryErrorType {
 		|| clock_skew_corrected
 		|| (error.name == "InvalidSignatureException" && error.message.contains("Signature expired"))
 		|| ["TimeoutError", "RequestTimeout", "RequestTimeoutException"].contains(&error.name.as_str())
-		|| ["ECONNRESET", "ECONNREFUSED", "EPIPE", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN"]
-			.contains(&code)
+		|| [
+			"ECONNRESET",
+			"ECONNREFUSED",
+			"EPIPE",
+			"ETIMEDOUT",
+			"EHOSTUNREACH",
+			"ENETUNREACH",
+			"ENOTFOUND",
+			"EAI_AGAIN",
+		]
+		.contains(&code)
 		|| status.is_some_and(|status| [500.0, 502.0, 503.0, 504.0].contains(&status));
-	if transient { RetryErrorType::Transient } else { RetryErrorType::Other }
+	if transient {
+		RetryErrorType::Transient
+	} else {
+		RetryErrorType::Other
+	}
 }
 
 /// `parseRetryAfterHeader(response)` as an epoch time in milliseconds.
@@ -1974,7 +2165,14 @@ fn uuid_v4() -> String {
 	bytes[6] = (bytes[6] & 0x0f) | 0x40;
 	bytes[8] = (bytes[8] & 0x3f) | 0x80;
 	let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-	format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
+	format!(
+		"{}-{}-{}-{}-{}",
+		&hex[..8],
+		&hex[8..12],
+		&hex[12..16],
+		&hex[16..20],
+		&hex[20..]
+	)
 }
 
 #[cfg(test)]
@@ -2006,7 +2204,10 @@ mod tests {
 				("content-type", "application/json"),
 				("content-length", "216"),
 				("x-amz-user-agent", "aws-sdk-js/3.1126.0 pi/1.5.0"),
-				("user-agent", "aws-sdk-js/3.1126.0 ua/2.1 os/linux lang/rust api/bedrock-runtime#3.1126.0 m/N,E,e pi/1.5.0"),
+				(
+					"user-agent",
+					"aws-sdk-js/3.1126.0 ua/2.1 os/linux lang/rust api/bedrock-runtime#3.1126.0 m/N,E,e pi/1.5.0",
+				),
 				("host", "127.0.0.1:45123"),
 				("x-custom", "v"),
 				("amz-sdk-invocation-id", "637f9490-e814-484e-8000-13b957ad6b5c"),
@@ -2024,7 +2225,9 @@ mod tests {
 				Some("e"),
 			);
 			let url = "http://127.0.0.1:45123/model/us.anthropic.claude-opus-4-8/converse-stream";
-			let signed = client.sign(&headers, url, BODY.as_bytes(), &identity, "us-west-2").expect("signs");
+			let signed = client
+				.sign(&headers, url, BODY.as_bytes(), &identity, "us-west-2")
+				.expect("signs");
 			let names: Vec<&str> = signed.keys().map(String::as_str).collect();
 			assert_eq!(
 				names,
@@ -2043,7 +2246,10 @@ mod tests {
 				]
 			);
 			assert_eq!(signed["x-amz-date"], "20261107T120000Z");
-			assert_eq!(signed["x-amz-content-sha256"], "2ceba15d1c5fc3132e71ba2fe80537e22d509e7c446f91468e3ea925e64528ba");
+			assert_eq!(
+				signed["x-amz-content-sha256"],
+				"2ceba15d1c5fc3132e71ba2fe80537e22d509e7c446f91468e3ea925e64528ba"
+			);
 			assert_eq!(
 				signed["authorization"],
 				"AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261107/us-west-2/bedrock/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent;x-custom, Signature=af5a01547f6bff7386280d4c10ddfd3a9d2713b6d2854c7df6af8f298e95467e"
@@ -2051,4 +2257,3 @@ mod tests {
 		});
 	}
 }
-

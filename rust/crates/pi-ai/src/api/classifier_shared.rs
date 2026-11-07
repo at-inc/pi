@@ -5,14 +5,13 @@
 //! `status` in `PiError.status` and the rest in `PiError.data` as `{ headers, body }`, where `headers` is the
 //! response header record (lowercase, sorted names, like `Object.fromEntries(response.headers)`) or `null` for the
 //! timeout error, so `retry_provider_request` and `normalize_provider_error` read them like the TS fields. `url` is
-//! a parsed `url::Url`; `String(url)` is its serialization.
+//! the serialized URL (`String(url)`).
 
 use bytes::Bytes;
 use indexmap::IndexMap;
 use pi_host::js::{json_stringify, number_to_string};
 use pi_host::{AbortSignal, HttpRequest, PiError, PiResult};
 use serde_json::{Value, json};
-use url::Url;
 
 use crate::models::calculate_cost;
 use crate::types::{ClassifierModel, ClassifierOptions, ProviderHeaders, ProviderResponse, Usage, UsageCost};
@@ -36,9 +35,9 @@ fn timeout_error(timeout_ms: f64) -> PiError {
 	.with_data(json!({ "headers": null, "body": "" }))
 }
 
-/// `isRecord(value)`: a non-null, non-array object. `None` is TS `undefined`.
-pub fn is_record(value: Option<&Value>) -> bool {
-	matches!(value, Some(Value::Object(_)))
+/// `isRecord(value)`: a non-null, non-array object.
+pub fn is_record(value: &Value) -> bool {
+	value.is_object()
 }
 
 /// `requiredNumber(label, value, field)`. `None` is TS `undefined`.
@@ -89,7 +88,7 @@ fn request_headers(
 /// `no_retry_statuses` lists HTTP statuses that fail at once although they are normally retried.
 pub async fn post_classifier_request(
 	label: &str,
-	url: &Url,
+	url: &str,
 	model: &ClassifierModel,
 	body: Value,
 	options: Option<&ClassifierOptions>,

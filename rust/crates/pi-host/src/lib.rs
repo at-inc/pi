@@ -15,6 +15,7 @@ pub mod host;
 pub mod http;
 pub mod js;
 pub mod sse;
+pub mod websocket;
 
 #[cfg(feature = "native")]
 pub mod native;
@@ -27,7 +28,7 @@ pub use host::{
 	Host, current, env, file_exists, file_not_found, home_dir, monotonic_ms, now_ms, read_file, set_host, sleep,
 	spawn_local,
 };
-pub use http::{Body, FetchFunction, HttpRequest, HttpResponse, RedirectMode, fetch};
+pub use http::{Body, FetchFunction, HttpRequest, HttpResponse, RedirectMode, fetch, global_fetch, is_global_fetch};
 
 /// `futures::future::LocalBoxFuture` re-exported so ported code needs one import for async callbacks.
 pub type LocalBoxFuture<'a, T> = futures::future::LocalBoxFuture<'a, T>;

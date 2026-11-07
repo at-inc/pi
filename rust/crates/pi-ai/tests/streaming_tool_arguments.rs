@@ -1,11 +1,16 @@
-//! Port of the `anthropic-messages` cases of `packages/ai/test/streaming-tool-arguments.test.ts` (#9265).
+//! Port of the `anthropic-messages` and `openai-responses` cases of `packages/ai/test/streaming-tool-arguments.test.ts`
+//! (#9265).
 //!
-//! The other `PATHS` entries (openai-completions, openai-responses, mistral-conversations, pi-messages, faux) move
-//! with those APIs. Of the `describe.each(PATHS)` cases, two are not ported for any path:
+//! The other `PATHS` entries (openai-completions, mistral-conversations, pi-messages, faux) move with those APIs. The
+//! openai-responses path feeds `process_responses_stream` one event at a time (`yielding_events`) while a consumer task
+//! reads the event stream, so each `toolcall_delta` partial is inspected before the next delta lands, as `for await`
+//! does in the TS. Of the `describe.each(PATHS)` cases, two are not ported for any path:
 //! - "allocates linearly in the argument text" measures `process.memoryUsage()` deltas; counting allocations in
 //!   Rust needs a `#[global_allocator]`, which needs `unsafe` (denied workspace-wide).
 //! - "releases the stream, its partial messages and argument snapshots once the caller drops them" checks
 //!   `WeakRef`s after a forced GC; Rust frees by ownership, so there is no collector to observe.
+
+mod openai_responses_support;
 
 use std::rc::Rc;
 
@@ -262,6 +267,143 @@ mod tool_call_stream_state_on_errors {
 				panic!("expected a tool call, got {:?}", message.content[0]);
 			};
 			assert_eq!(call.arguments.get("path"), Some(&json!("/src/file.ts")));
+		});
+	}
+}
+
+mod openai_responses_tool_call_argument_streaming {
+	use std::cell::RefCell;
+
+	use super::openai_responses_support::{create_output, model, yield_now, yielding_events};
+	use super::*;
+	use pi_ai::api::openai_responses_shared::process_responses_stream;
+
+	fn responses_events(deltas: &[String], text: &str) -> Vec<Value> {
+		let item = json!({
+			"type": "function_call",
+			"id": "fc_1",
+			"call_id": "call_1",
+			"name": "write",
+			"arguments": "",
+			"status": "in_progress",
+		});
+		let mut events = vec![
+			json!({ "type": "response.output_item.added", "output_index": 0, "sequence_number": 0, "item": item }),
+		];
+		events.extend(deltas.iter().map(|delta| {
+			json!({
+				"type": "response.function_call_arguments.delta",
+				"output_index": 0,
+				"item_id": "fc_1",
+				"sequence_number": 0,
+				"delta": delta,
+			})
+		}));
+		let mut done_item = item.clone();
+		done_item["arguments"] = json!(text);
+		done_item["status"] = json!("completed");
+		events.extend([
+		json!({ "type": "response.function_call_arguments.done", "output_index": 0, "item_id": "fc_1", "sequence_number": 0, "arguments": text }),
+		json!({ "type": "response.output_item.done", "output_index": 0, "sequence_number": 0, "item": done_item }),
+		json!({
+			"type": "response.completed",
+			"sequence_number": 0,
+			"response": {
+				"id": "resp_1",
+				"status": "completed",
+				"output": [],
+				"usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 },
+			},
+		}),
+	]);
+		events
+	}
+
+	#[test]
+	fn shows_growing_partial_arguments_keeps_stream_state_off_every_partial_and_finishes_with_the_exact_arguments() {
+		run(|_| async {
+			let (args, text) = write_call(5_000);
+			let model = model(json!({
+				"id": "gpt-test",
+				"name": "g",
+				"api": "openai-responses",
+				"provider": "openai",
+				"baseUrl": "https://api.openai.com/v1",
+				"reasoning": false,
+				"input": ["text"],
+				"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+				"contextWindow": 200_000,
+				"maxTokens": 64_000,
+			}));
+			let output = create_output(&model);
+			output.borrow_mut().timestamp = 0.0;
+			let events = AssistantMessageEventStream::new();
+			let shown = Rc::new(RefCell::new((-1_i64, 0_usize)));
+			let (consumer, target, expected_content) = (
+				events.clone(),
+				shown.clone(),
+				args["content"].as_str().unwrap_or_default().to_string(),
+			);
+			pi_host::spawn_local(async move {
+				while let Some(event) = consumer.next().await {
+					let (label, partial) = match &event {
+						AssistantMessageEvent::Done { message, .. } => ("done", message.clone()),
+						AssistantMessageEvent::Error { error, .. } => ("error", error.clone()),
+						AssistantMessageEvent::Start { partial } => ("start", partial.clone()),
+						AssistantMessageEvent::ToolcallStart { partial, .. } => ("toolcall_start", partial.clone()),
+						AssistantMessageEvent::ToolcallDelta { partial, .. } => ("toolcall_delta", partial.clone()),
+						AssistantMessageEvent::ToolcallEnd { partial, .. } => ("toolcall_end", partial.clone()),
+						_ => continue,
+					};
+					expect_no_stream_state(&partial.borrow(), label);
+					let AssistantMessageEvent::ToolcallDelta { content_index, .. } = event else {
+						continue;
+					};
+					let partial = partial.borrow();
+					let Some(AssistantContent::ToolCall(call)) = partial.content.get(content_index) else {
+						continue;
+					};
+					let Some(Value::String(shown_content)) = call.arguments.get("content") else {
+						continue;
+					};
+					let mut shown = target.borrow_mut();
+					shown.1 += 1;
+					assert!(expected_content.starts_with(shown_content.as_str()));
+					let length = pi_host::js::utf16_len(shown_content) as i64;
+					assert!(length >= shown.0);
+					shown.0 = length;
+				}
+			});
+
+			events.push(AssistantMessageEvent::Start {
+				partial: output.clone(),
+			});
+			process_responses_stream(
+				yielding_events(responses_events(&deltas_of(&text, 24), &text)),
+				&output,
+				&events,
+				&model,
+				None,
+			)
+			.await
+			.unwrap();
+			events.push(AssistantMessageEvent::Done {
+				reason: StopReason::ToolUse,
+				message: output.clone(),
+			});
+			events.end(None);
+			yield_now().await;
+
+			let message = output.borrow();
+			assert_eq!(message.stop_reason, StopReason::ToolUse);
+			assert!(shown.borrow().1 > 100, "{} partials", shown.borrow().1);
+			let content = serde_json::to_value(&message.content).unwrap();
+			assert_eq!(content.as_array().map(Vec::len), Some(1));
+			assert!(content[0]["id"].is_string());
+			assert_eq!(content[0]["type"], "toolCall");
+			assert_eq!(content[0]["name"], "write");
+			assert_eq!(content[0]["arguments"], args);
+			assert_eq!(content[0].as_object().map(|block| block.len()), Some(4));
 		});
 	}
 }

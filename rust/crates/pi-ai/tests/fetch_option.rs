@@ -1,23 +1,11 @@
 //! Port of `packages/ai/test/fetch-option.test.ts`.
 //!
-//! "passes fetch through streamSimple to the Anthropic SDK" is ported against `api::anthropic_messages`. Every other
-//! API adapter this file covers is `PORT-STATUS: pending` and owned by a w3 shard, so the rest is mostly not
-//! ported yet. Only "uses fetch for image generation" is ported, against `openrouter_images::generate_images`.
-//!
-//! Not ported, because the adapter files are still empty and calling their predicted `stream_simple` would break the
-//! crate's compile. They belong with the owning w3 shards:
-//! - "passes fetch through streamSimple to OpenAI SDK adapters" (`api::openai_completions`, w3-openai-completions;
-//!   `api::openai_responses` and `api::azure_openai_responses`, w3-openai-responses).
-//! - "uses fetch for Mistral, Codex SSE, and pi-messages HTTP requests" (`api::mistral_conversations`,
-//!   w3-google-mistral; `api::openai_codex_responses`, w3-openai-responses; `api::pi_messages`, w3-bedrock-misc).
-//! - "rejects custom fetch for Google adapters instead of silently bypassing it" (`api::google_generative_ai` and
-//!   `api::google_vertex`, w3-google-mistral).
-//! - "allows Google adapters to receive globalThis.fetch explicitly" (`api::google_generative_ai`, w3-google-mistral).
+//! Every case is ported in the TS order.
 //!
 //! Differences from the TS:
 //! - The stubbed global `fetch` is the test host's fetch, which records every request; "ambient fetch must not be
 //!   called" is `host.requests()` staying empty. `expect(globalThis.fetch).toBe(fallback)` holds by construction: a
-//!   request's `fetch` option cannot replace the host.
+//!   request's `fetch` option cannot replace the host. `globalThis.fetch` passed as the option is `pi_host::global_fetch()`.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -25,14 +13,18 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 use pi_ai::api::anthropic_messages;
 use pi_ai::api::openrouter_images::generate_images;
-use pi_ai::types::{
-	BaseModel, ImageModel, ImagesContext, ImagesOptions, ModelCost, ModelInputModality, ModelType,
-	ProviderRequestOptions, TextContent, UserContent, image_api,
+use pi_ai::api::{
+	azure_openai_responses, google_generative_ai, google_vertex, mistral_conversations, openai_codex_responses,
+	openai_completions, openai_responses, pi_messages,
 };
-use pi_ai::types::{Model, SimpleStreamOptions, StreamOptions};
+use pi_ai::types::{
+	BaseModel, Context, ImageModel, ImagesContext, ImagesOptions, Message, Model, ModelCost, ModelInputModality,
+	ModelType, ProviderRequestOptions, SimpleStreamOptions, StreamOptions, TextContent, TranscriptContext, Transport,
+	UserContent, UserMessage, image_api,
+};
 use pi_ai::utils::transcript::normalize_context;
 use pi_host::testing::run;
-use pi_host::{FetchFunction, HttpResponse};
+use pi_host::{FetchFunction, HttpResponse, global_fetch};
 
 /// `mockFetches()`'s `custom`: answers every request with a 401 JSON error and counts the calls.
 fn custom_fetch() -> (FetchFunction, Rc<Cell<usize>>) {
@@ -51,21 +43,51 @@ fn custom_fetch() -> (FetchFunction, Rc<Cell<usize>>) {
 	(fetch, calls)
 }
 
+fn context() -> TranscriptContext {
+	normalize_context(&Context {
+		messages: vec![Message::User(
+			serde_json::from_value::<UserMessage>(
+				serde_json::json!({ "role": "user", "content": "hello", "timestamp": 1 }),
+			)
+			.expect("user message"),
+		)],
+		..Context::default()
+	})
+}
+
 /// `createModel(api)`.
 fn create_model(api: &str) -> Model {
-	serde_json::from_value(serde_json::json!({
-		"id": "test-model",
-		"name": "Test Model",
-		"api": api,
-		"provider": "test-provider",
-		"baseUrl": "https://upstream.test/v1",
-		"reasoning": false,
-		"input": ["text"],
-		"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-		"contextWindow": 10_000,
-		"maxTokens": 1_000,
-	}))
-	.unwrap()
+	Model {
+		base: BaseModel {
+			id: "test-model".into(),
+			name: "Test Model".into(),
+			api: api.into(),
+			provider: "test-provider".into(),
+			base_url: "https://upstream.test/v1".into(),
+			input: vec![ModelInputModality::Text],
+			cost: ModelCost::default(),
+			..BaseModel::default()
+		},
+		reasoning: false,
+		context_window: 10_000.0,
+		max_tokens: 1_000.0,
+		..Model::default()
+	}
+}
+
+fn simple_options(
+	api_key: &str,
+	fetch: &FetchFunction,
+	configure: impl FnOnce(&mut SimpleStreamOptions),
+) -> SimpleStreamOptions {
+	let mut options = SimpleStreamOptions {
+		tool_choice: None,
+		..SimpleStreamOptions::default()
+	};
+	configure(&mut options);
+	options.api_key = Some(api_key.into());
+	options.fetch = Some(fetch.clone());
+	options
 }
 
 mod fetch_stream_option {
@@ -99,6 +121,145 @@ mod fetch_stream_option {
 				.await;
 			assert!(calls.get() > 0);
 			assert!(host.requests().is_empty());
+		});
+	}
+
+	#[test]
+	fn passes_fetch_through_stream_simple_to_open_ai_sdk_adapters() {
+		run(|host| async move {
+			let (custom, calls) = custom_fetch();
+			let max_retries = |options: &mut SimpleStreamOptions| options.max_retries = Some(0.0);
+			openai_completions::stream_simple(
+				&create_model("openai-completions"),
+				&context(),
+				Some(simple_options("test-key", &custom, max_retries)),
+			)
+			.expect("stream starts")
+			.result()
+			.await;
+			openai_responses::stream_simple(
+				&create_model("openai-responses"),
+				&context(),
+				Some(simple_options("test-key", &custom, max_retries)),
+			)
+			.expect("stream starts")
+			.result()
+			.await;
+			azure_openai_responses::stream_simple(
+				&create_model("azure-openai-responses"),
+				&context(),
+				Some(simple_options("test-key", &custom, max_retries)),
+			)
+			.expect("stream starts")
+			.result()
+			.await;
+
+			assert_eq!(calls.get(), 3);
+			assert!(host.requests().is_empty());
+		});
+	}
+
+	#[test]
+	fn uses_fetch_for_mistral_codex_sse_and_pi_messages_http_requests() {
+		run(|host| async move {
+			let (custom, calls) = custom_fetch();
+			mistral_conversations::stream_simple(
+				&create_model("mistral-conversations"),
+				&context(),
+				Some(simple_options("test-key", &custom, |_| {})),
+			)
+			.expect("stream starts")
+			.result()
+			.await;
+			// `header.${btoa(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "account" } }))}.signature`
+			let api_key = "header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjb3VudCJ9fQ==.signature";
+			openai_codex_responses::stream_simple(
+				&create_model("openai-codex-responses"),
+				&context(),
+				Some(simple_options(api_key, &custom, |options| {
+					options.transport = Some(Transport::Sse);
+					options.max_retries = Some(0.0);
+				})),
+			)
+			.expect("stream starts")
+			.result()
+			.await;
+			pi_messages::stream(
+				&create_model("pi-messages"),
+				&context(),
+				Some(pi_messages::PiMessagesOptions {
+					base: simple_options("test-key", &custom, |_| {}).base,
+					..pi_messages::PiMessagesOptions::default()
+				}),
+			)
+			.result()
+			.await;
+
+			assert_eq!(calls.get(), 3);
+			assert!(host.requests().is_empty());
+		});
+	}
+
+	#[test]
+	fn rejects_custom_fetch_for_google_adapters_instead_of_silently_bypassing_it() {
+		run(|host| async move {
+			let (custom, calls) = custom_fetch();
+			let google = google_generative_ai::stream_simple(
+				&create_model("google-generative-ai"),
+				&context(),
+				Some(simple_options("test-key", &custom, |_| {})),
+			)
+			.unwrap()
+			.result()
+			.await
+			.unwrap();
+			let vertex = google_vertex::stream_simple(
+				&create_model("google-vertex"),
+				&context(),
+				Some(simple_options("test-key", &custom, |_| {})),
+			)
+			.unwrap()
+			.result()
+			.await
+			.unwrap();
+
+			assert!(
+				google
+					.error_message
+					.unwrap()
+					.contains("Custom fetch is not supported by the Google Generative AI adapter")
+			);
+			assert!(
+				vertex
+					.error_message
+					.unwrap()
+					.contains("Custom fetch is not supported by the Google Vertex adapter")
+			);
+			assert_eq!(calls.get(), 0);
+			assert!(host.requests().is_empty());
+		});
+	}
+
+	#[test]
+	fn allows_google_adapters_to_receive_global_this_fetch_explicitly() {
+		run(|host| async move {
+			host.respond_with(
+				401,
+				&[("content-type", "application/json")],
+				r#"{"error":{"message":"upstream rejected request"}}"#,
+			);
+			let result = google_generative_ai::stream_simple(
+				&create_model("google-generative-ai"),
+				&context(),
+				Some(simple_options("test-key", &global_fetch(), |_| {})),
+			)
+			.unwrap()
+			.result()
+			.await
+			.unwrap();
+
+			assert_eq!(host.requests().len(), 1);
+			assert!(!result.error_message.unwrap().contains("Custom fetch is not supported"));
 		});
 	}
 

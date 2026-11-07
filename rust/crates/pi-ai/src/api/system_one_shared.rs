@@ -349,7 +349,7 @@ async fn run_system_one(
 	let payload = (transport.payload)(model, request);
 	let body = post_classifier_request(
 		transport.label,
-		&url,
+		url.as_str(),
 		model,
 		payload,
 		image_options.as_ref().or(options),

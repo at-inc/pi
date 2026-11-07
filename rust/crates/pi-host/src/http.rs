@@ -122,6 +122,21 @@ impl HttpResponse {
 /// `typeof globalThis.fetch` as an injectable override (`ProviderRequestOptions.fetch`).
 pub type FetchFunction = Rc<dyn Fn(HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>>>;
 
+thread_local! {
+	static GLOBAL_FETCH: FetchFunction = Rc::new(|request| Box::pin(crate::host::current().fetch(request)));
+}
+
+/// `globalThis.fetch` as a `FetchFunction` value: the current host's fetch. Every call on a thread returns the same
+/// `Rc`, so `options.fetch !== globalThis.fetch` is `!is_global_fetch(fetch)`.
+pub fn global_fetch() -> FetchFunction {
+	GLOBAL_FETCH.with(Rc::clone)
+}
+
+/// `fetch === globalThis.fetch`.
+pub fn is_global_fetch(fetch: &FetchFunction) -> bool {
+	GLOBAL_FETCH.with(|global| Rc::ptr_eq(global, fetch))
+}
+
 /// `fetch(request)` through `override_fetch` when given, else the current host.
 /// An override is called even when the signal is already aborted, as a JS `options.fetch` is; only the host's own
 /// `fetch` rejects up front.
@@ -133,4 +148,16 @@ pub async fn fetch(request: HttpRequest, override_fetch: Option<&FetchFunction>)
 		signal.throw_if_aborted()?;
 	}
 	crate::host::current().fetch(request).await
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn global_fetch_is_one_value_per_thread() {
+		assert!(is_global_fetch(&global_fetch()));
+		let other: FetchFunction = Rc::new(|request| Box::pin(crate::host::current().fetch(request)));
+		assert!(!is_global_fetch(&other));
+	}
 }
