@@ -1,28 +1,27 @@
 //! Port of `packages/ai/src/api/openrouter-images.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
 
-// PORT-STUB: w3-bedrock-misc
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::{LocalBoxFuture, PiError, PiResult};
+use pi_host::{LocalBoxFuture, PiResult};
 
+use super::openrouter_images;
 use crate::types::{AssistantImages, ImageModel, ImagesContext, ProviderImages, ProviderImagesOptions};
 
-struct NotPorted;
+struct LazyImages;
 
-impl ProviderImages for NotPorted {
+impl ProviderImages for LazyImages {
 	fn generate_images(
 		&self,
-		_model: &ImageModel,
-		_context: &ImagesContext,
-		_options: Option<ProviderImagesOptions>,
+		model: &ImageModel,
+		context: &ImagesContext,
+		options: Option<ProviderImagesOptions>,
 	) -> LocalBoxFuture<'static, PiResult<AssistantImages>> {
-		Box::pin(async { Err(PiError::new("API not ported")) })
+		openrouter_images::generate_images(model, context, options.map(|options| options.base))
 	}
 }
 
-/// `openrouterImagesApi()`: every generation rejects with `API not ported`.
+/// `openrouterImagesApi()`: generates images through the `openrouter-images` module.
 pub fn openrouter_images_api() -> Rc<dyn ProviderImages> {
-	Rc::new(NotPorted)
+	Rc::new(LazyImages)
 }
