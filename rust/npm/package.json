@@ -5,13 +5,14 @@
 	"description": "npm packages that ship the pi Rust core (rust/crates) behind the TS packages' API. See README.md.",
 	"workspaces": [
 		"pi-core",
-		"pi-ai"
+		"pi-ai",
+		"pi-mcp"
 	],
 	"scripts": {
-		"build": "npm run build --workspace=@at-inc/pi-core && npm run build --workspace=@at-inc/pi-ai-rs",
+		"build": "npm run build --workspace=@at-inc/pi-core && npm run build --workspace=@at-inc/pi-ai-rs && npm run build --workspace=@at-inc/pi-mcp-rs",
 		"build:wasm": "npm run build:wasm --workspace=@at-inc/pi-core",
 		"check": "biome check --write --error-on-warnings . && tsc --noEmit -p tsconfig.json",
-		"test:vitest": "npm run test:vitest --workspace=@at-inc/pi-ai-rs",
+		"test:vitest": "npm run test:vitest --workspace=@at-inc/pi-ai-rs && npm run test:vitest --workspace=@at-inc/pi-mcp-rs",
 		"bench": "npm run bench --workspace=@at-inc/pi-ai-rs"
 	},
 	"engines": {

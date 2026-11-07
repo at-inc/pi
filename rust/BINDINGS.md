@@ -28,9 +28,9 @@ hooks). It already builds for `wasm32-unknown-unknown` (CI checks it).
   initialized `wasm` and the `host`. `@at-inc/pi-core/core` exports `initCore(host, module)` for other runtimes.
   The Node host has global `fetch`/`WebSocket`, timers, `process.env` and `node:fs` reads. The Workers host has
   `fetch`, `WebSocket`, timers, and `process.env` when `nodejs_compat` provides it, with no file system and no
-  processes, like the TS on Workers. `pi_host::Host` has no process or HTTP-listener methods yet. The slices that
-  need them (MCP stdio, OAuth callback servers) add them to the trait, `JsHost` and both hosts, with
-  `node:child_process` and `node:http` on Node.
+  processes, like the TS on Workers. `pi_host::Host` has `spawn_process` (MCP stdio) and `listen_http` (OAuth
+  callback servers): `cross-spawn` and `node:http` on Node. On Workers processes are unsupported and `listen_http`
+  uses `node:http` when `nodejs_compat` provides it.
 - Build: `wasm-bindgen --target web --weak-refs`. `--target web` gives ES module glue with an explicit `initSync`,
   which takes the wasm bytes (Node) or a compiled `WebAssembly.Module` (Workers `.wasm` imports). The CLI is pinned
   to the `wasm-bindgen` crate version in `Cargo.lock`.

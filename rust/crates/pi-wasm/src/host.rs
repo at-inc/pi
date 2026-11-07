@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use js_sys::{Function, Object, Promise, Reflect};
+use pi_host::process::{ChildProcess, ProcessListeners, SpawnOptions};
 use pi_host::server::{HttpServer, HttpServerErrorHandler, HttpServerHandler};
 use pi_host::websocket::WebSocket;
 use pi_host::{Host, HttpRequest, HttpResponse, LocalBoxFuture, PiResult};
@@ -35,6 +36,12 @@ export interface PiHost {
 	/** `new WebSocket(url, { headers })`; `undefined` without a WebSocket client. */
 	webSocket(url: string, headers: Record<string, string>): WebSocket | undefined;
 	/**
+	 * `child_process.spawn(command, args, options)` with piped stdin and stdout, in its own process group on Unix
+	 * (`detached: true`); resolves on `spawn` and rejects with the `error` of a process that could not start.
+	 * `undefined` without processes.
+	 */
+	spawnProcess(options: PiSpawnOptions, listeners: PiProcessListeners): Promise<PiChildProcess> | undefined;
+	/**
 	 * `http.createServer(handler).listen(port, host)`: resolves with the server once it listens and rejects with the
 	 * listen error. `onError` receives the server's later `error` events.
 	 */
@@ -44,6 +51,40 @@ export interface PiHost {
 		handler: (request: PiHttpRequest) => Promise<PiHttpResponse>,
 		onError: (error: unknown) => void,
 	): Promise<PiHttpServer>;
+}
+
+/** The options of `PiHost.spawnProcess`. `env` is set on top of the host's environment unless `clearEnv` is set. */
+export interface PiSpawnOptions {
+	command: string;
+	args: string[];
+	cwd?: string;
+	env: Record<string, string>;
+	clearEnv: boolean;
+	/** `stdio[2]`: `"inherit"` instead of `"pipe"`. */
+	inheritStderr: boolean;
+}
+
+/** What a spawned process reports: stdout and stderr `data`, stream and process errors, and `close` once. */
+export interface PiProcessListeners {
+	onStdout(chunk: Uint8Array): void;
+	onStderr(chunk: Uint8Array): void;
+	onError(error: unknown): void;
+	onClose(): void;
+}
+
+/** A process `PiHost.spawnProcess` started. */
+export interface PiChildProcess {
+	readonly pid: number | undefined;
+	/** `stdin.write(data, callback)`: resolves once written, rejects with the write error. */
+	write(data: Uint8Array): Promise<void>;
+	/** `stdin.end()`. */
+	endStdin(): void;
+	/** `stdin.writable`. */
+	readonly stdinWritable: boolean;
+	/** `exitCode !== null || signalCode !== null`. */
+	readonly exited: boolean;
+	/** Signals the process and its children: the process group on Unix, `taskkill /T /F` on Windows. */
+	kill(signal: "SIGTERM" | "SIGKILL"): void;
 }
 
 /** A request of `PiHost.listen`: its method and raw target. */
@@ -98,6 +139,8 @@ extern "C" {
 		handler: &JsValue,
 		on_error: &JsValue,
 	) -> Result<Promise, JsValue>;
+	#[wasm_bindgen(method, catch, js_name = spawnProcess)]
+	fn spawn_process(this: &JsHostObject, options: &JsValue, listeners: &JsValue) -> Result<JsValue, JsValue>;
 
 	#[wasm_bindgen(js_namespace = console, js_name = error)]
 	fn console_error(message: &str);
@@ -175,6 +218,18 @@ impl Host for JsHost {
 			Ok(socket) if socket.is_undefined() || socket.is_null() => None,
 			Ok(socket) => Some(Ok(crate::websocket::JsWebSocket::open(socket))),
 		}
+	}
+
+	fn spawn_process(
+		&self,
+		options: SpawnOptions,
+		listeners: ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn ChildProcess>>> {
+		let spawned = self.object.spawn_process(
+			&crate::process::options_to_js(&options),
+			&crate::process::listeners_to_js(listeners),
+		);
+		crate::process::spawned(spawned)
 	}
 
 	fn listen_http(

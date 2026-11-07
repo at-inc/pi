@@ -12,7 +12,9 @@ mod events;
 mod fetch;
 mod host;
 mod json;
+mod mcp;
 mod options;
+mod process;
 mod server;
 mod websocket;
 

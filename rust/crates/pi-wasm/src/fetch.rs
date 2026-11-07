@@ -75,27 +75,30 @@ pub fn js_fetch(
 }
 
 /// The `HttpResponse` of a JS `Response` (or a response-like object with the same fields).
-fn read_response(response: &JsValue, signal: Option<JsSignal>) -> HttpResponse {
+pub fn read_response(response: &JsValue, signal: Option<JsSignal>) -> HttpResponse {
 	let field = |name: &str| Reflect::get(response, &name.into()).unwrap_or(JsValue::UNDEFINED);
 	let status = field("status").as_f64().unwrap_or(0.0) as u16;
 	let status_text = field("statusText").as_string().unwrap_or_default();
 	let url = field("url").as_string().unwrap_or_default();
 	let headers = read_headers(&field("headers"));
-	let body = field("body");
-	let body = if body.is_undefined() || body.is_null() {
-		futures::stream::empty().boxed_local()
-	} else {
-		match body.unchecked_ref::<ReadableStream>().get_reader() {
-			Ok(reader) => body_stream(reader, signal),
-			Err(error) => futures::stream::once(async move { Err(crate::error::from_js(error)) }).boxed_local(),
-		}
-	};
+	let body = readable_stream_body(&field("body"), signal);
 	HttpResponse {
 		status,
 		status_text,
 		url,
 		headers,
 		body,
+	}
+}
+
+/// The `Body` of a JS `ReadableStream`, empty for `undefined` and `null`; `signal` lives as long as the body.
+pub fn readable_stream_body(body: &JsValue, signal: Option<JsSignal>) -> pi_host::Body {
+	if body.is_undefined() || body.is_null() {
+		return futures::stream::empty().boxed_local();
+	}
+	match body.unchecked_ref::<ReadableStream>().get_reader() {
+		Ok(reader) => body_stream(reader, signal),
+		Err(error) => futures::stream::once(async move { Err(crate::error::from_js(error)) }).boxed_local(),
 	}
 }
 

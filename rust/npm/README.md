@@ -8,6 +8,8 @@ These packages ship the pi Rust core (`rust/crates`) behind the npm API of the T
 - `pi-ai` (`@at-inc/pi-ai-rs`): the facade of `@at-inc/pi-ai`. It has the same `exports` map and module layout. Its
   types come from `@at-inc/pi-ai` and its runtime from wasm. It covers the first slice:
   `createProvider`, `createModels`, `openAICompletionsApi`, `stream`/`complete` (see [pi-ai/README.md](pi-ai/README.md)).
+- `pi-mcp` (`@at-inc/pi-mcp-rs`): the facade of `@earendil-works/pi-mcp`, with every runtime export of `.`, `./oauth`
+  and `./testing` (see [pi-mcp/README.md](pi-mcp/README.md)).
 
 `rust/npm` is its own npm workspace root with its own `package-lock.json`, outside the root workspaces. The root
 lockfile does not change when a facade is added.
@@ -124,13 +126,11 @@ Notes for the follow-up slices:
   `NativeStreams`) and its `api/*.ts` module. Then bridge the `notBridged` methods of `models.ts`. The test bridge
   already maps `/responses` to `client.responses.create`.
 - **pi-ai auth and OAuth**: `createModels({ credentials, modelsStore, authContext })` and `Models.login`/`logout`.
-  OAuth callback servers need a `Host` method that the trait does not have yet (an HTTP listener). Add it to
-  `pi_host::Host`, `JsHost` and both hosts. The Workers host returns what the TS does on Workers.
+  OAuth callback servers of pi-ai and pi-mcp listen through `pi_host::server::listen_http`: `PiHost.listen` over
+  `node:http` on Node, and on Workers when `nodejs_compat` provides `node:http`, as in the TS.
 - **pi-agent-core**: a new package `rust/npm/pi-agent-core` (`@at-inc/pi-agent-core-rs`) with exports prefixed
   `agent` and an `Agent` handle class. Tool `execute` and hooks are callbacks. JS event streams passed into Rust use
   `events::from_js`.
-- **pi-mcp**: `rust/npm/pi-mcp` (`@at-inc/pi-mcp-rs`). HTTP transports go through `fetch`. The stdio transport needs a
-  process `Host` method (Node: `node:child_process`, Workers: unsupported).
 
 Each new package goes into `workspaces` in `rust/npm/package.json` and gets a `test:vitest` script. Add a CI step
 for it to the `wasm` job in `.github/workflows/rust.yml`.

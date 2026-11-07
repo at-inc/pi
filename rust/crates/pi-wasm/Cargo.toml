@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 pi-host = { workspace = true }
 pi-ai = { workspace = true }
+pi-mcp = { workspace = true }
+url = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 indexmap = { workspace = true }

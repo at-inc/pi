@@ -19,13 +19,14 @@ const ERROR_FIELDS: [&str; 4] = ["name", "message", "stack", "status"];
 
 /// The `PiError` for a thrown JS value. An `Error` (or an object with a string `message`, like a `DOMException` in
 /// runtimes where it is not an `Error`) keeps its `name`, `message` and numeric `status`; its other own enumerable
-/// properties that are plain data (`code`, `cause`, ...) go to `data`. Any other value is `new Error(String(value))`.
+/// properties that are plain data (`code`, `cause`, ...) go to `data`. Any other value is a `PiError` with an empty
+/// `name` and `String(value)` as its `message`, the crates' form of a thrown value that is not an `Error`.
 pub fn from_js(value: JsValue) -> PiError {
 	let message = Reflect::get(&value, &"message".into())
 		.ok()
 		.and_then(|message| message.as_string());
 	let Some(message) = message.filter(|_| value.is_object()) else {
-		return PiError::new(js_string(&value));
+		return PiError::named("", js_string(&value));
 	};
 	let name = Reflect::get(&value, &"name".into())
 		.ok()
@@ -61,10 +62,10 @@ pub fn from_js(value: JsValue) -> PiError {
 }
 
 /// The JS `Error` for a `PiError`: `name` and `message` as given, `status` when set, and the fields of an object
-/// `data` as own properties, the inverse of `from_js`.
+/// `data` as own properties, the inverse of `from_js`. An empty `name` (a thrown non-`Error`) stays `"Error"`.
 pub fn to_js(error: &PiError) -> JsValue {
 	let js = Error::new(&error.message);
-	if error.name != "Error" {
+	if !error.name.is_empty() && error.name != "Error" {
 		js.set_name(&error.name);
 	}
 	if let Some(status) = error.status {

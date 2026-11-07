@@ -49,6 +49,15 @@ pub trait Host {
 		let error = file_not_found(path);
 		Box::pin(async move { Err(error) })
 	}
+	/// `child_process.spawn(command, args, options)` with piped stdio. Hosts without processes (browsers, Workers)
+	/// fail with `process::processes_unsupported`. See `process::spawn_process`.
+	fn spawn_process(
+		&self,
+		_options: crate::process::SpawnOptions,
+		_listeners: crate::process::ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::process::ChildProcess>>> {
+		Box::pin(async { Err(crate::process::processes_unsupported()) })
+	}
 	/// `http.createServer(handler).listen(port, host)`, resolving once it listens; see `server`. Hosts without an
 	/// HTTP listener reject with `server::listen_unsupported()`.
 	fn listen_http(

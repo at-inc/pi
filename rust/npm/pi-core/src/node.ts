@@ -1,5 +1,6 @@
 // Node host: global fetch and WebSocket (looked up per call, so tests can replace them), timers, process.env,
-// node:fs and node:http servers. Importing the package on Node (the default export condition) loads the wasm next to the package with it.
+// node:fs, child processes (process.ts) and HTTP servers (http-server.ts). Importing the package on Node (the default
+// export condition) loads the wasm next to the package with it.
 
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -7,6 +8,7 @@ import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { initCore, type PiHost } from "./core.ts";
 import { listenWith } from "./http-server.ts";
+import { spawnProcess } from "./process.ts";
 
 /** The host the Node entry installs. Its methods may be replaced at runtime: the core reads them per call. */
 export const host: PiHost = {
@@ -22,6 +24,7 @@ export const host: PiHost = {
 		typeof globalThis.WebSocket === "function"
 			? new globalThis.WebSocket(url, { headers } as unknown as string[])
 			: undefined,
+	spawnProcess,
 	listen: listenWith(createServer),
 };
 

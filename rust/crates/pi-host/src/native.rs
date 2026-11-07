@@ -192,6 +192,15 @@ impl Host for NativeHost {
 		Some(NativeWebSocket::connect(url, headers))
 	}
 
+	fn spawn_process(
+		&self,
+		options: crate::process::SpawnOptions,
+		listeners: crate::process::ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::process::ChildProcess>>> {
+		let spawned = crate::native_process::spawn(options, listeners);
+		Box::pin(async move { spawned })
+	}
+
 	fn listen_http(
 		&self,
 		host: &str,

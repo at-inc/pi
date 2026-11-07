@@ -37,6 +37,7 @@ export const host: PiHost = {
 		typeof globalThis.WebSocket === "function"
 			? new globalThis.WebSocket(url, { headers } as unknown as string[])
 			: undefined,
+	spawnProcess: () => undefined,
 	listen: nodeHttp
 		? listenWith(nodeHttp.createServer)
 		: () => Promise.reject(new Error("HTTP servers are not supported on this host")),
