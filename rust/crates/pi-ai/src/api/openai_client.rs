@@ -1,6 +1,7 @@
 //! Rust-only replacement for the `openai` npm SDK (version 7.19.0), limited to what pi-ai uses: a client with an API
 //! key, base URL, default headers and a custom `fetch`, and `POST` requests whose body is JSON and whose response is
 //! an SSE stream (`chat.completions.create({ stream: true })`, `responses.create({ stream: true })`).
+//! PORT-STATUS: reviewed
 //!
 //! It reproduces the SDK behavior that requests and errors observe:
 //! - URL building (`buildURL`): `baseURL + path` with one slash dropped, and the query of the base URL re-encoded with
@@ -23,11 +24,13 @@
 //!   `Object.fromEntries(headers)`, or `null`), `PiError.status`, and `data.error` (the SDK's `error` property), as
 //!   `utils/provider_retry.rs`, `utils/diagnostics.rs` and `utils/error_body.rs` expect.
 //! - SSE decoding: `pi_host::sse`, `[DONE]` ends the stream, a caller abort or an `AbortError` from the body ends it
-//!   quietly, and malformed event JSON fails with the SDK's `SyntaxError`.
+//!   quietly, and malformed event JSON fails with the SDK's `SyntaxError`. A response with a null-body status (204,
+//!   205) has no body to iterate, as `fetch` gives it `body: null`.
 //!
 //! Differences: the `X-Stainless-OS`/`X-Stainless-Arch` headers describe the Rust build target and
 //! `X-Stainless-Runtime`/`X-Stainless-Runtime-Version` are `unknown` (there is no Node.js process to describe); a
-//! timeout fails at once instead of waiting for a `fetch` that ignores its signal; the undici headers-timeout message,
+//! timeout fails at once instead of waiting for a `fetch` that ignores its signal; a timeout above 2^31 - 1 ms waits
+//! that long, where Node's `setTimeout` overflows and fires at once; the undici headers-timeout message,
 //! SDK logging, workload identity, X.509, admin keys, providers and non-JSON request bodies are not reproduced.
 
 use std::rc::Rc;
@@ -211,6 +214,9 @@ impl OpenAI {
 		body: &Value,
 		options: &RequestOptions,
 	) -> PiResult<WithResponse<ApiData>> {
+		if body.is_null() {
+			return Err(PiError::type_error("Cannot read properties of null (reading 'stream')"));
+		}
 		let stream = body.get("stream").is_some_and(is_truthy);
 		let response = self.make_request("post", path, body, options).await?;
 		let api_response = ApiResponse {
