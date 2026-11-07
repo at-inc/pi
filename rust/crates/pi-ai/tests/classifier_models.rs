@@ -2,9 +2,6 @@
 //!
 //! `rejects chat models at the classifier entry point at runtime` casts a chat model to `ClassifierModel`; Rust cannot
 //! cast, so the test builds a `ClassifierModel` from the chat model's fields with `type: "chat"`.
-//!
-//! Not ported, because it classifies through a wave-3 API of another shard: the request half of `routes OpenAI GPT-6
-//! Luna through the Decisions API with images` (openai-decisions, `w3-openai-responses`). Its catalog half is ported.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -177,7 +174,6 @@ mod models_with_classifier_models {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore and resolveAuth (auth/credential-store.ts, auth/resolve.ts, w2-ai-auth)"]
 	fn keeps_chat_and_classifier_entries_with_the_same_provider_and_id_separate() {
 		pi_host::testing::run(|_| async {
 			let chat = chat_model("test", "shared");
@@ -361,7 +357,6 @@ mod models_with_classifier_models {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn rejects_images_for_classifier_models_without_image_input_before_calling_the_provider() {
 		pi_host::testing::run(|_| async {
 			let classifier = classifier_model("test", "text-only");
@@ -400,24 +395,71 @@ mod models_with_classifier_models {
 	}
 
 	#[test]
-	fn routes_openai_gpt_6_luna_through_the_decisions_api() {
-		let models = builtin_models(None);
-		let luna = models
-			.get_model_of_type(ModelType::Classifier, "openai", "gpt-6-luna")
-			.expect("missing OpenAI Decisions model");
-		assert_match_object(
-			&to_json(&luna),
-			&json!({ "api": "openai-decisions", "input": ["text", "image"], "contextWindow": 922000 }),
-		);
-		// The chat entry with the same id stays separate.
-		assert_eq!(
-			models.get_model("openai", "gpt-6-luna").unwrap().api,
-			"openai-responses"
-		);
+	fn routes_openai_gpt_6_luna_through_the_decisions_api_with_images() {
+		pi_host::testing::run(|_| async {
+			let models = builtin_models(None);
+			let luna = models
+				.get_model_of_type(ModelType::Classifier, "openai", "gpt-6-luna")
+				.expect("missing OpenAI Decisions model");
+			assert_match_object(
+				&to_json(&luna),
+				&json!({ "api": "openai-decisions", "input": ["text", "image"], "contextWindow": 922000 }),
+			);
+			// The chat entry with the same id stays separate.
+			assert_eq!(
+				models.get_model("openai", "gpt-6-luna").unwrap().api,
+				"openai-responses"
+			);
+			let AnyModel::Classifier(luna) = luna else {
+				panic!("gpt-6-luna is not a classifier");
+			};
+
+			let urls: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+			let recorded = urls.clone();
+			let fetch: pi_host::FetchFunction = Rc::new(move |request: pi_host::HttpRequest| {
+				recorded.borrow_mut().push(request.url.clone());
+				let body = json!({ "answers": [{ "type": "predicate", "name": "approved", "probability": 0.8 }] });
+				Box::pin(async move {
+					Ok(pi_host::HttpResponse::from_bytes(
+						200,
+						IndexMap::from([("content-type".to_string(), "application/json".to_string())]),
+						pi_host::js::json_stringify(&body),
+					))
+				})
+			});
+			let result = models
+				.classify(
+					&luna,
+					&context_with_images(json!([{ "type": "image", "data": "aW1hZ2U=", "mimeType": "image/png" }])),
+					Some(pi_ai::models::ModelsClassifierOptions {
+						base: ClassifierOptions {
+							base: pi_ai::types::ProviderRequestOptions {
+								api_key: Some("secret".into()),
+								fetch: Some(fetch),
+								..Default::default()
+							},
+							temperature: None,
+						},
+						..Default::default()
+					}),
+				)
+				.await;
+
+			assert_eq!(*urls.borrow(), ["https://api.openai.com/v1/decisions"]);
+			assert_eq!(
+				result.stop_reason,
+				ClassifierStopReason::Stop,
+				"{:?}",
+				result.error_message
+			);
+			assert_eq!(
+				to_json(&result.answers["approved"]),
+				json!({ "type": "bool", "probability": 0.8 })
+			);
+		});
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore and resolveAuth (auth/credential-store.ts, auth/resolve.ts, w2-ai-auth)"]
 	fn lists_openai_decisions_models_only_for_api_key_credentials() {
 		pi_host::testing::run(|_| async {
 			let api_key_store = Rc::new(InMemoryCredentialStore::new());
