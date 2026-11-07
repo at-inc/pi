@@ -120,6 +120,14 @@ impl Host for NativeHost {
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
 		tokio::task::spawn_local(future);
 	}
+
+	fn file_exists(&self, path: &str) -> bool {
+		std::path::Path::new(path).exists()
+	}
+
+	fn home_dir(&self) -> Option<String> {
+		std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned())
+	}
 }
 
 /// Runs `main` on a current-thread tokio runtime inside a `LocalSet`, with a `NativeHost` installed.
