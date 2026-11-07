@@ -14,5 +14,13 @@ export {
 	ModelsError,
 	modelsAreEqual,
 } from "./models.ts";
+export {
+	createFauxCore,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxThinking,
+	fauxToolCall,
+} from "./providers/faux.ts";
 export { AssistantMessageEventStream, createAssistantMessageEventStream, EventStream } from "./utils/event-stream.ts";
 export { normalizeContext } from "./utils/transcript.ts";

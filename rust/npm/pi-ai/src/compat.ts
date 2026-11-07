@@ -5,6 +5,7 @@
 import type * as ts from "@at-inc/pi-ai/compat";
 import { streamFrom, wasm } from "@at-inc/pi-core";
 import { getBuiltinModel, getBuiltinModels, getBuiltinProviders } from "./providers/all.ts";
+import { fauxCoreView } from "./providers/faux.ts";
 
 export type * from "@at-inc/pi-ai/compat";
 export { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
@@ -38,9 +39,15 @@ export {
 	calculateCost,
 	clampThinkingLevel,
 	createAssistantMessageEventStream,
+	createFauxCore,
 	createModels,
 	createProvider,
 	EventStream,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxThinking,
+	fauxToolCall,
 	getModelType,
 	getSupportedThinkingLevels,
 	hasApi,
@@ -108,6 +115,11 @@ export const unregisterApiProviders: typeof ts.unregisterApiProviders = (sourceI
 
 export const registerBuiltInApiProviders: typeof ts.registerBuiltInApiProviders = () =>
 	wasm.aiRegisterBuiltInApiProviders();
+
+export const registerFauxProvider: typeof ts.registerFauxProvider = (options = {}) => {
+	const handle = wasm.aiRegisterFauxProvider(options);
+	return { ...fauxCoreView(handle), unregister: () => handle.unregister() };
+};
 
 export const resetApiProviders: typeof ts.resetApiProviders = () => wasm.aiResetApiProviders();
 

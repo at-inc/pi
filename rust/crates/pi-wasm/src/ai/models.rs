@@ -532,6 +532,13 @@ pub struct ProviderHandle {
 	inner: Rc<Provider>,
 }
 
+impl ProviderHandle {
+	/// The handle of a provider made on the Rust side.
+	pub(super) fn from_provider(inner: Rc<Provider>) -> Self {
+		Self { inner }
+	}
+}
+
 #[wasm_bindgen]
 impl ProviderHandle {
 	/// Another handle to the same provider, for passing by value.

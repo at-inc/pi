@@ -5,6 +5,7 @@ mod anthropic_messages;
 mod azure_openai_responses;
 mod bedrock_converse_stream;
 mod compat;
+mod faux;
 mod github_copilot_headers;
 mod google_generative_ai;
 mod google_shared;
