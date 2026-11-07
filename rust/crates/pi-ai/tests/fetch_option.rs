@@ -1,8 +1,10 @@
 //! Port of `packages/ai/test/fetch-option.test.ts`.
 //!
-//! Every API adapter this file covers is `PORT-STATUS: pending` and owned by a w3 shard, so the file is mostly not
-//! ported yet. Only "uses fetch for image generation" is ported, against the existing `PORT-STUB: w3-bedrock-misc`
-//! `openrouter_images::generate_images`; it is `#[ignore = "needs w3-bedrock-misc: ..."]` until that adapter lands.
+//! Every API adapter this file covers is owned by a w3 shard, so the file is ported as those adapters land. Ported:
+//! "uses fetch for image generation", against the existing `PORT-STUB: w3-bedrock-misc`
+//! `openrouter_images::generate_images`, which is `#[ignore = "needs w3-bedrock-misc: ..."]` until that adapter lands;
+//! "rejects custom fetch for Google adapters instead of silently bypassing it" and "allows Google adapters to receive
+//! globalThis.fetch explicitly" (w3-google-mistral).
 //!
 //! Not ported, because the adapter files are still empty and calling their predicted `stream_simple` would break the
 //! crate's compile. They belong with the owning w3 shards:
@@ -11,26 +13,70 @@
 //!   `api::openai_responses` and `api::azure_openai_responses`, w3-openai-responses).
 //! - "uses fetch for Mistral, Codex SSE, and pi-messages HTTP requests" (`api::mistral_conversations`,
 //!   w3-google-mistral; `api::openai_codex_responses`, w3-openai-responses; `api::pi_messages`, w3-bedrock-misc).
-//! - "rejects custom fetch for Google adapters instead of silently bypassing it" (`api::google_generative_ai` and
-//!   `api::google_vertex`, w3-google-mistral).
-//! - "allows Google adapters to receive globalThis.fetch explicitly" (`api::google_generative_ai`, w3-google-mistral).
 //!
 //! Differences from the TS:
 //! - The stubbed global `fetch` is the test host's fetch, which records every request; "ambient fetch must not be
 //!   called" is `host.requests()` staying empty. `expect(globalThis.fetch).toBe(fallback)` holds by construction: a
-//!   request's `fetch` option cannot replace the host.
+//!   request's `fetch` option cannot replace the host. `globalThis.fetch` passed as the option is `pi_host::global_fetch()`.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
 use pi_ai::api::openrouter_images::generate_images;
+use pi_ai::api::{google_generative_ai, google_vertex};
 use pi_ai::types::{
-	BaseModel, ImageModel, ImagesContext, ImagesOptions, ModelCost, ModelInputModality, ModelType,
-	ProviderRequestOptions, TextContent, UserContent, image_api,
+	BaseModel, Context, ImageModel, ImagesContext, ImagesOptions, Message, Model, ModelCost, ModelInputModality,
+	ModelType, ProviderRequestOptions, SimpleStreamOptions, StreamOptions, TextContent, TranscriptContext, UserContent,
+	UserMessage, UserMessageContent, image_api,
 };
+use pi_ai::utils::transcript::normalize_context;
 use pi_host::testing::run;
-use pi_host::{FetchFunction, HttpResponse};
+use pi_host::{FetchFunction, HttpResponse, global_fetch};
+
+fn context() -> TranscriptContext {
+	normalize_context(&Context {
+		messages: vec![Message::User(UserMessage {
+			content: UserMessageContent::Text("hello".into()),
+			timestamp: 1.0,
+			..UserMessage::default()
+		})],
+		..Context::default()
+	})
+}
+
+fn create_model(api: &str) -> Model {
+	Model {
+		base: BaseModel {
+			id: "test-model".into(),
+			name: "Test Model".into(),
+			api: api.into(),
+			provider: "test-provider".into(),
+			base_url: "https://upstream.test/v1".into(),
+			input: vec![ModelInputModality::Text],
+			cost: ModelCost::default(),
+			..BaseModel::default()
+		},
+		reasoning: false,
+		context_window: 10_000.0,
+		max_tokens: 1_000.0,
+		..Model::default()
+	}
+}
+
+fn simple_options(fetch: FetchFunction) -> SimpleStreamOptions {
+	SimpleStreamOptions {
+		base: StreamOptions {
+			base: ProviderRequestOptions {
+				api_key: Some("test-key".into()),
+				fetch: Some(fetch),
+				..ProviderRequestOptions::default()
+			},
+			..StreamOptions::default()
+		},
+		..SimpleStreamOptions::default()
+	}
+}
 
 /// `mockFetches()`'s `custom`: answers every request with a 401 JSON error and counts the calls.
 fn custom_fetch() -> (FetchFunction, Rc<Cell<usize>>) {
@@ -51,6 +97,66 @@ fn custom_fetch() -> (FetchFunction, Rc<Cell<usize>>) {
 
 mod fetch_stream_option {
 	use super::*;
+
+	#[test]
+	fn rejects_custom_fetch_for_google_adapters_instead_of_silently_bypassing_it() {
+		run(|host| async move {
+			let (custom, calls) = custom_fetch();
+			let google = google_generative_ai::stream_simple(
+				&create_model("google-generative-ai"),
+				&context(),
+				Some(simple_options(custom.clone())),
+			)
+			.unwrap()
+			.result()
+			.await
+			.unwrap();
+			let vertex =
+				google_vertex::stream_simple(&create_model("google-vertex"), &context(), Some(simple_options(custom)))
+					.unwrap()
+					.result()
+					.await
+					.unwrap();
+
+			assert!(
+				google
+					.error_message
+					.unwrap()
+					.contains("Custom fetch is not supported by the Google Generative AI adapter")
+			);
+			assert!(
+				vertex
+					.error_message
+					.unwrap()
+					.contains("Custom fetch is not supported by the Google Vertex adapter")
+			);
+			assert_eq!(calls.get(), 0);
+			assert!(host.requests().is_empty());
+		});
+	}
+
+	#[test]
+	fn allows_google_adapters_to_receive_global_this_fetch_explicitly() {
+		run(|host| async move {
+			host.respond_with(
+				401,
+				&[("content-type", "application/json")],
+				r#"{"error":{"message":"upstream rejected request"}}"#,
+			);
+			let result = google_generative_ai::stream_simple(
+				&create_model("google-generative-ai"),
+				&context(),
+				Some(simple_options(global_fetch())),
+			)
+			.unwrap()
+			.result()
+			.await
+			.unwrap();
+
+			assert_eq!(host.requests().len(), 1);
+			assert!(!result.error_message.unwrap().contains("Custom fetch is not supported"));
+		});
+	}
 
 	#[test]
 	#[ignore = "needs w3-bedrock-misc: openrouter_images::generate_images"]

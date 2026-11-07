@@ -1,19 +1,16 @@
 //! Port of `packages/ai/src/api/google-vertex.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
 
-// PORT-STUB: w3-google-mistral
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::PiError;
-
+use crate::api::google_vertex::GoogleVertexStreams;
 use crate::api::lazy::lazy_api;
 use crate::types::ProviderStreams;
 
-/// `googleVertexApi()`: every stream ends with an `API not ported` error event.
+/// `googleVertexApi()`: the google-vertex API, loaded on first use.
 pub fn google_vertex_api() -> Rc<dyn ProviderStreams> {
 	lazy_api(
-		Rc::new(|| Box::pin(async { Err(PiError::new("API not ported")) })),
+		Rc::new(|| Box::pin(async { Ok(Rc::new(GoogleVertexStreams) as Rc<dyn ProviderStreams>) })),
 		None,
 	)
 }
