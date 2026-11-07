@@ -1,9 +1,12 @@
 //! Port of `packages/ai/test/kimi-coding-endpoints.test.ts`.
 //!
-//! Not ported here: `uses the stored %s deployment for OAuth inference` tests `kimiCodingOAuth.toAuth`
-//! (`auth/oauth/kimi-coding.ts`, shard w2-ai-auth) and moves with that file. `it.each` cases run in a loop.
+//! `it.each` cases run in a loop.
 
+use indexmap::IndexMap;
+use pi_ai::auth::oauth::kimi_coding::kimi_coding_oauth;
+use pi_ai::auth::types::{ModelAuth, OAuthCredential};
 use pi_ai::utils::kimi_coding::{KimiCodingEndpoints, KimiCodingEndpointsInput, kimi_coding_endpoints};
+use serde_json::json;
 
 // #10720
 mod kimi_chat_completions_endpoints {
@@ -23,6 +26,33 @@ mod kimi_chat_completions_endpoints {
 					base_url: "https://api.kimi.ai/coding/v1".into(),
 				},
 				"suffix {suffix:?}"
+			);
+		}
+	}
+
+	#[test]
+	fn uses_the_stored_deployment_for_oauth_inference() {
+		for domain in ["ai", "com"] {
+			let mut credential = OAuthCredential::new("test-refresh", "test-access", 0.0);
+			credential
+				.extra
+				.insert("oauthHost".into(), json!(format!("https://auth.kimi.{domain}")));
+			credential
+				.extra
+				.insert("baseUrl".into(), json!(format!("https://api.kimi.{domain}/coding")));
+			let auth = pi_host::testing::run(|_| (kimi_coding_oauth().to_auth)(credential)).unwrap();
+
+			assert_eq!(
+				auth,
+				ModelAuth {
+					api_key: None,
+					headers: Some(IndexMap::from([(
+						"Authorization".to_string(),
+						Some("Bearer test-access".to_string())
+					)])),
+					base_url: Some(format!("https://api.kimi.{domain}/coding/v1")),
+				},
+				"{domain}"
 			);
 		}
 	}
