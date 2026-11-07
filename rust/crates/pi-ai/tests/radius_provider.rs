@@ -191,3 +191,37 @@ mod radius_provider_catalogs {
 		});
 	}
 }
+
+mod port_regressions {
+	use pi_ai::auth::types::OAuthCredential;
+	use pi_ai::providers::radius_config::get_radius_credential_config;
+	use serde_json::json;
+
+	#[test]
+	fn keeps_an_explicit_null_thinking_level_map_in_the_gateway_config() {
+		let mut credential = OAuthCredential::new("refresh", "access", 0.0);
+		credential.extra.insert(
+			"gatewayConfig".into(),
+			json!({
+				"baseUrl": "https://radius.example/v1",
+				"models": [{
+					"id": "balanced",
+					"name": "Balanced",
+					"reasoning": true,
+					"thinkingLevelMap": null,
+					"input": ["text"],
+					"cost": { "input": 1, "output": 2, "cacheRead": 0, "cacheWrite": 0 },
+					"contextWindow": 1000,
+					"maxTokens": 100
+				}]
+			}),
+		);
+
+		let config = get_radius_credential_config(Some(&credential)).unwrap();
+		assert_eq!(config.models[0].thinking_level_map, Some(None));
+		assert_eq!(
+			serde_json::to_value(&config).unwrap()["models"][0]["thinkingLevelMap"],
+			json!(null)
+		);
+	}
+}
