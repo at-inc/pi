@@ -41,7 +41,7 @@ fn cloudflare_error_message(errors: Option<&Value>) -> String {
 /// Clef models take images as an `images` list of data URLs. TypeSafe's models take them as
 /// System One `assets`, without TypeSafe's opt-in header. The catalog sets `compat.imageInput`;
 /// the model ID check only covers models without it.
-const TRANSPORT: SystemOneTransport = SystemOneTransport {
+static TRANSPORT: SystemOneTransport = SystemOneTransport {
 	api: "cloudflare-workers-ai-system-one",
 	label: LABEL,
 	detect_compat: |model| ResolvedSystemOneCompat {
@@ -120,6 +120,5 @@ pub fn classify(
 	context: &ClassifierContext,
 	options: Option<ClassifierOptions>,
 ) -> LocalBoxFuture<'static, PiResult<ClassifierResult>> {
-	let (model, context) = (model.clone(), context.clone());
-	Box::pin(async move { Ok(classify_system_one(&TRANSPORT, &model, &context, options).await) })
+	classify_system_one(&TRANSPORT, model, context, options)
 }

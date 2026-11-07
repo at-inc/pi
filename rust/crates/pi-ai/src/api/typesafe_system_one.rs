@@ -18,7 +18,7 @@ use crate::types::{ClassifierContext, ClassifierModel, ClassifierOptions, Classi
 /// OpenRouter drops `assets` silently and takes images as `image_url` parts in the state instead.
 /// Models behind a proxy that hides both the provider ID and the OpenRouter host must set
 /// `compat.imageInput`.
-const TRANSPORT: SystemOneTransport = SystemOneTransport {
+static TRANSPORT: SystemOneTransport = SystemOneTransport {
 	api: "typesafe-system-one",
 	label: "System One API",
 	detect_compat,
@@ -59,6 +59,5 @@ pub fn classify(
 	context: &ClassifierContext,
 	options: Option<ClassifierOptions>,
 ) -> LocalBoxFuture<'static, PiResult<ClassifierResult>> {
-	let (model, context) = (model.clone(), context.clone());
-	Box::pin(async move { Ok(classify_system_one(&TRANSPORT, &model, &context, options).await) })
+	classify_system_one(&TRANSPORT, model, context, options)
 }

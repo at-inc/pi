@@ -4,16 +4,18 @@
 //! `SystemOneWireRequest` is built as a JSON object in the TS insertion order (`state`, `questions`, then `assets` or
 //! `images`), because it is sent as-is. Questions serialize from the typed `ClassifierQuestion`, so their keys follow
 //! the Rust struct order (`type`, `instructions`, `criteria`) and app fields on a question are not sent. Question IDs,
-//! probabilities and answers are walked in JS `Object.entries` order (array-index keys first). `SystemOneCompat`
-//! fields read through `ClassifierModel::system_one_compat`, so an `imageInput` value outside the three known forms
-//! reads as unset and falls back to the detected form, where TS would send `assets`.
+//! probabilities and answers are walked in JS `Object.entries` order (array-index keys first). The `compat` fields
+//! are read from the raw JSON like the TS property reads: any non-nullish `imageInput` other than `images` and
+//! `state-image-urls` sends `assets`, and `sendImageOptInHeader` is tested for JS truthiness. `classify_system_one`
+//! starts at once on the host executor, like the TS async function, and takes `timestamp` when called.
 
 use indexmap::IndexMap;
-use pi_host::{PiError, PiResult};
+use pi_host::{LocalBoxFuture, PiError, PiResult};
 use serde_json::{Map, Value, json};
 use url::Url;
 
 use super::classifier_shared::{parse_classifier_usage, post_classifier_request, required_number};
+use super::lazy::start_now;
 use crate::providers::compat_schema::SystemOneImageInput;
 use crate::types::{
 	ClassifierAnswer, ClassifierBoolAnswer, ClassifierChoiceAnswer, ClassifierContext, ClassifierModel,
@@ -87,9 +89,14 @@ fn parse_answers(
 	let Some(Value::Object(value)) = value else {
 		return Err(PiError::new(format!("{label} returned an unexpected response")));
 	};
+	// A JSON object without an own `__proto__` key still reads `Object.prototype` there: a record without fields.
+	let prototype = Value::Object(Map::new());
 	let mut answers = IndexMap::new();
 	for (id, question) in js_entries(&context.questions) {
-		let Some(Value::Object(answer)) = value.get(id.as_str()) else {
+		let answer = value
+			.get(id.as_str())
+			.or_else(|| (id == "__proto__").then_some(&prototype));
+		let Some(Value::Object(answer)) = answer else {
 			return Err(PiError::new(format!("{label} did not return an answer for {id}")));
 		};
 		let answer_type = answer.get("type").and_then(Value::as_str);
@@ -222,13 +229,24 @@ fn wire_request(context: &ClassifierContext) -> SystemOneWireRequest {
 	request
 }
 
+/// JS truthiness of a JSON value.
+fn truthy(value: &Value) -> bool {
+	match value {
+		Value::Null => false,
+		Value::Bool(value) => *value,
+		Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+		Value::String(text) => !text.is_empty(),
+		Value::Array(_) | Value::Object(_) => true,
+	}
+}
+
 /// Runs one System One classification over the given transport. Failures are encoded in the result.
-pub async fn classify_system_one(
-	transport: &SystemOneTransport,
+pub fn classify_system_one(
+	transport: &'static SystemOneTransport,
 	model: &ClassifierModel,
 	context: &ClassifierContext,
 	options: Option<ClassifierOptions>,
-) -> ClassifierResult {
+) -> LocalBoxFuture<'static, PiResult<ClassifierResult>> {
 	let mut output = ClassifierResult {
 		api: model.api.clone(),
 		provider: model.provider.clone(),
@@ -239,22 +257,24 @@ pub async fn classify_system_one(
 		error_message: None,
 		timestamp: pi_host::now_ms(),
 	};
-
-	let Err(error) = run_system_one(transport, model, context, options.as_ref(), &mut output).await else {
-		return output;
-	};
-	let aborted = options
-		.as_ref()
-		.and_then(|options| options.signal.as_ref())
-		.is_some_and(|signal| signal.aborted());
-	output.stop_reason = if aborted {
-		ClassifierStopReason::Aborted
-	} else {
-		ClassifierStopReason::Error
-	};
-	let prefix = format!("{} error", transport.label);
-	output.error_message = Some(format_provider_error(&normalize_provider_error(&error), Some(&prefix)));
-	output
+	let (model, context) = (model.clone(), context.clone());
+	start_now(async move {
+		let Err(error) = run_system_one(transport, &model, &context, options.as_ref(), &mut output).await else {
+			return Ok(output);
+		};
+		let aborted = options
+			.as_ref()
+			.and_then(|options| options.signal.as_ref())
+			.is_some_and(|signal| signal.aborted());
+		output.stop_reason = if aborted {
+			ClassifierStopReason::Aborted
+		} else {
+			ClassifierStopReason::Error
+		};
+		let prefix = format!("{} error", transport.label);
+		output.error_message = Some(format_provider_error(&normalize_provider_error(&error), Some(&prefix)));
+		Ok(output)
+	})
 }
 
 /// The `try` body of `classifySystemOne`.
@@ -278,18 +298,22 @@ async fn run_system_one(
 			)));
 		}
 		let detected = (transport.detect_compat)(model);
-		let compat = model.system_one_compat();
-		add_images(
-			transport.label,
-			model,
-			compat.image_input.unwrap_or(detected.image_input),
-			images,
-			&mut request,
-		)?;
-		if compat
-			.send_image_opt_in_header
-			.unwrap_or(detected.send_image_opt_in_header)
-		{
+		let compat_field = |name: &str| {
+			model
+				.compat
+				.as_ref()
+				.and_then(|compat| compat.get(name))
+				.filter(|value| !value.is_null())
+		};
+		let image_input = match compat_field("imageInput") {
+			None => detected.image_input,
+			Some(Value::String(input)) if input == "images" => SystemOneImageInput::Images,
+			Some(Value::String(input)) if input == "state-image-urls" => SystemOneImageInput::StateImageUrls,
+			Some(_) => SystemOneImageInput::Assets,
+		};
+		add_images(transport.label, model, image_input, images, &mut request)?;
+		let send_opt_in_header = compat_field("sendImageOptInHeader").map_or(detected.send_image_opt_in_header, truthy);
+		if send_opt_in_header {
 			let mut headers = ProviderHeaders::from([(IMAGE_OPT_IN_HEADER.to_string(), Some("true".to_string()))]);
 			if let Some(option_headers) = options.and_then(|options| options.headers.as_ref()) {
 				headers.extend(option_headers.clone());
