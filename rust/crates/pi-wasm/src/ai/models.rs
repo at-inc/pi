@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use js_sys::{Function, Object, Promise, Reflect};
-use pi_ai::auth::types::{ApiKeyAuth, ApiKeyAuthInput, AuthContext, ProviderAuth};
+use pi_ai::auth::types::AuthType;
 use pi_ai::{
 	CreateModelsOptions, CreateProviderOptions, ModelsApiStreamOptions, ModelsSimpleStreamOptions, MutableModels,
 	Provider, ProviderApi, ProviderModel, ProviderStreams,
@@ -168,7 +168,7 @@ pub fn create_provider(
 		name: optional(field("name"))?,
 		base_url: optional(field("baseUrl"))?,
 		headers: optional(field("headers"))?,
-		auth: provider_auth(&field("auth")),
+		auth: super::auth::provider_auth(&field("auth")),
 		models: optional::<Vec<ProviderModel>>(field("models"))?.unwrap_or_default(),
 		fetch_models: None,
 		filter_models: None,
@@ -188,89 +188,6 @@ fn optional<T: serde::de::DeserializeOwned>(value: JsValue) -> Result<Option<T>,
 		Ok(None)
 	} else {
 		arg(value).map(Some)
-	}
-}
-
-/// `ProviderAuth` of a JS `auth` object. `apiKey.resolve` and `apiKey.check` are bridged; `login` and `oauth` belong
-/// to the auth facade and are not bridged yet.
-fn provider_auth(auth: &JsValue) -> ProviderAuth {
-	let api_key = Reflect::get(auth, &"apiKey".into()).unwrap_or(JsValue::UNDEFINED);
-	if !api_key.is_object() {
-		return ProviderAuth::default();
-	}
-	let method = |name: &str| Reflect::get(&api_key, &name.into()).ok()?.dyn_into::<Function>().ok();
-	let name = Reflect::get(&api_key, &"name".into())
-		.ok()
-		.and_then(|name| name.as_string())
-		.unwrap_or_default();
-	let resolve = method("resolve");
-	let check = method("check");
-	let this = api_key.clone();
-	ProviderAuth {
-		api_key: Some(ApiKeyAuth {
-			name,
-			login: None,
-			check: check.map(|check| {
-				let this = this.clone();
-				Rc::new(move |input: ApiKeyAuthInput| {
-					let (check, this) = (check.clone(), this.clone());
-					Box::pin(async move { optional_result(&check, &this, input).await }) as pi_host::LocalBoxFuture<_>
-				}) as pi_ai::auth::types::ApiKeyCheckFunction
-			}),
-			resolve: match resolve {
-				Some(resolve) => Rc::new(move |input: ApiKeyAuthInput| {
-					let (resolve, this) = (resolve.clone(), this.clone());
-					Box::pin(async move { optional_result(&resolve, &this, input).await })
-				}),
-				None => Rc::new(|_| Box::pin(async { Ok(None) })),
-			},
-		}),
-		oauth: None,
-	}
-}
-
-/// Calls an api-key auth method with `{ ctx, credential, signal }`; `undefined` is `None`.
-async fn optional_result<T: serde::de::DeserializeOwned>(
-	function: &Function,
-	this: &JsValue,
-	input: ApiKeyAuthInput,
-) -> PiResult<Option<T>> {
-	let object = Object::new();
-	let ctx: JsValue = AuthContextHandle { inner: input.ctx }.into();
-	let _ = Reflect::set(&object, &"ctx".into(), &ctx);
-	if let Some(credential) = &input.credential {
-		let _ = Reflect::set(&object, &"credential".into(), &crate::json::to_js(credential)?);
-	}
-	let signal = crate::abort::to_js(&input.signal);
-	let _ = Reflect::set(&object, &"signal".into(), &signal.js);
-	let result = crate::callback::call(function, this, &[object.into()]).await?;
-	if result.is_undefined() || result.is_null() {
-		return Ok(None);
-	}
-	crate::json::from_js(result).map(Some)
-}
-
-/// The `AuthContext` an api-key auth method receives as `ctx`.
-#[wasm_bindgen]
-pub struct AuthContextHandle {
-	inner: Rc<dyn AuthContext>,
-}
-
-#[wasm_bindgen]
-impl AuthContextHandle {
-	/// `ctx.env(name)`.
-	pub fn env(&self, name: String) -> Promise {
-		let pending = self.inner.env(&name);
-		wasm_bindgen_futures::future_to_promise(
-			async move { Ok(pending.await.map_or(JsValue::UNDEFINED, JsValue::from)) },
-		)
-	}
-
-	/// `ctx.fileExists(path)`.
-	#[wasm_bindgen(js_name = fileExists)]
-	pub fn file_exists(&self, path: String) -> Promise {
-		let pending = self.inner.file_exists(&path);
-		wasm_bindgen_futures::future_to_promise(async move { Ok(JsValue::from(pending.await)) })
 	}
 }
 
@@ -335,20 +252,18 @@ impl ProviderHandle {
 	}
 }
 
-/// `createModels(options)`. Only `identity` is bridged; `credentials`, `modelsStore` and `authContext` belong to the
-/// auth facade.
+/// `createModels(options)`. `credentials`, `modelsStore` and `authContext` are JS objects whose methods the Rust
+/// collection calls.
 #[wasm_bindgen(js_name = aiCreateModels)]
 pub fn create_models(options: JsValue) -> Result<ModelsHandle, JsValue> {
-	let identity = Reflect::get(&options, &"identity".into()).unwrap_or(JsValue::UNDEFINED);
-	let identity = if identity.is_undefined() {
-		None
-	} else {
-		Some(arg(identity)?)
-	};
+	let field = |name: &str| Reflect::get(&options, &name.into()).unwrap_or(JsValue::UNDEFINED);
+	let present = |name: &str| Some(field(name)).filter(JsValue::is_object);
 	Ok(ModelsHandle {
 		inner: pi_ai::create_models(Some(CreateModelsOptions {
-			identity,
-			..CreateModelsOptions::default()
+			identity: optional(field("identity"))?,
+			credentials: present("credentials").map(|store| super::auth::credential_store_from_js(&store)),
+			models_store: present("modelsStore").map(|store| super::auth::models_store_from_js(&store)),
+			auth_context: present("authContext").map(|context| super::auth::auth_context_from_js(&context)),
 		})),
 	})
 }
@@ -392,6 +307,35 @@ impl ModelsHandle {
 			Some(model) => throw(crate::json::to_js(&model)),
 			None => Ok(JsValue::UNDEFINED),
 		}
+	}
+
+	/// `models.login(providerId, type, interaction, options)`.
+	pub fn login(
+		&self,
+		provider_id: &str,
+		r#type: JsValue,
+		interaction: JsValue,
+		options: JsValue,
+	) -> Result<Promise, JsValue> {
+		let r#type: AuthType = arg(r#type)?;
+		let login = self.inner.login(
+			provider_id,
+			r#type,
+			super::auth::interaction_from_js(&interaction),
+			super::auth::login_options_from_js(&options),
+		);
+		Ok(super::auth::promise(async move { crate::json::to_js(&login.await?) }))
+	}
+
+	/// `models.logout(providerId, options)`.
+	pub fn logout(&self, provider_id: &str, options: JsValue) -> Promise {
+		let logout = self
+			.inner
+			.logout(provider_id, super::auth::auth_operation_options(&options));
+		super::auth::promise(async move {
+			logout.await?;
+			Ok(JsValue::UNDEFINED)
+		})
 	}
 
 	/// `models.stream(model, context, options)`.

@@ -6,10 +6,9 @@
 //! This public-client flow uses no client secret and sends the resulting user
 //! access token directly to api.openai.com.
 //!
-//! Port notes: the callback server is `node:http` in TS and needs the `native` feature here (the shared
-//! `callback_server::loopback` server, with Node's binding, parsing and `close()`/`closeAllConnections()`
-//! behaviour); without it login rejects with `OAuth callback server requires the native feature`, as TS does where
-//! `node:http` is missing. `CALLBACK_HOST` is read when a login starts, not when the module loads. `randomBytes` is
+//! Port notes: the callback server is `node:http` in TS and the host's HTTP listener here
+//! (`pi_host::server::listen_http`, with Node's binding, `close()` and `closeAllConnections()`); on a host without
+//! one, login rejects with the host's error, as TS does where `node:http` is missing. `CALLBACK_HOST` is read when a login starts, not when the module loads. `randomBytes` is
 //! `rand`. `response.json()` is `response.text()` plus `JSON.parse`. The credential serializes `refresh` before
 //! `access` (see `auth/types.rs`).
 
@@ -102,7 +101,6 @@ fn authorization_result_from_manual_input(input: &str, expected_state: &str) -> 
 	authorization_result_from_callback(&url, expected_state)
 }
 
-#[cfg(feature = "native")]
 mod server {
 	use std::rc::Rc;
 
@@ -110,8 +108,8 @@ mod server {
 	use pi_host::{LocalBoxFuture, PiError, PiResult};
 
 	use super::{AuthorizationResult, CALLBACK_PORT, REDIRECT_URI, authorization_result_from_callback, search_param};
-	use crate::auth::oauth::callback_server::loopback::{LoopbackRequest, LoopbackResponse, LoopbackServer, listen};
 	use crate::utils::oauth_page::{oauth_error_html, oauth_success_html};
+	use pi_host::server::{HttpServer, HttpServerHandler, HttpServerRequest, HttpServerResponse, listen_http};
 
 	const CALLBACK_PATH: &str = "/auth/callback";
 
@@ -125,19 +123,19 @@ mod server {
 	}
 
 	pub(super) struct CallbackServer {
-		pub server: LoopbackServer,
+		pub server: Rc<dyn HttpServer>,
 		pub result: oneshot::Receiver<PiResult<AuthorizationResult>>,
 	}
 
-	fn send_html(status: u16, body: String) -> LoopbackResponse {
-		LoopbackResponse {
+	fn send_html(status: u16, body: String) -> HttpServerResponse {
+		HttpServerResponse {
 			status,
-			headers: vec![("Content-Type", "text/html; charset=utf-8")],
+			headers: vec![("Content-Type".into(), "text/html; charset=utf-8".into())],
 			body,
 		}
 	}
 
-	fn handle(request: &LoopbackRequest, expected_state: &str, result: &AuthorizationSender) -> LoopbackResponse {
+	fn handle(request: &HttpServerRequest, expected_state: &str, result: &AuthorizationSender) -> HttpServerResponse {
 		let Ok(url) = url::Url::parse(REDIRECT_URI).and_then(|base| base.join(&request.target)) else {
 			return send_html(
 				500,
@@ -179,42 +177,17 @@ mod server {
 		let expected_state = expected_state.to_string();
 		let handler = {
 			let result = result.clone();
-			Rc::new(move |request: LoopbackRequest| {
+			Rc::new(move |request: HttpServerRequest| {
 				let response = handle(&request, &expected_state, &result);
-				Box::pin(async move { response }) as LocalBoxFuture<'static, LoopbackResponse>
-			})
+				Box::pin(async move { response }) as LocalBoxFuture<'static, HttpServerResponse>
+			}) as HttpServerHandler
 		};
 		let on_error = Rc::new(move |error: PiError| settle(&result, Err(error)));
-		let server = listen(host, CALLBACK_PORT, handler, on_error).await?;
+		let server = listen_http(host, CALLBACK_PORT, handler, on_error).await?;
 		Ok(CallbackServer {
 			server,
 			result: receiver,
 		})
-	}
-}
-
-#[cfg(not(feature = "native"))]
-mod server {
-	use futures::channel::oneshot;
-	use pi_host::{PiError, PiResult};
-
-	use super::AuthorizationResult;
-
-	pub(super) struct LoopbackServer;
-
-	impl LoopbackServer {
-		pub(super) fn close(&self) {}
-
-		pub(super) fn close_all_connections(&self) {}
-	}
-
-	pub(super) struct CallbackServer {
-		pub server: LoopbackServer,
-		pub result: oneshot::Receiver<PiResult<AuthorizationResult>>,
-	}
-
-	pub(super) async fn start_callback_server(_host: &str, _expected_state: &str) -> PiResult<CallbackServer> {
-		Err(PiError::new("OAuth callback server requires the native feature"))
 	}
 }
 

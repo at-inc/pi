@@ -80,6 +80,21 @@ pub fn to_js(signal: &AbortSignal) -> JsSignal {
 	}
 }
 
+/// A JS `AbortSignal` that follows a Rust signal for the Rust signal's whole life, for a signal JS may keep after the
+/// call that received it settles (a prompt's signal aborts once the login settles). The listener leaves the Rust
+/// signal when it fires or when the signal is dropped.
+pub fn to_js_lasting(signal: &AbortSignal) -> JsValue {
+	let controller = JsAbortController::new();
+	let js = controller.signal();
+	match signal.reason() {
+		Some(reason) => controller.abort(&crate::error::to_js(&reason)),
+		None => {
+			signal.add_listener(move |reason| controller.abort(&crate::error::to_js(reason)));
+		}
+	}
+	js
+}
+
 impl Drop for JsSignal {
 	fn drop(&mut self) {
 		if let Some(listener) = self.listener {

@@ -7,6 +7,7 @@ use crate::LocalBoxFuture;
 use crate::abort::AbortSignal;
 use crate::error::{PiError, PiResult};
 use crate::http::{HttpRequest, HttpResponse};
+use crate::server::{HttpServer, HttpServerErrorHandler, HttpServerHandler};
 use crate::websocket::WebSocket;
 
 /// Platform services. One implementation per embedding: napi (Node), wasm (Workers/browsers), native tokio,
@@ -47,6 +48,17 @@ pub trait Host {
 	fn read_file(&self, path: &str) -> LocalBoxFuture<'static, PiResult<String>> {
 		let error = file_not_found(path);
 		Box::pin(async move { Err(error) })
+	}
+	/// `http.createServer(handler).listen(port, host)`, resolving once it listens; see `server`. Hosts without an
+	/// HTTP listener reject with `server::listen_unsupported()`.
+	fn listen_http(
+		&self,
+		_host: &str,
+		_port: u16,
+		_handler: HttpServerHandler,
+		_on_error: HttpServerErrorHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn HttpServer>>> {
+		Box::pin(async { Err(crate::server::listen_unsupported()) })
 	}
 }
 
