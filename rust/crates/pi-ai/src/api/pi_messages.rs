@@ -533,7 +533,16 @@ fn js_string(value: Option<&Value>) -> String {
 /// `createEventConverter(model)`: the partial message every event shares, and the tool argument streams.
 struct EventConverter {
 	partial: SharedAssistantMessage,
-	tool_arguments: HashMap<usize, ToolCallArgumentsStream>,
+	tool_arguments: HashMap<usize, ToolArguments>,
+}
+
+/// One `toolArguments` entry. The stream updates the tool call block's arguments in place; `detached` holds them once
+/// a later `*_start` replaced the block, because TS keeps assigning the stream's own object to whatever block sits at
+/// the index.
+#[derive(Default)]
+struct ToolArguments {
+	stream: ToolCallArgumentsStream,
+	detached: Option<Map<String, Value>>,
 }
 
 impl EventConverter {
@@ -660,7 +669,7 @@ impl EventConverter {
 				}
 				block.insert("arguments".into(), json!({}));
 				self.set_block(at(), Value::Object(block))?;
-				self.tool_arguments.insert(at(), ToolCallArgumentsStream::new());
+				self.tool_arguments.insert(at(), ToolArguments::default());
 				AssistantMessageEvent::ToolcallStart {
 					content_index: at(),
 					partial,
@@ -669,14 +678,29 @@ impl EventConverter {
 			"toolcall_delta" => {
 				let delta = js_string(fields.get("delta"));
 				if let Some(arguments) = self.tool_arguments.get_mut(&at()) {
-					let arguments = arguments.append(&delta);
 					let mut partial = self.partial.borrow_mut();
-					match &mut partial.content[at()] {
-						AssistantContent::ToolCall(tool_call) => tool_call.arguments = (*arguments).clone(),
-						_ => {
-							drop(partial);
-							self.assign(at(), [("arguments", Some(&Value::Object((*arguments).clone())))])?;
-						}
+					if let (AssistantContent::ToolCall(tool_call), None) =
+						(&mut partial.content[at()], &arguments.detached)
+					{
+						arguments.stream.append(&delta, &mut tool_call.arguments);
+					} else {
+						drop(partial);
+						let detached = match &mut arguments.detached {
+							Some(detached) => {
+								arguments.stream.append(&delta, detached);
+								detached
+							}
+							// The replaced block took the arguments so far with it: rebuild them from the whole text.
+							None => {
+								let text = format!("{}{delta}", arguments.stream.text());
+								arguments.stream = ToolCallArgumentsStream::new();
+								let mut detached = Map::new();
+								arguments.stream.append(&text, &mut detached);
+								arguments.detached.insert(detached)
+							}
+						};
+						let value = Value::Object(detached.clone());
+						self.assign(at(), [("arguments", Some(&value))])?;
 					}
 				}
 				AssistantMessageEvent::ToolcallDelta {

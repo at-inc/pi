@@ -202,6 +202,35 @@ mod pi_messages {
 		});
 	}
 
+	/// Rust-only: a later `text_start` replaced the tool call block, so TS assigns the stream's arguments to the text block.
+	#[test]
+	fn keeps_assigning_streamed_arguments_to_a_replaced_block() {
+		run(|host| async move {
+			serve_events(
+				&host,
+				&[],
+				&[
+					json!({ "type": "start" }),
+					json!({ "type": "toolcall_start", "contentIndex": 0, "id": "c", "toolName": "t" }),
+					json!({ "type": "toolcall_delta", "contentIndex": 0, "delta": "{\"a\":1" }),
+					json!({ "type": "text_start", "contentIndex": 0 }),
+					json!({ "type": "toolcall_delta", "contentIndex": 0, "delta": "2,\"b\":\"x" }),
+					json!({ "type": "toolcall_delta", "contentIndex": 0, "delta": "y\"}" }),
+					json!({ "type": "done", "reason": "stop", "usage": usage() }),
+				],
+			);
+			let message = result(Some(PiMessagesOptions {
+				base: options(StreamOptions::default()),
+				..PiMessagesOptions::default()
+			}))
+			.await;
+			assert_eq!(
+				to_value(&message)["content"],
+				json!([{ "type": "text", "text": "", "arguments": { "a": 12, "b": "xy" } }])
+			);
+		});
+	}
+
 	#[test]
 	fn forwards_parsed_wire_events_in_order_before_converting_them() {
 		run(|host| async move {
