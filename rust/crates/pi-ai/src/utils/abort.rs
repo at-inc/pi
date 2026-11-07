@@ -30,8 +30,11 @@ pub fn race_with_abort_signal<T: 'static>(
 	// TS checks the signal when the race starts, not when it is first awaited.
 	let aborted_at_start = signal.aborted().then(|| abort_reason(signal));
 	let (sender, receiver) = oneshot::channel();
+	let settle_signal = signal.clone();
 	pi_host::spawn_local(async move {
-		let _ = sender.send(operation.await);
+		let result = operation.await;
+		// TS's abort listener rejects the race at once, so an abort that lands while the operation runs wins.
+		let _ = sender.send((!settle_signal.aborted()).then_some(result));
 	});
 	let signal = signal.clone();
 	async move {
@@ -42,7 +45,8 @@ pub fn race_with_abort_signal<T: 'static>(
 		futures::pin_mut!(aborted);
 		// The operation first: one that settled before the abort wins, as its TS `then` ran first.
 		match select(receiver, aborted).await {
-			Either::Left((Ok(result), _)) => result,
+			Either::Left((Ok(Some(result)), _)) => result,
+			Either::Left((Ok(None), _)) => Err(abort_reason(&signal)),
 			Either::Left((Err(_), _)) => futures::future::pending().await,
 			Either::Right((reason, _)) => Err(reason),
 		}
@@ -104,6 +108,22 @@ mod tests {
 			aborted.abort_with(PiError::new("early"));
 			let race = race_with_abort_signal(async { Ok(1) }, &aborted.signal());
 			assert_eq!(race.await.unwrap_err().message, "early");
+		});
+	}
+
+	#[test]
+	fn rejects_when_the_signal_aborts_before_the_operation_settles() {
+		pi_host::testing::run(|_| async {
+			let controller = AbortController::new();
+			let aborter = controller.clone();
+			let race = race_with_abort_signal(
+				async move {
+					aborter.abort_with(PiError::new("aborted while running"));
+					Ok(1)
+				},
+				&controller.signal(),
+			);
+			assert_eq!(race.await.unwrap_err().message, "aborted while running");
 		});
 	}
 }
