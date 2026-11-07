@@ -1,2 +1,238 @@
 //! Port of `packages/ai/src/providers/openrouter.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
+//!
+//! Differences from the TS:
+//! - `Provider<TApi>`'s type parameter only narrows the API type, so the factory returns a plain `Provider`.
+//! - `createProvider()` throws only without an implementation, which this factory always passes, so the factory
+//!   returns the provider instead of a `PiResult`.
+//! - `personalizeOpenRouterCatalog` returns a copy of the catalog where the TS returns the same array.
+//! - The TS casts each `/models/user` entry with a string `id` to `OpenRouterModel`; Rust reads its fields from
+//!   JSON. Limits are read as numbers, so a truthy non-number limit falls through to the next candidate instead of
+//!   becoming the model's limit. Prices may be strings or numbers (`parseFloat(String(n))` reads both alike); other
+//!   price values read as missing, as `parseFloat` makes them NaN. An override whose `min_prompt_tokens` is not a
+//!   number yields no tier, and a present `utc_*` key of any value skips its override like `!== undefined` does.
+//! - `AbortSignal.timeout(15_000)` is an `AbortController` aborted with a `TimeoutError` by a host timer.
+
+use std::rc::Rc;
+
+use indexmap::IndexMap;
+use pi_host::{AbortController, AbortSignal, HttpRequest, PiError, PiResult};
+use serde_json::Value;
+
+use crate::api::anthropic_messages_lazy::anthropic_messages_api;
+use crate::api::openai_completions_lazy::openai_completions_api;
+use crate::api::openrouter_images_lazy::openrouter_images_api;
+use crate::api::typesafe_system_one_lazy::typesafe_system_one_api;
+use crate::auth::helpers::{LazyOAuthInput, env_api_key_auth, lazy_oauth};
+use crate::auth::oauth::load::load_openrouter_oauth;
+use crate::auth::types::{Credential, ProviderAuth};
+use crate::models::{CreateProviderOptions, Provider, ProviderApi, RefreshModelsContext, create_provider};
+use crate::providers::openrouter_api::{
+	OpenRouterModel, OpenRouterPricing, OpenRouterPricingOverride, OpenRouterTopProvider, open_router_cost,
+};
+use crate::providers::openrouter_models::{OPENROUTER_CLASSIFIER_MODELS, OPENROUTER_IMAGE_MODELS, OPENROUTER_MODELS};
+use crate::types::{AnyModel, ModelType};
+use crate::utils::model_operations::is_model_type;
+
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const OPENROUTER_USER_MODELS_TIMEOUT_MS: f64 = 15_000.0;
+
+/// Restrict an OpenRouter catalog to the chat models the key may use, with the key's limits and
+/// prices from `GET /models/user`. Image and classifier models are returned unchanged. A missing
+/// limit keeps the catalog value. The request uses the provider's configured base URL, so regional
+/// endpoints such as `https://us.openrouter.ai/api/v1` apply their region's filtering. When the
+/// endpoint rejects the key (401/403) or does not exist (404), for example with a proxy configured
+/// in models.json, the catalog is returned unchanged.
+pub async fn personalize_open_router_catalog(
+	catalog: &[AnyModel],
+	context: &RefreshModelsContext,
+) -> PiResult<Vec<AnyModel>> {
+	let key = match &context.credential {
+		Some(Credential::OAuth(credential)) => Some(credential.access.clone()),
+		Some(Credential::ApiKey(credential)) => credential.key.clone(),
+		None => None,
+	};
+	let Some(key) = key.filter(|key| !key.is_empty()) else {
+		return Ok(catalog.to_vec());
+	};
+	let base_url = context.base_url.as_deref().unwrap_or(OPENROUTER_BASE_URL);
+	let mut request = HttpRequest::new("GET", format!("{}/models/user", base_url.trim_end_matches('/')));
+	request.set_header("accept", "application/json");
+	request.set_header("authorization", format!("Bearer {key}"));
+	request.signal = Some(AbortSignal::any(&[
+		context.signal.clone(),
+		timeout_signal(OPENROUTER_USER_MODELS_TIMEOUT_MS),
+	]));
+	let response = pi_host::fetch(request, None).await?;
+	if matches!(response.status, 401 | 403 | 404) {
+		return Ok(catalog.to_vec());
+	}
+	if !response.ok() {
+		return Err(PiError::new(format!(
+			"OpenRouter model list request failed: {}",
+			response.status
+		)));
+	}
+	let body = response.json().await?;
+	let Some(data) = body
+		.as_object()
+		.and_then(|body| body.get("data"))
+		.and_then(Value::as_array)
+	else {
+		return Err(PiError::new("Invalid OpenRouter model list response"));
+	};
+	let mut allowed: IndexMap<String, OpenRouterModel> = IndexMap::new();
+	for entry in data {
+		if let Some(id) = entry
+			.as_object()
+			.and_then(|entry| entry.get("id"))
+			.and_then(Value::as_str)
+		{
+			allowed.insert(id.to_string(), open_router_model(id, entry));
+		}
+	}
+	Ok(catalog
+		.iter()
+		.filter_map(|model| {
+			if !is_model_type(model, ModelType::Chat) {
+				return Some(model.clone());
+			}
+			let AnyModel::Chat(model) = model else {
+				return Some(model.clone());
+			};
+			let entry = allowed.get(&model.id)?;
+			let truthy = |value: Option<f64>| value.filter(|value| *value != 0.0 && !value.is_nan());
+			let top_provider = entry.top_provider.as_ref();
+			let mut personalized = model.clone();
+			// `||`: OpenRouter reports a missing limit as absent, null or 0, like the generator's fallback.
+			personalized.context_window = truthy(top_provider.and_then(|top| top.context_length))
+				.or(truthy(entry.context_length))
+				.unwrap_or(model.context_window);
+			personalized.max_tokens =
+				truthy(top_provider.and_then(|top| top.max_completion_tokens)).unwrap_or(model.max_tokens);
+			personalized.cost = match &entry.pricing {
+				Some(pricing) => open_router_cost(Some(pricing)),
+				None => model.cost.clone(),
+			};
+			Some(AnyModel::Chat(personalized))
+		})
+		.collect())
+}
+
+/// `AbortSignal.timeout(ms)`.
+fn timeout_signal(ms: f64) -> AbortSignal {
+	let controller = AbortController::new();
+	let signal = controller.signal();
+	pi_host::spawn_local(async move {
+		if pi_host::sleep(ms, None).await.is_ok() {
+			controller.abort_with(PiError::named(
+				"TimeoutError",
+				"The operation was aborted due to timeout",
+			));
+		}
+	});
+	signal
+}
+
+/// `entry as OpenRouterModel` for an entry of `GET /models/user` with a string `id`.
+fn open_router_model(id: &str, entry: &Value) -> OpenRouterModel {
+	let number = |value: &Value, name: &str| value.get(name).and_then(Value::as_f64);
+	let top_provider = entry.get("top_provider").filter(|top| top.is_object());
+	OpenRouterModel {
+		id: id.to_string(),
+		context_length: number(entry, "context_length"),
+		top_provider: top_provider.map(|top| OpenRouterTopProvider {
+			context_length: number(top, "context_length"),
+			max_completion_tokens: number(top, "max_completion_tokens"),
+		}),
+		pricing: entry
+			.get("pricing")
+			.filter(|pricing| is_truthy(pricing))
+			.map(open_router_pricing),
+	}
+}
+
+fn is_truthy(value: &Value) -> bool {
+	match value {
+		Value::Null => false,
+		Value::Bool(value) => *value,
+		Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0 && !number.is_nan()),
+		Value::String(value) => !value.is_empty(),
+		Value::Array(_) | Value::Object(_) => true,
+	}
+}
+
+/// A price as `parseFloat` reads it: strings verbatim, numbers through `String(n)`, anything else missing.
+fn price(value: &Value, name: &str) -> Option<String> {
+	match value.get(name)? {
+		Value::String(price) => Some(price.clone()),
+		Value::Number(price) => price.as_f64().map(pi_host::js::number_to_string),
+		_ => None,
+	}
+}
+
+fn open_router_pricing(pricing: &Value) -> OpenRouterPricing {
+	OpenRouterPricing {
+		prompt: price(pricing, "prompt"),
+		completion: price(pricing, "completion"),
+		input_cache_read: price(pricing, "input_cache_read"),
+		input_cache_write: price(pricing, "input_cache_write"),
+		overrides: pricing.get("overrides").and_then(Value::as_array).map(|overrides| {
+			overrides
+				.iter()
+				.map(|price_override| {
+					let present = |name: &str| price_override.get(name).is_some();
+					OpenRouterPricingOverride {
+						min_prompt_tokens: price_override.get("min_prompt_tokens").and_then(Value::as_f64),
+						utc_start: present("utc_start").then_some(0.0),
+						utc_end: present("utc_end").then_some(0.0),
+						utc_days: present("utc_days").then(Vec::new),
+						prompt: price(price_override, "prompt"),
+						completion: price(price_override, "completion"),
+						input_cache_read: price(price_override, "input_cache_read"),
+						input_cache_write: price(price_override, "input_cache_write"),
+					}
+				})
+				.collect()
+		}),
+	}
+}
+
+pub fn openrouter_provider() -> Provider {
+	create_provider(CreateProviderOptions {
+		id: "openrouter".into(),
+		name: Some("OpenRouter".into()),
+		base_url: Some(OPENROUTER_BASE_URL.into()),
+		auth: ProviderAuth {
+			api_key: Some(env_api_key_auth("OpenRouter API key", &["OPENROUTER_API_KEY"])),
+			oauth: Some(lazy_oauth(LazyOAuthInput {
+				name: "OpenRouter OAuth".into(),
+				is_subscription: None,
+				login_label: Some("Sign in with OpenRouter".into()),
+				load: Rc::new(|| Box::pin(load_openrouter_oauth())),
+			})),
+		},
+		models: OPENROUTER_MODELS
+			.values()
+			.cloned()
+			.map(AnyModel::Chat)
+			.chain(OPENROUTER_IMAGE_MODELS.values().cloned().map(AnyModel::Image))
+			.chain(OPENROUTER_CLASSIFIER_MODELS.values().cloned().map(AnyModel::Classifier))
+			.collect(),
+		api: Some(ProviderApi::ByApi(IndexMap::from([
+			("anthropic-messages".to_string(), anthropic_messages_api()),
+			("openai-completions".to_string(), openai_completions_api()),
+		]))),
+		images: Some(IndexMap::from([(
+			"openrouter-images".to_string(),
+			openrouter_images_api(),
+		)])),
+		// OpenRouter serves TypeSafe's System One protocol at /api/v1/systemone.
+		classifiers: Some(IndexMap::from([(
+			"typesafe-system-one".to_string(),
+			typesafe_system_one_api(),
+		)])),
+		..CreateProviderOptions::default()
+	})
+	.expect("a provider with an api implementation always builds")
+}
