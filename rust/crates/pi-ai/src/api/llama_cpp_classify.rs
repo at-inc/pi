@@ -388,6 +388,7 @@ async fn post(request: &RequestContext, path: &str, body: Value, observe: bool) 
 					headers,
 					body: Some(request_body),
 					signal: request_signal,
+					..Default::default()
 				};
 				let attempt = async {
 					let next = pi_host::fetch(http_request, fetch.as_ref()).await?;

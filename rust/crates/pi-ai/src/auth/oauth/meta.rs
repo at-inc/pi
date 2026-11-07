@@ -63,6 +63,7 @@ fn post(url: &str, headers: &[(&str, String)], body: String, signal: &AbortSigna
 			.collect::<IndexMap<_, _>>(),
 		body: Some(Bytes::from(body)),
 		signal: Some(request_signal(signal)),
+		..Default::default()
 	}
 }
 

@@ -1,6 +1,7 @@
 //! Module `api` (no TS index file).
 
 // <generated-modules>
+pub mod anthropic_client;
 pub mod anthropic_messages;
 pub mod anthropic_messages_lazy;
 pub mod azure_openai_config;
@@ -25,6 +26,7 @@ pub mod llama_cpp_classify;
 pub mod llama_cpp_classify_lazy;
 pub mod mistral_conversations;
 pub mod mistral_conversations_lazy;
+pub mod openai_client;
 pub mod openai_codex_images;
 pub mod openai_codex_images_lazy;
 pub mod openai_codex_responses;

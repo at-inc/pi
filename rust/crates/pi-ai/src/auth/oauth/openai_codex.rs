@@ -211,6 +211,7 @@ fn form_request(url: &str, body: &[(&str, &str)], signal: &AbortSignal) -> HttpR
 		headers,
 		body: Some(Bytes::from(body)),
 		signal: Some(signal.clone()),
+		..Default::default()
 	}
 }
 
@@ -223,6 +224,7 @@ fn json_request(url: &str, body: Value, signal: &AbortSignal) -> HttpRequest {
 		headers,
 		body: Some(Bytes::from(pi_host::js::json_stringify(&body))),
 		signal: Some(signal.clone()),
+		..Default::default()
 	}
 }
 

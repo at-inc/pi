@@ -2,8 +2,8 @@
 //! PORT-STATUS: ported
 //!
 //! The TS `UnsupportedStrictJsonSchemaError` (a plain `Error` subclass, `name` `"Error"`) is the internal
-//! `UnsupportedStrictJsonSchema` marker, so `resolve_json_schema_strict_sampling` can tell it from other errors; it
-//! leaves this module as `PiError::new(message)`. An `UnsupportedStrictSchemaKeywordCheck` cannot throw. Schema
+//! `StrictSchemaError::Unsupported` marker, so `resolve_json_schema_strict_sampling` can tell it from other errors
+//! (an error an `UnsupportedStrictSchemaKeywordCheck` throws); it leaves this module as `PiError::new(message)`. Schema
 //! objects are walked in JS property order (array-index keys first).
 
 use indexmap::IndexMap;
@@ -17,15 +17,18 @@ use crate::types::{
 };
 use crate::utils::text::{js_entries, js_trim};
 
-/// `UnsupportedStrictJsonSchemaError`.
-struct UnsupportedStrictJsonSchema(String);
+/// `UnsupportedStrictJsonSchemaError`, or another error thrown while checking a schema.
+enum StrictSchemaError {
+	Unsupported(String),
+	Other(PiError),
+}
 
-fn unsupported(message: impl Into<String>) -> UnsupportedStrictJsonSchema {
-	UnsupportedStrictJsonSchema(message.into())
+fn unsupported(message: impl Into<String>) -> StrictSchemaError {
+	StrictSchemaError::Unsupported(message.into())
 }
 
 /// Returns true when a provider's strict mode rejects this schema keyword with this value.
-pub type UnsupportedStrictSchemaKeywordCheck = dyn Fn(&str, &Value) -> bool;
+pub type UnsupportedStrictSchemaKeywordCheck = dyn Fn(&str, &Value) -> PiResult<bool>;
 
 const UNSUPPORTED_STRICT_SCHEMA_KEYS: [&str; 16] = [
 	"$ref",
@@ -84,7 +87,7 @@ fn schema_allows_null(schema: &Value) -> bool {
 fn make_json_schema_node_strict(
 	schema: &mut Value,
 	is_unsupported_keyword: Option<&UnsupportedStrictSchemaKeywordCheck>,
-) -> Result<(), UnsupportedStrictJsonSchema> {
+) -> Result<(), StrictSchemaError> {
 	let Value::Object(schema) = schema else {
 		return Err(unsupported("boolean schemas are unsupported"));
 	};
@@ -96,7 +99,7 @@ fn make_json_schema_node_strict(
 	if let Some(is_unsupported_keyword) = is_unsupported_keyword {
 		for key in js_keys(schema) {
 			let value = &schema[&key];
-			if is_unsupported_keyword(&key, value) {
+			if is_unsupported_keyword(&key, value).map_err(StrictSchemaError::Other)? {
 				return Err(unsupported(format!("{key}: {} is unsupported", json_stringify(value))));
 			}
 		}
@@ -178,7 +181,7 @@ fn make_json_schema_node_strict(
 fn strict_json_schema(
 	schema: &Value,
 	is_unsupported_keyword: Option<&UnsupportedStrictSchemaKeywordCheck>,
-) -> Result<Map<String, Value>, UnsupportedStrictJsonSchema> {
+) -> Result<Map<String, Value>, StrictSchemaError> {
 	let mut cloned = schema.clone();
 	if !cloned.is_object() {
 		return Err(unsupported("root schema must have type object"));
@@ -198,8 +201,10 @@ pub fn make_strict_json_schema(
 	schema: &Value,
 	is_unsupported_keyword: Option<&UnsupportedStrictSchemaKeywordCheck>,
 ) -> PiResult<Map<String, Value>> {
-	strict_json_schema(schema, is_unsupported_keyword)
-		.map_err(|UnsupportedStrictJsonSchema(message)| PiError::new(message))
+	strict_json_schema(schema, is_unsupported_keyword).map_err(|error| match error {
+		StrictSchemaError::Unsupported(message) => PiError::new(message),
+		StrictSchemaError::Other(error) => error,
+	})
 }
 
 /// `tool.constrainedSampling` when it is a config (not absent or `false`).
@@ -614,8 +619,9 @@ pub fn resolve_json_schema_strict_sampling(
 	if supports_strict_mode {
 		return match strict_json_schema(&tool.parameters, is_unsupported_keyword) {
 			Ok(_) => Ok(Some(true)),
-			Err(_) if *strict != ConstrainedSamplingStrictness::Require => Ok(None),
-			Err(UnsupportedStrictJsonSchema(message)) => Err(PiError::new(format!(
+			Err(StrictSchemaError::Other(error)) => Err(error),
+			Err(StrictSchemaError::Unsupported(_)) if *strict != ConstrainedSamplingStrictness::Require => Ok(None),
+			Err(StrictSchemaError::Unsupported(message)) => Err(PiError::new(format!(
 				"Tool \"{}\" requires JSON-schema constrained sampling, but {message}.",
 				tool.name
 			))),

@@ -200,6 +200,7 @@ async fn post_json(url: &str, body: Value, signal: &AbortSignal) -> PiResult<Str
 			headers,
 			body: Some(Bytes::from(pi_host::js::json_stringify(&body))),
 			signal: Some(AbortSignal::any(&[signal.clone(), AbortSignal::timeout(30_000.0)])),
+			..Default::default()
 		},
 		None,
 	)

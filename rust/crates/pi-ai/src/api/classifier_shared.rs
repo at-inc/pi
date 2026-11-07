@@ -127,6 +127,7 @@ pub async fn post_classifier_request(
 						headers: request_headers(model, api_key, options.headers.as_ref(), options.identity.as_ref())?,
 						body: Some(request_body),
 						signal,
+						..Default::default()
 					};
 					let next = pi_host::fetch(request, options.fetch.as_ref()).await?;
 					let (status, headers) = (next.status, next.headers.clone());
