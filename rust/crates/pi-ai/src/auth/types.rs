@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS interfaces that apps implement and that carry state (`CredentialStore`, `AuthContext`) are traits used as
 //! `Rc<dyn ...>`. The interfaces that are plain objects of callbacks (`AuthInteraction`, `ApiKeyAuth`, `OAuthAuth`)

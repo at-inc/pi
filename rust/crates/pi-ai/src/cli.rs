@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/cli.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The whole module needs the `native` feature: it reads the terminal, writes `auth.json` and exits the
 //! process. `run()` stands for the module's top-level `main().catch(...)`; a binary calls it. Differences

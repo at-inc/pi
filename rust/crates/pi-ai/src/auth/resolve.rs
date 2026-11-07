@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/resolve.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TS takes `provider: { id: string; auth: ProviderAuth }`; the port takes `provider_id` and `auth`. Both public
 //! functions do their synchronous TS prefix (signal setup, starting the race or the store call) when called and

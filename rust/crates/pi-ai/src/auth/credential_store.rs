@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/credential-store.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS promise chain per provider is a `Shared` future that settles when the queued task settles; each entry
 //! carries a sequence number that stands in for the identity check `this.chains.get(providerId) === tail`.

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/context.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TS loads `node:fs/promises` and `node:os` at runtime and reports `false` where they are missing (browsers). The
 //! port asks the host: `pi_host::file_exists` for `fs.access` and `pi_host::home_dir` for `os.homedir()`, both

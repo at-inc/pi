@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/load.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Port notes: TS imports each flow module through a variable specifier so bundlers cannot follow the import into
 //! Node-only flow code. Rust links every flow, so a loader calls the flow's constructor directly (the Node-only
