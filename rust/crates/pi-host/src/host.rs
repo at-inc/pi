@@ -19,7 +19,8 @@ pub trait Host {
 	fn monotonic_ms(&self) -> f64;
 	/// `process.env[key]`. Hosts without an environment (browsers) return `None`.
 	fn env(&self, key: &str) -> Option<String>;
-	/// `new Promise((r) => setTimeout(r, ms))`.
+	/// `new Promise((r) => setTimeout(r, ms))`. Implementations clamp like `setTimeout`: a non-finite delay, or one
+	/// below 1 or above 2^31 - 1 ms, waits 1 ms.
 	fn sleep(&self, ms: f64) -> LocalBoxFuture<'static, ()>;
 	/// Fire-and-forget: the counterpart of `void promise` / an unawaited async call.
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>);

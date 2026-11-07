@@ -109,9 +109,12 @@ impl Host for NativeHost {
 	}
 
 	fn sleep(&self, ms: f64) -> LocalBoxFuture<'static, ()> {
-		Box::pin(tokio::time::sleep(std::time::Duration::from_secs_f64(
-			ms.max(0.0) / 1000.0,
-		)))
+		let ms = if ms.is_finite() && (1.0..=2_147_483_647.0).contains(&ms) {
+			ms
+		} else {
+			1.0
+		};
+		Box::pin(tokio::time::sleep(std::time::Duration::from_secs_f64(ms / 1000.0)))
 	}
 
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
