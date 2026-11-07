@@ -1,28 +1,30 @@
 //! Port of `packages/ai/src/api/openai-codex-images.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
+//!
+//! Rust has no dynamic import: `generateImages` calls the statically linked module. The module takes `ImagesOptions`,
+//! so the extra option keys are not passed on, as the TS module reads none.
 
-// PORT-STUB: w3-openai-responses
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::{LocalBoxFuture, PiError, PiResult};
+use pi_host::{LocalBoxFuture, PiResult};
 
+use crate::api::openai_codex_images::generate_images;
 use crate::types::{AssistantImages, ImageModel, ImagesContext, ProviderImages, ProviderImagesOptions};
 
-struct NotPorted;
+struct OpenAICodexImagesLazy;
 
-impl ProviderImages for NotPorted {
+impl ProviderImages for OpenAICodexImagesLazy {
 	fn generate_images(
 		&self,
-		_model: &ImageModel,
-		_context: &ImagesContext,
-		_options: Option<ProviderImagesOptions>,
+		model: &ImageModel,
+		context: &ImagesContext,
+		options: Option<ProviderImagesOptions>,
 	) -> LocalBoxFuture<'static, PiResult<AssistantImages>> {
-		Box::pin(async { Err(PiError::new("API not ported")) })
+		generate_images(model, context, options.map(|options| options.base))
 	}
 }
 
-/// `openAICodexImagesApi()`: every generation rejects with `API not ported`.
+/// `openAICodexImagesApi()`.
 pub fn openai_codex_images_api() -> Rc<dyn ProviderImages> {
-	Rc::new(NotPorted)
+	Rc::new(OpenAICodexImagesLazy)
 }

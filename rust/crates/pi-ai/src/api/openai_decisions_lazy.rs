@@ -1,28 +1,30 @@
 //! Port of `packages/ai/src/api/openai-decisions.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
+//!
+//! Rust has no dynamic import: `classify` calls the statically linked module.
 
-// PORT-STUB: w3-openai-responses
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::{LocalBoxFuture, PiError, PiResult};
+use pi_host::{LocalBoxFuture, PiResult};
 
+use crate::api::openai_decisions::classify;
 use crate::types::{ClassifierContext, ClassifierModel, ClassifierOptions, ClassifierResult, ProviderClassifier};
 
-struct NotPorted;
+struct OpenAIDecisionsLazy;
 
-impl ProviderClassifier for NotPorted {
+impl ProviderClassifier for OpenAIDecisionsLazy {
 	fn classify(
 		&self,
-		_model: &ClassifierModel,
-		_context: &ClassifierContext,
-		_options: Option<ClassifierOptions>,
+		model: &ClassifierModel,
+		context: &ClassifierContext,
+		options: Option<ClassifierOptions>,
 	) -> LocalBoxFuture<'static, PiResult<ClassifierResult>> {
-		Box::pin(async { Err(PiError::new("API not ported")) })
+		let (model, context) = (model.clone(), context.clone());
+		Box::pin(async move { Ok(classify(&model, &context, options.as_ref()).await) })
 	}
 }
 
-/// `openAIDecisionsApi()`: every classification rejects with `API not ported`.
+/// `openAIDecisionsApi()`.
 pub fn openai_decisions_api() -> Rc<dyn ProviderClassifier> {
-	Rc::new(NotPorted)
+	Rc::new(OpenAIDecisionsLazy)
 }
