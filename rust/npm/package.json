@@ -1,0 +1,20 @@
+{
+	"name": "pi-rust-npm",
+	"private": true,
+	"type": "module",
+	"description": "npm packages that ship the pi Rust core (rust/crates) behind the TS packages' API. See README.md.",
+	"workspaces": [
+		"pi-core",
+		"pi-ai"
+	],
+	"scripts": {
+		"build": "npm run build --workspace=@at-inc/pi-core && npm run build --workspace=@at-inc/pi-ai-rs",
+		"build:wasm": "npm run build:wasm --workspace=@at-inc/pi-core",
+		"check": "biome check --write --error-on-warnings . && tsc --noEmit -p tsconfig.json",
+		"test:vitest": "npm run test:vitest --workspace=@at-inc/pi-ai-rs",
+		"bench": "npm run bench --workspace=@at-inc/pi-ai-rs"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

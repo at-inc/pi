@@ -2373,7 +2373,7 @@ fn detect_compat(model: &Model) -> ResolvedOpenAICompletionsCompat {
 
 /// Get resolved compatibility settings for a model.
 /// Auto-detects from provider/URL then overrides with explicit model.compat.
-fn get_compat(model: &Model) -> ResolvedOpenAICompletionsCompat {
+pub fn get_compat(model: &Model) -> ResolvedOpenAICompletionsCompat {
 	let detected = detect_compat(model);
 	let Some(raw_compat) = model.compat.as_ref() else {
 		return detected;

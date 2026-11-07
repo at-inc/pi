@@ -1,0 +1,22 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"customConditions": ["source"],
+		"types": ["node"],
+		// The root paths minus the packages the facades never reach, plus `openai`, which the test bridge imports and
+		// only packages/ai installs. `paths` replaces the root's, so the TS packages the facades type against are listed.
+		"paths": {
+			"@at-inc/pi-ai": ["../../packages/ai/src/index.ts"],
+			"@at-inc/pi-ai/oauth": ["../../packages/ai/src/oauth.ts"],
+			"@at-inc/pi-ai/*": ["../../packages/ai/src/*.ts", "../../packages/ai/src/providers/*.ts"],
+			"@earendil-works/pi-schema": ["../../packages/schema/src/index.ts"],
+			"@earendil-works/pi-schema/formats": ["../../packages/schema/src/formats/index.ts"],
+			"@earendil-works/pi-telemetry": ["../../packages/telemetry/src/index.ts"],
+			"typebox": ["../../node_modules/typebox"],
+			"openai": ["../../packages/ai/node_modules/openai/index.d.mts"]
+		}
+	},
+	"include": ["pi-core/src/**/*", "pi-ai/src/**/*", "pi-ai/test/**/*", "pi-ai/bench/**/*", "pi-ai/vitest.config.ts"],
+	"exclude": ["**/dist/**"]
+}

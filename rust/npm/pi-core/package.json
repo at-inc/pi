@@ -1,0 +1,50 @@
+{
+	"name": "@at-inc/pi-core",
+	"version": "1.5.0",
+	"description": "Internal: the pi Rust core as one wasm module, its JS hosts for Node and Workers, and the boundary glue the facades share",
+	"type": "module",
+	"exports": {
+		".": {
+			"workerd": {
+				"source": "./src/workers.ts",
+				"types": "./dist/workers.d.ts",
+				"default": "./dist/workers.js"
+			},
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./wasm": {
+			"types": "./wasm/pi_wasm.d.ts",
+			"default": "./wasm/pi_wasm.js"
+		},
+		"./core": {
+			"source": "./src/core.ts",
+			"types": "./dist/core.d.ts",
+			"default": "./dist/core.js"
+		}
+	},
+	"files": [
+		"dist",
+		"wasm"
+	],
+	"scripts": {
+		"build:wasm": "node scripts/build-wasm.mjs",
+		"build": "npm run build:wasm && tsc -p tsconfig.build.json"
+	},
+	"peerDependencies": {
+		"@at-inc/pi-ai": "1.5.0"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/at-inc/pi.git",
+		"directory": "rust/npm/pi-core"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	}
+}

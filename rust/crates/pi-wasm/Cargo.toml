@@ -1,0 +1,27 @@
+[package]
+name = "pi-wasm"
+description = "wasm-bindgen bindings of the pi Rust core: the JS host and the exports behind the npm facades"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pi-host = { workspace = true }
+pi-ai = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+serde-wasm-bindgen = { workspace = true }
+
+[lints]
+workspace = true
