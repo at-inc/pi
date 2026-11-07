@@ -32,9 +32,9 @@ pub struct TestHost {
 	env: RefCell<HashMap<String, String>>,
 	clock_ms: RefCell<f64>,
 	requests: RefCell<Vec<RecordedRequest>>,
-	timers: RefCell<Vec<Weak<Timer>>>,
 	files: RefCell<std::collections::HashSet<String>>,
 	home_dir: RefCell<Option<String>>,
+	timers: RefCell<Vec<Weak<Timer>>>,
 	spawner: futures::executor::LocalSpawner,
 }
 
@@ -117,6 +117,16 @@ impl TestHost {
 		*self.clock_ms.borrow_mut() += ms;
 	}
 
+	/// Makes `file_exists(path)` true.
+	pub fn add_file(&self, path: &str) {
+		self.files.borrow_mut().insert(path.into());
+	}
+
+	/// Sets `os.homedir()`. Without it the host has no file system, like a browser.
+	pub fn set_home_dir(&self, dir: &str) {
+		*self.home_dir.borrow_mut() = Some(dir.into());
+	}
+
 	/// Moves the clock to the earliest live timer and fires it; timers with equal deadlines fire one per call in
 	/// the order they were created, like `setTimeout`. Returns false when no timer is pending.
 	fn fire_next_timer(&self) -> bool {
@@ -147,16 +157,6 @@ impl TestHost {
 			waker.wake();
 		}
 		true
-	}
-
-	/// Makes `file_exists(path)` true.
-	pub fn add_file(&self, path: &str) {
-		self.files.borrow_mut().insert(path.into());
-	}
-
-	/// Sets `os.homedir()`. Without it the host has no file system, like a browser.
-	pub fn set_home_dir(&self, dir: &str) {
-		*self.home_dir.borrow_mut() = Some(dir.into());
 	}
 }
 
@@ -239,9 +239,9 @@ where
 		env: RefCell::new(HashMap::new()),
 		clock_ms: RefCell::new(1_700_000_000_000.0),
 		requests: RefCell::new(Vec::new()),
-		timers: RefCell::new(Vec::new()),
 		files: RefCell::new(std::collections::HashSet::new()),
 		home_dir: RefCell::new(None),
+		timers: RefCell::new(Vec::new()),
 		spawner: pool.spawner(),
 	});
 	let previous = set_host(host.clone());
