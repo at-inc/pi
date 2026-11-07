@@ -1,7 +1,7 @@
 //! Port of `packages/ai/test/provider-error-diagnostics.test.ts`, the cases that call `createProviderErrorDiagnostic`
-//! directly, the Anthropic rows of the `$name` tables that stream through each API (`anthropic_` tests), and the
-//! cases that stream through the Responses and Codex APIs (module `streaming_providers`, whose `it.each(providers)`
-//! lists hold "responses" and "codex"). The OpenAI Completions rows move with that provider's w3 shard. The
+//! directly (top-level tests), the Anthropic rows of the `$name` tables (`anthropic_` tests), and the cases that
+//! stream through the Completions, Responses and Codex APIs (module `streaming_providers`, whose `it.each(providers)`
+//! lists hold "completions", "responses" and "codex"). The
 //! `JSON.parse(JSON.stringify(...))` round trip is `serde_json::to_value` of the diagnostic. The `Headers` instance,
 //! `undefined` values and the `1n` payload have no counterpart in a `PiError`, whose `data` is already JSON, so those
 //! inputs become plain JSON objects and the serialization fallback is not reachable.
@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use pi_ai::api::anthropic_messages::{AnthropicOptions, stream as stream_anthropic};
-use pi_ai::api::{openai_codex_responses, openai_responses};
+use pi_ai::api::{openai_codex_responses, openai_completions, openai_responses};
 use pi_ai::types::{
 	AssistantContent, AssistantMessage, AssistantMessageEvent, Context, Message, Model, ProviderRequestOptions,
 	StopReason, StreamOptions, TranscriptContext, Transport, UserMessage,
@@ -309,9 +309,17 @@ mod streaming_providers {
 		.expect("model JSON")
 	}
 
-	/// The `providers` list: `stream(options)` for each API this shard ports.
+	/// The `providers` list without "anthropic": `stream(options)` for each API.
 	fn stream_with(name: &str, options: StreamOptions) -> AssistantMessageEventStream {
 		match name {
+			"completions" => openai_completions::stream(
+				&model("openai-completions"),
+				&context(),
+				Some(openai_completions::OpenAICompletionsOptions {
+					base: options,
+					..Default::default()
+				}),
+			),
 			"responses" => openai_responses::stream(
 				&model("openai-responses"),
 				&context(),
@@ -332,7 +340,7 @@ mod streaming_providers {
 		}
 	}
 
-	const PROVIDERS: [&str; 2] = ["responses", "codex"];
+	const PROVIDERS: [&str; 3] = ["completions", "responses", "codex"];
 
 	fn response(status: u16, headers: &[(&str, &str)], body: String) -> HttpResponse {
 		let headers: IndexMap<String, String> = headers
