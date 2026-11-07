@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/github-copilot-headers.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `buildCopilotDynamicHeaders`' `params` object becomes two arguments.
 

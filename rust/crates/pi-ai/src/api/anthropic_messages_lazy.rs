@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/anthropic-messages.lazy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Rust has no dynamic import: `load` hands out the module's `ProviderStreams` value.
 

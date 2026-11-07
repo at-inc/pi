@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/anthropic-messages.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - The SDK client is [`AnthropicClient`] from `api/anthropic_client.rs`. `AnthropicOptions.client` takes any
@@ -16,11 +16,14 @@
 //! - Hooks get values, not live objects: `onPayload` receives a copy of the params, so a hook that edits them in place
 //!   and returns `undefined` sends the original params (return the edited params instead), and
 //!   `onProviderStreamEvent` edits to its event do not reach the code that reads the event after it.
+//! - Compat fields are read typed (`Model::anthropic_messages_compat`): a field whose value does not fit the compat
+//!   schema is ignored where the TS reads it raw; models from models.json are schema-checked, so only hand-built models
+//!   differ.
 //! - `client` is an `Rc<dyn AnthropicClientApi>`, which cannot travel in `ProviderStreamOptions.extra` (JSON); a
 //!   caller that needs an injected client calls this module's `stream` with `AnthropicOptions.client`.
 //! - Wire values the types hold as strings or numbers are converted: a delta event's `delta` is `String(x)` of a
 //!   missing or non-string field (`"undefined"`, `"5"`) where the TS forwards the raw value, a tool call's missing
-//!   `id` is `""` and a non-object `input` is `{}` until the call finishes, non-numeric token counts count as 0, and
+//!   `id` or `name` is `""` and a non-object `input` is `{}` until the call finishes, non-numeric token counts count as 0, and
 //!   a `redacted_thinking` block with `data: null` has no signature instead of a `null` one.
 
 use std::cell::{Cell, RefCell};
@@ -888,7 +891,7 @@ async fn run_stream(
 			options,
 			disable_preferred_strict_tools,
 		)?;
-		if let Some(level) = &built.provider_thinking_level {
+		if let Some(level) = built.provider_thinking_level.as_ref().filter(|level| !level.is_empty()) {
 			output.borrow_mut().provider_thinking_level = Some(level.clone());
 		}
 		let mut params = built.params;

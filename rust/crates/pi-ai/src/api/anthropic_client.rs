@@ -1025,6 +1025,10 @@ fn resolve_credentials_from_config(
 
 /// The part of the SDK's `Anthropic` client that `api/anthropic-messages.ts` calls:
 /// `client.beta.messages.create(params, options).asResponse()` for a streaming request.
+///
+/// An error for a failed request must carry `data.headers` (an object, or `null` when absent) and `data.type` like
+/// [`AnthropicClient`]'s: that key is how the caller tells an SDK `APIError` from other failures
+/// (the TS `instanceof Anthropic.APIError`), for example to fall back from strict tools.
 pub trait AnthropicClientApi {
 	/// The raw response of the streaming request.
 	fn beta_messages_create<'a>(
