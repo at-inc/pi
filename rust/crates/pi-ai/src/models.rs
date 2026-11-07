@@ -14,8 +14,17 @@
 //!   wrapper for non-`Error` throws never applies.
 //! - `complete()` resolves with the stream's `result()`, which is `None` only for a stream that ended without a
 //!   final message.
-//! - Provider lookups that TS runs before the first `await` of an operation run synchronously too; later work runs on
-//!   the host executor.
+//! - What TS runs before an operation's first `await` (abort checks, provider lookups, the start of auth resolution,
+//!   the provider's login call, the credential delete) runs at call time; the rest is spawned on the host executor at
+//!   call time, so it runs even when the returned future is dropped, as an unawaited TS promise does.
+//! - The option types carry only their declared fields: TS spreads any extra keys of an untyped caller's
+//!   `ModelsImagesOptions`, `ModelsSimpleStreamOptions`, `ModelsDeferred*Options` or `ModelsClassifierOptions` into
+//!   the provider request, and reads `sessionId` from any of them; Rust reads `session_id` from the stream options,
+//!   which declare it, and `ModelsApiStreamOptions` keeps API-specific keys in `extra`.
+//! - `withClientIdentity()` checks for `MutableModels` at runtime; Rust has `with_client_identity` for `Models` and
+//!   `with_client_identity_mutable` for `MutableModels`, so the caller picks.
+//! - Header maps hold strings, so a non-string header value on a model of an unknown type is dropped.
+//! - A `model.api` such as `"toString"` finds no implementation instead of an `Object.prototype` member.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -29,7 +38,7 @@ use indexmap::IndexMap;
 use pi_host::{AbortController, AbortSignal, LocalBoxFuture, PiError, PiResult};
 use serde_json::Value;
 
-use crate::api::lazy::lazy_stream;
+use crate::api::lazy::{lazy_stream, start_now};
 use crate::auth::context::default_provider_auth_context;
 use crate::auth::credential_store::InMemoryCredentialStore;
 use crate::auth::resolve::{AuthResolutionOverrides, refresh_stored_oauth_credential, resolve_provider_auth};
@@ -54,13 +63,13 @@ use crate::utils::identity::{
 };
 use crate::utils::model_operations::{
 	ModelRef, assert_chat_model, assert_classifier_input_supported, assert_classifier_model, assert_image_model,
-	classifier_error_result, get_model_type, image_error_result, is_model_type,
+	classifier_error_result, image_error_result,
 };
 use crate::utils::transcript::normalize_context;
 
 pub use crate::auth::resolve::{ModelsError, ModelsErrorCode};
 pub use crate::telemetry::AI_TELEMETRY_SCHEMA;
-pub use crate::utils::model_operations::{get_model_type as get_model_type_of, is_model_type as is_model_type_of};
+pub use crate::utils::model_operations::{get_model_type, is_model_type};
 
 /// `ModelsPublication`.
 #[derive(Clone, Default)]
@@ -797,16 +806,18 @@ impl ModelsState {
 		signal: &AbortSignal,
 	) -> LocalBoxFuture<'static, PiResult<Vec<AuthenticatedProvider>>> {
 		let aborted = signal.throw_if_aborted();
-		let providers: Vec<Rc<Provider>> = match provider_id {
+		// TS tests `providerId` for truthiness, so "" lists every provider.
+		let providers: Vec<Rc<Provider>> = match provider_id.filter(|provider_id| !provider_id.is_empty()) {
 			Some(provider_id) => self.provider(provider_id).into_iter().collect(),
 			None => self.providers.borrow().values().cloned().collect(),
 		};
 		let (state, signal) = (self.clone(), signal.clone());
 		Box::pin(async move {
 			aborted?;
+			// Each check runs to completion like a `Promise.all` member, even after another one fails.
 			let checks = try_join_all(providers.into_iter().map(|provider| {
 				let (state, signal) = (state.clone(), signal.clone());
-				async move {
+				start_now(async move {
 					let credential = state
 						.clone()
 						.read_credential(provider.id.clone(), signal.clone())
@@ -815,7 +826,7 @@ impl ModelsState {
 						.check_provider_auth(provider.clone(), credential.clone(), signal)
 						.await?;
 					PiResult::Ok((AuthenticatedProvider { provider, credential }, auth))
-				}
+				})
 			}))
 			.await?;
 			Ok(checks
@@ -838,7 +849,7 @@ impl ModelsState {
 			return Box::pin(async { Ok(None) });
 		};
 		let state = self.clone();
-		Box::pin(async move {
+		start_now(async move {
 			let result = resolve_provider_auth(
 				&provider.id,
 				&provider.auth,
@@ -874,78 +885,101 @@ impl ModelsState {
 	}
 
 	/// `applyAuth(model, options)`. `model` is passed as the fields it reads; `session_id` is
-	/// `options.sessionId` when the options have one.
-	#[allow(
-		clippy::too_many_arguments,
-		reason = "the model fields applyAuth reads, passed apart"
-	)]
-	async fn apply_auth<M: 'static>(
-		self: Rc<Self>,
+	/// `options.sessionId` when the options have one. The provider lookup and the start of auth resolution run at
+	/// call time, the part TS runs before its first `await`.
+	fn apply_auth<M: 'static>(
+		self: &Rc<Self>,
 		model: AnyModel,
 		model_base_url: String,
 		options: ProviderRequestOptions<M>,
 		session_id: Option<String>,
 		transform_headers: Option<TransformHeadersFunction>,
-	) -> PiResult<AppliedAuth<M>> {
-		self.require_provider(&model)?;
-		let resolution = self
-			.get_auth(
-				model.model_provider(),
-				any_model_headers(&model),
-				Some(AuthResolutionOverrides {
-					api_key: options.api_key.clone(),
-					env: options.env.clone(),
-					signal: options.signal.clone(),
-					..AuthResolutionOverrides::default()
-				}),
-			)
-			.await?;
-		let Some(resolution) = resolution else {
-			return Err(ModelsError::new(
-				ModelsErrorCode::Auth,
-				&format!("Provider is not configured: {}", model.model_provider()),
-				None,
-			));
-		};
-		let auth = resolution.auth;
-
-		// Explicit request options win per-field; the Models-only transform runs last.
-		let api_key = options.api_key.clone().or(auth.api_key);
-		let base_url = auth.base_url.filter(|base_url| !base_url.is_empty());
-		let request_base_url = base_url.clone().unwrap_or(model_base_url);
-		let session_headers = get_open_code_session_headers(
-			ClientIdentityTarget {
-				provider: model.model_provider(),
-				base_url: &request_base_url,
-			},
-			session_id.as_deref(),
-		)
-		.map(|headers| to_provider_headers(&headers));
-		let mut headers = merge_headers(
-			merge_headers(session_headers.as_ref(), auth.headers.as_ref()).as_ref(),
-			options.headers.as_ref(),
+	) -> LocalBoxFuture<'static, PiResult<AppliedAuth<M>>> {
+		if let Err(error) = self.require_provider(&model) {
+			return Box::pin(async move { Err(error) });
+		}
+		let resolution = self.get_auth(
+			model.model_provider(),
+			any_model_headers(&model),
+			Some(AuthResolutionOverrides {
+				api_key: options.api_key.clone(),
+				env: options.env.clone(),
+				signal: options.signal.clone(),
+				..AuthResolutionOverrides::default()
+			}),
 		);
-		if let Some(transform_headers) = transform_headers {
-			headers = Some(transform_headers(headers.unwrap_or_default()).await?);
-		}
-		let env = if resolution.env.is_some() || options.env.is_some() {
-			let mut env = resolution.env.unwrap_or_default();
-			env.extend(options.env.clone().unwrap_or_default());
-			Some(env)
-		} else {
-			None
-		};
-		let identity = merge_client_identity(&[self.identity.as_ref(), options.identity.as_ref()]);
-		let mut options = options;
-		options.api_key = api_key;
-		options.headers = headers;
-		options.env = env;
-		if identity.is_some() {
-			options.identity = identity;
-		}
-
-		Ok(AppliedAuth { base_url, options })
+		let identity = self.identity.clone();
+		Box::pin(async move {
+			let resolution = resolution.await?;
+			finish_apply_auth(
+				model,
+				model_base_url,
+				options,
+				session_id,
+				transform_headers,
+				resolution,
+				identity,
+			)
+			.await
+		})
 	}
+}
+
+/// The rest of `applyAuth`, after auth resolution settles.
+async fn finish_apply_auth<M: 'static>(
+	model: AnyModel,
+	model_base_url: String,
+	options: ProviderRequestOptions<M>,
+	session_id: Option<String>,
+	transform_headers: Option<TransformHeadersFunction>,
+	resolution: Option<AuthResult>,
+	models_identity: Option<ClientIdentity>,
+) -> PiResult<AppliedAuth<M>> {
+	let Some(resolution) = resolution else {
+		return Err(ModelsError::new(
+			ModelsErrorCode::Auth,
+			&format!("Provider is not configured: {}", model.model_provider()),
+			None,
+		));
+	};
+	let auth = resolution.auth;
+
+	// Explicit request options win per-field; the Models-only transform runs last.
+	let api_key = options.api_key.clone().or(auth.api_key);
+	let base_url = auth.base_url.filter(|base_url| !base_url.is_empty());
+	let request_base_url = base_url.clone().unwrap_or(model_base_url);
+	let session_headers = get_open_code_session_headers(
+		ClientIdentityTarget {
+			provider: model.model_provider(),
+			base_url: &request_base_url,
+		},
+		session_id.as_deref(),
+	)
+	.map(|headers| to_provider_headers(&headers));
+	let mut headers = merge_headers(
+		merge_headers(session_headers.as_ref(), auth.headers.as_ref()).as_ref(),
+		options.headers.as_ref(),
+	);
+	if let Some(transform_headers) = transform_headers {
+		headers = Some(transform_headers(headers.unwrap_or_default()).await?);
+	}
+	let env = if resolution.env.is_some() || options.env.is_some() {
+		let mut env = resolution.env.unwrap_or_default();
+		env.extend(options.env.clone().unwrap_or_default());
+		Some(env)
+	} else {
+		None
+	};
+	let identity = merge_client_identity(&[models_identity.as_ref(), options.identity.as_ref()]);
+	let mut options = options;
+	options.api_key = api_key;
+	options.headers = headers;
+	options.env = env;
+	if identity.is_some() {
+		options.identity = identity;
+	}
+
+	Ok(AppliedAuth { base_url, options })
 }
 
 fn with_base_url<A>(model: &mut BaseModel<A>, base_url: Option<String>) {
@@ -1240,11 +1274,10 @@ impl Models for ModelsImpl {
 		options: Option<LoginOptions>,
 	) -> LocalBoxFuture<'static, PiResult<Credential>> {
 		let signal = operation_signal(interaction.signal.as_ref());
-		let provider = self.state.provider(provider_id);
-		let (state, provider_id) = (self.state.clone(), provider_id.to_string());
-		Box::pin(async move {
+		// Everything up to the provider's login call runs at call time, as in TS before the first `await`.
+		let started = (|| -> PiResult<LocalBoxFuture<'static, PiResult<Credential>>> {
 			signal.throw_if_aborted()?;
-			let Some(provider) = provider else {
+			let Some(provider) = self.state.provider(provider_id) else {
 				return Err(ModelsError::new(
 					ModelsErrorCode::Provider,
 					&format!("Unknown provider: {provider_id}"),
@@ -1256,7 +1289,7 @@ impl Models for ModelsImpl {
 				prompt: interaction.prompt,
 				notify: interaction.notify,
 			};
-			let login_operation: LocalBoxFuture<'static, PiResult<Credential>> = match r#type {
+			Ok(match r#type {
 				AuthType::OAuth => match &provider.auth.oauth {
 					Some(oauth) => {
 						let login = (oauth.login)(interaction, options);
@@ -1276,7 +1309,11 @@ impl Models for ModelsImpl {
 					}
 					None => return Err(unsupported_login(&provider.name, r#type)),
 				},
-			};
+			})
+		})();
+		let (state, provider_id) = (self.state.clone(), provider_id.to_string());
+		start_now(async move {
+			let login_operation = started?;
 			let credential = race_with_abort_signal(login_operation, &signal).await?;
 			let mutation_started = Rc::new(Cell::new(false));
 			let (mark_mutation_started, started) = oneshot::channel::<()>();
@@ -1303,24 +1340,35 @@ impl Models for ModelsImpl {
 					.shared()
 			};
 			let outcome: PiResult<()> = async {
-				let abort = {
-					let (signal, mutation_started) = (signal.clone(), mutation_started.clone());
-					async move {
-						let reason = signal.aborted_future().await;
+				// TS `onAbort` reads `mutationStarted` when the abort fires, so the listener decides then.
+				let aborted_first: Rc<RefCell<Option<PiError>>> = Rc::default();
+				let (abort_fired, abort) = oneshot::channel::<()>();
+				let listener = {
+					let (aborted_first, mutation_started) = (aborted_first.clone(), mutation_started.clone());
+					signal.add_listener(move |reason| {
 						if !mutation_started.get() {
-							return Err::<(), PiError>(reason);
+							*aborted_first.borrow_mut() = Some(reason.clone());
+							let _ = abort_fired.send(());
 						}
-						futures::future::pending().await
-					}
+					})
 				};
-				futures::pin_mut!(abort);
+				if !mutation_started.get()
+					&& let Some(reason) = signal.reason()
+				{
+					*aborted_first.borrow_mut() = Some(reason);
+				}
 				let started = started.map(|_| Ok(()));
 				let settled = mutation.clone().map(|result| result.map(|_| ()));
-				futures::select_biased! {
+				let raced = futures::select_biased! {
+					_ = abort.fuse() => Ok(()),
 					result = started.fuse() => result,
 					result = settled.fuse() => result,
-					result = abort.fuse() => result,
-				}?;
+				};
+				signal.remove_listener(listener);
+				if let Some(reason) = aborted_first.take() {
+					return Err(reason);
+				}
+				raced?;
 				mutation.await.map(|_| ())
 			}
 			.await;
@@ -1342,19 +1390,18 @@ impl Models for ModelsImpl {
 		options: Option<AuthOperationOptions>,
 	) -> LocalBoxFuture<'static, PiResult<()>> {
 		let signal = operation_signal(options.and_then(|options| options.signal).as_ref());
-		let (state, provider_id) = (self.state.clone(), provider_id.to_string());
-		Box::pin(async move {
-			signal.throw_if_aborted()?;
-			if let Err(error) = state
-				.credentials
-				.delete(
-					&provider_id,
-					Some(AuthOperationOptions {
-						signal: Some(signal.clone()),
-					}),
-				)
-				.await
-			{
+		if let Err(error) = signal.throw_if_aborted() {
+			return Box::pin(async move { Err(error) });
+		}
+		let delete = self.state.credentials.delete(
+			provider_id,
+			Some(AuthOperationOptions {
+				signal: Some(signal.clone()),
+			}),
+		);
+		let provider_id = provider_id.to_string();
+		start_now(async move {
+			if let Err(error) = delete.await {
 				signal.throw_if_aborted()?;
 				return Err(models_error(
 					ModelsErrorCode::Auth,
@@ -1385,28 +1432,29 @@ impl Models for ModelsImpl {
 		lazy_stream(
 			model,
 			move || {
-				let provider = state.require_chat_provider(&request_model);
-				async move {
-					let provider = provider?;
-					let ModelsApiStreamOptions {
-						base: mut stream_options,
-						transform_headers,
-					} = options;
-					let session_id = stream_options.session_id.clone();
-					let applied = state
-						.apply_auth(
-							AnyModel::Chat(request_model.clone()),
-							request_model.base_url.clone(),
-							std::mem::take(&mut stream_options.base.base),
-							session_id,
-							transform_headers,
-						)
-						.await?;
+				let provider = match state.require_chat_provider(&request_model) {
+					Ok(provider) => provider,
+					Err(error) => return Box::pin(async move { Err(error) }) as LocalBoxFuture<'static, _>,
+				};
+				let ModelsApiStreamOptions {
+					base: mut stream_options,
+					transform_headers,
+				} = options;
+				let session_id = stream_options.session_id.clone();
+				let applied = state.apply_auth(
+					AnyModel::Chat(request_model.clone()),
+					request_model.base_url.clone(),
+					std::mem::take(&mut stream_options.base.base),
+					session_id,
+					transform_headers,
+				);
+				Box::pin(async move {
+					let applied = applied.await?;
 					let mut request_model = request_model;
 					with_base_url(&mut request_model.base, applied.base_url);
 					stream_options.base.base = applied.options;
 					(provider.stream)(&request_model, &transcript, Some(stream_options))
-				}
+				})
 			},
 			Some(observer),
 		)
@@ -1441,28 +1489,29 @@ impl Models for ModelsImpl {
 		lazy_stream(
 			model,
 			move || {
-				let provider = state.require_chat_provider(&request_model);
-				async move {
-					let provider = provider?;
-					let ModelsSimpleStreamOptions {
-						base: mut stream_options,
-						transform_headers,
-					} = options;
-					let session_id = stream_options.session_id.clone();
-					let applied = state
-						.apply_auth(
-							AnyModel::Chat(request_model.clone()),
-							request_model.base_url.clone(),
-							std::mem::take(&mut stream_options.base.base),
-							session_id,
-							transform_headers,
-						)
-						.await?;
+				let provider = match state.require_chat_provider(&request_model) {
+					Ok(provider) => provider,
+					Err(error) => return Box::pin(async move { Err(error) }) as LocalBoxFuture<'static, _>,
+				};
+				let ModelsSimpleStreamOptions {
+					base: mut stream_options,
+					transform_headers,
+				} = options;
+				let session_id = stream_options.session_id.clone();
+				let applied = state.apply_auth(
+					AnyModel::Chat(request_model.clone()),
+					request_model.base_url.clone(),
+					std::mem::take(&mut stream_options.base.base),
+					session_id,
+					transform_headers,
+				);
+				Box::pin(async move {
+					let applied = applied.await?;
 					let mut request_model = request_model;
 					with_base_url(&mut request_model.base, applied.base_url);
 					stream_options.base.base = applied.options;
 					(provider.stream_simple)(&request_model, &transcript, Some(stream_options))
-				}
+				})
 			},
 			Some(observer),
 		)
@@ -1491,37 +1540,40 @@ impl Models for ModelsImpl {
 		lazy_stream(
 			model,
 			move || {
-				let provider = state.require_chat_provider(&request_model);
-				async move {
-					let provider = provider?;
-					let Some(fetch_deferred) = provider.fetch_deferred.clone() else {
-						return Err(ModelsError::new(
+				let fetch_deferred = state.require_chat_provider(&request_model).and_then(|provider| {
+					provider.fetch_deferred.clone().ok_or_else(|| {
+						ModelsError::new(
 							ModelsErrorCode::Provider,
 							&format!(
 								"Provider {} does not support deferred responses",
 								request_model.provider
 							),
 							None,
-						));
-					};
-					let ModelsDeferredFetchOptions {
-						base: mut fetch_options,
-						transform_headers,
-					} = options;
-					let applied = state
-						.apply_auth(
-							AnyModel::Chat(request_model.clone()),
-							request_model.base_url.clone(),
-							std::mem::take(&mut fetch_options.base),
-							None,
-							transform_headers,
 						)
-						.await?;
+					})
+				});
+				let fetch_deferred = match fetch_deferred {
+					Ok(fetch_deferred) => fetch_deferred,
+					Err(error) => return Box::pin(async move { Err(error) }) as LocalBoxFuture<'static, _>,
+				};
+				let ModelsDeferredFetchOptions {
+					base: mut fetch_options,
+					transform_headers,
+				} = options;
+				let applied = state.apply_auth(
+					AnyModel::Chat(request_model.clone()),
+					request_model.base_url.clone(),
+					std::mem::take(&mut fetch_options.base),
+					None,
+					transform_headers,
+				);
+				Box::pin(async move {
+					let applied = applied.await?;
 					let mut request_model = request_model;
 					with_base_url(&mut request_model.base, applied.base_url);
 					fetch_options.base = applied.options;
 					fetch_deferred(&request_model, &handle, Some(fetch_options))
-				}
+				})
 			},
 			Some(observer),
 		)
@@ -1543,35 +1595,33 @@ impl Models for ModelsImpl {
 		handle: &DeferredHandle,
 		options: Option<ModelsDeferredCancelOptions>,
 	) -> LocalBoxFuture<'static, PiResult<()>> {
-		let provider = self.state.require_chat_provider(model);
-		let state = self.state.clone();
-		let (request_model, handle) = (model.clone(), handle.clone());
-		Box::pin(async move {
-			let provider = provider?;
-			let Some(cancel_deferred) = provider.cancel_deferred.clone() else {
-				return Err(ModelsError::new(
+		let cancel_deferred = self.state.require_chat_provider(model).and_then(|provider| {
+			provider.cancel_deferred.clone().ok_or_else(|| {
+				ModelsError::new(
 					ModelsErrorCode::Provider,
-					&format!(
-						"Provider {} does not support deferred responses",
-						request_model.provider
-					),
+					&format!("Provider {} does not support deferred responses", model.provider),
 					None,
-				));
-			};
-			let ModelsDeferredCancelOptions {
-				base: cancel_options,
-				transform_headers,
-			} = options.unwrap_or_default();
-			let applied = state
-				.apply_auth(
-					AnyModel::Chat(request_model.clone()),
-					request_model.base_url.clone(),
-					cancel_options,
-					None,
-					transform_headers,
 				)
-				.await?;
-			let mut request_model = request_model;
+			})
+		});
+		let cancel_deferred = match cancel_deferred {
+			Ok(cancel_deferred) => cancel_deferred,
+			Err(error) => return Box::pin(async move { Err(error) }),
+		};
+		let ModelsDeferredCancelOptions {
+			base: cancel_options,
+			transform_headers,
+		} = options.unwrap_or_default();
+		let applied = self.state.apply_auth(
+			AnyModel::Chat(model.clone()),
+			model.base_url.clone(),
+			cancel_options,
+			None,
+			transform_headers,
+		);
+		let (mut request_model, handle) = (model.clone(), handle.clone());
+		start_now(async move {
+			let applied = applied.await?;
 			with_base_url(&mut request_model.base, applied.base_url);
 			cancel_deferred(&request_model, &handle, Some(applied.options)).await
 		})
@@ -1585,32 +1635,36 @@ impl Models for ModelsImpl {
 	) -> LocalBoxFuture<'static, AssistantImages> {
 		let options = options.unwrap_or_default();
 		let signal = options.signal.clone();
-		let provider = assert_image_model(model).and_then(|()| self.state.require_provider(model));
-		let state = self.state.clone();
-		let (request_model, context) = (model.clone(), context.clone());
-		Box::pin(async move {
-			let result = async {
-				let provider = provider?;
-				let Some(generate_images) = provider.generate_images.clone() else {
-					return Err(ModelsError::new(
+		let started = assert_image_model(model)
+			.and_then(|()| self.state.require_provider(model))
+			.and_then(|provider| {
+				provider.generate_images.clone().ok_or_else(|| {
+					ModelsError::new(
 						ModelsErrorCode::Provider,
-						&format!("Provider {} does not support image generation", request_model.provider),
+						&format!("Provider {} does not support image generation", model.provider),
 						None,
-					));
-				};
+					)
+				})
+			})
+			.map(|generate_images| {
 				let ModelsImagesOptions {
 					base: mut images_options,
 					transform_headers,
 				} = options;
-				let applied = state
-					.apply_auth(
-						AnyModel::Image(request_model.clone()),
-						request_model.base_url.clone(),
-						std::mem::take(&mut images_options.base),
-						None,
-						transform_headers,
-					)
-					.await?;
+				let applied = self.state.apply_auth(
+					AnyModel::Image(model.clone()),
+					model.base_url.clone(),
+					std::mem::take(&mut images_options.base),
+					None,
+					transform_headers,
+				);
+				(generate_images, images_options, applied)
+			});
+		let (request_model, context) = (model.clone(), context.clone());
+		start_now(async move {
+			let result = async {
+				let (generate_images, mut images_options, applied) = started?;
+				let applied = applied.await?;
 				let mut request_model = request_model.clone();
 				with_base_url(&mut request_model.base, applied.base_url);
 				images_options.base = applied.options;
@@ -1636,34 +1690,37 @@ impl Models for ModelsImpl {
 	) -> LocalBoxFuture<'static, ClassifierResult> {
 		let options = options.unwrap_or_default();
 		let signal = options.signal.clone();
-		let provider = assert_classifier_model(model)
+		let started = assert_classifier_model(model)
 			.and_then(|()| assert_classifier_input_supported(model, context))
-			.and_then(|()| self.state.require_provider(model));
-		let state = self.state.clone();
-		let (request_model, context) = (model.clone(), context.clone());
-		Box::pin(async move {
-			let result = async {
-				let provider = provider?;
-				let Some(classify) = provider.classify.clone() else {
-					return Err(ModelsError::new(
+			.and_then(|()| self.state.require_provider(model))
+			.and_then(|provider| {
+				provider.classify.clone().ok_or_else(|| {
+					ModelsError::new(
 						ModelsErrorCode::Provider,
-						&format!("Provider {} does not support classification", request_model.provider),
+						&format!("Provider {} does not support classification", model.provider),
 						None,
-					));
-				};
+					)
+				})
+			})
+			.map(|classify| {
 				let ModelsClassifierOptions {
 					base: mut classifier_options,
 					transform_headers,
 				} = options;
-				let applied = state
-					.apply_auth(
-						AnyModel::Classifier(request_model.clone()),
-						request_model.base_url.clone(),
-						std::mem::take(&mut classifier_options.base),
-						None,
-						transform_headers,
-					)
-					.await?;
+				let applied = self.state.apply_auth(
+					AnyModel::Classifier(model.clone()),
+					model.base_url.clone(),
+					std::mem::take(&mut classifier_options.base),
+					None,
+					transform_headers,
+				);
+				(classify, classifier_options, applied)
+			});
+		let (request_model, context) = (model.clone(), context.clone());
+		start_now(async move {
+			let result = async {
+				let (classify, mut classifier_options, applied) = started?;
+				let applied = applied.await?;
 				let mut request_model = request_model.clone();
 				with_base_url(&mut request_model.base, applied.base_url);
 				classifier_options.base = applied.options;
@@ -1832,7 +1889,9 @@ pub fn create_provider(input: CreateProviderOptions) -> PiResult<Provider> {
 		let message = format!("Provider {} has no API implementation for \"{}\"", id, model.api);
 		lazy_stream(
 			model,
-			move || async move { Err(ModelsError::new(ModelsErrorCode::Stream, &message, None)) },
+			move || async move {
+				Err::<AssistantMessageEventStream, _>(ModelsError::new(ModelsErrorCode::Stream, &message, None))
+			},
 			None,
 		)
 	};

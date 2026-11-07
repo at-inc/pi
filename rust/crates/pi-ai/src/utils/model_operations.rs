@@ -4,10 +4,12 @@
 //! TS reads `model.type`, `model.id` and `model.provider` off any model object. The port reads them through
 //! [`ModelRef`], implemented by `Model`, `ImageModel`, `ClassifierModel` and `AnyModel`. `getModelType` returns
 //! the type as a string, because a stored model may carry a type this version does not know (`AnyModel::Other`).
+//! A non-string `type` there reads as `""`, which no known type matches, as the TS value would not.
 
 use indexmap::IndexMap;
 
 use pi_host::PiResult;
+use serde_json::Value;
 
 use crate::types::{
 	AnyModel, AssistantImages, ClassifierContext, ClassifierModel, ClassifierResult, ClassifierStopReason, ImageModel,
@@ -83,7 +85,11 @@ impl ModelRef for AnyModel {
 			AnyModel::Chat(model) => model.model_type_field(),
 			AnyModel::Image(model) => model.model_type_field(),
 			AnyModel::Classifier(model) => model.model_type_field(),
-			AnyModel::Other(value) => value.get("type").and_then(|value| value.as_str()),
+			// A non-string `type` is an unknown type, as TS `model.type ?? "chat"` keeps it.
+			AnyModel::Other(value) => match value.get("type") {
+				None | Some(Value::Null) => None,
+				Some(model_type) => Some(model_type.as_str().unwrap_or("")),
+			},
 		}
 	}
 

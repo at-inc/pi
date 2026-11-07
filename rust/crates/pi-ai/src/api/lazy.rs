@@ -2,14 +2,21 @@
 //! PORT-STATUS: ported
 //!
 //! `lazyStream`'s `setup` is a closure returning a future: it is called synchronously, like the TS `setup()` call,
-//! and the future it returns runs on the host executor. Its source is an `AssistantMessageEventStream` (the only
-//! source pi-ai passes), whose `result()` the TS `hasResult` check always finds. `lazyApi`'s `load` returns the
-//! implementation module as `Rc<dyn ProviderStreams>`; Rust has no import cache, so `load` itself decides whether to
-//! reuse a module.
+//! so the part of a TS async setup body before its first `await` belongs in the closure, and the future it returns runs
+//! on the host executor. Its `AsyncIterable` source is a [`LazySource`]: an `AssistantMessageEventStream`, which has
+//! the `result()` the TS `hasResult` check looks for, or a plain event stream, which has none. Observers and sources
+//! cannot fail in Rust, so the TS `.catch` covers only setup failures. `onResult` receives the source's result, not
+//! the outer stream's copy of it. `lazyApi`'s `load` returns the implementation module as `Rc<dyn ProviderStreams>`;
+//! Rust has no import cache, so `load` itself decides whether to reuse a module. `lazyApi` passes the implementation
+//! clones of `model` and `context` taken at call time.
 
 use std::cell::Cell;
 use std::future::Future;
 use std::rc::Rc;
+
+use futures::StreamExt;
+use futures::channel::oneshot;
+use futures::stream::LocalBoxStream;
 
 use pi_host::{LocalBoxFuture, PiError, PiResult};
 
@@ -69,14 +76,40 @@ impl LazyStreamObserver {
 	}
 }
 
+/// The `AsyncIterable<AssistantMessageEvent>` a `lazyStream` setup resolves with.
+pub enum LazySource {
+	/// An event stream with a `result()`.
+	Stream(AssistantMessageEventStream),
+	/// A plain iterable without `result()`: the last `done` or `error` message is the result.
+	Events(LocalBoxStream<'static, AssistantMessageEvent>),
+}
+
+impl From<AssistantMessageEventStream> for LazySource {
+	fn from(stream: AssistantMessageEventStream) -> Self {
+		LazySource::Stream(stream)
+	}
+}
+
 async fn forward_stream(
 	target: &AssistantMessageEventStream,
-	source: AssistantMessageEventStream,
+	source: LazySource,
 	observer: Option<&LazyStreamObserver>,
 	observe_result: &dyn Fn(Option<&AssistantMessage>),
 ) {
+	let (stream, mut events) = match source {
+		LazySource::Stream(stream) => (Some(stream), None),
+		LazySource::Events(events) => (None, Some(events)),
+	};
 	let mut result: Option<AssistantMessage> = None;
-	while let Some(event) = source.next().await {
+	loop {
+		let event = match (&stream, &mut events) {
+			(Some(stream), _) => stream.next().await,
+			(None, Some(events)) => events.next().await,
+			(None, None) => None,
+		};
+		let Some(event) = event else {
+			break;
+		};
 		target.push(event.clone());
 		if let Some(observer) = observer {
 			observer.event(&event);
@@ -87,18 +120,57 @@ async fn forward_stream(
 			_ => {}
 		}
 	}
-	result = source.result().await.or(result);
+	if let Some(stream) = &stream {
+		result = stream.result().await.or(result);
+	}
+	// TS `for await` and `await source.result()` take a microtask before the result is observed, so whoever awaits the
+	// outer stream's result (resolved by the pushed `done`) runs first.
+	yield_now().await;
 	target.end(result.clone());
 	observe_result(result.as_ref());
+}
+
+/// Lets every task that is already woken run before this one continues.
+async fn yield_now() {
+	let mut yielded = false;
+	futures::future::poll_fn(|context| {
+		if yielded {
+			return std::task::Poll::Ready(());
+		}
+		yielded = true;
+		context.waker().wake_by_ref();
+		std::task::Poll::Pending
+	})
+	.await;
+}
+
+/// Runs `operation` on the host executor from now on, like the body of a TS async function, which runs whether or
+/// not anyone awaits its promise. The returned future only waits for the outcome, so dropping it cancels nothing.
+pub(crate) fn start_now<T: 'static>(operation: impl Future<Output = T> + 'static) -> LocalBoxFuture<'static, T> {
+	let (sender, receiver) = oneshot::channel();
+	pi_host::spawn_local(async move {
+		let _ = sender.send(operation.await);
+	});
+	Box::pin(async move {
+		match receiver.await {
+			Ok(outcome) => outcome,
+			Err(_) => futures::future::pending().await,
+		}
+	})
 }
 
 /// Returns a stream synchronously while running async setup (auth resolution,
 /// lazy module loading) behind it. Setup failures terminate the stream with an
 /// error event.
-pub fn lazy_stream<F, Fut>(model: &Model, setup: F, observer: Option<LazyStreamObserver>) -> AssistantMessageEventStream
+pub fn lazy_stream<F, Fut, S>(
+	model: &Model,
+	setup: F,
+	observer: Option<LazyStreamObserver>,
+) -> AssistantMessageEventStream
 where
 	F: FnOnce() -> Fut,
-	Fut: Future<Output = PiResult<AssistantMessageEventStream>> + 'static,
+	Fut: Future<Output = PiResult<S>> + 'static,
+	S: Into<LazySource>,
 {
 	let started_at = pi_host::now_ms();
 	let outer = AssistantMessageEventStream::new();
@@ -121,7 +193,7 @@ where
 	let model = model.clone();
 	pi_host::spawn_local(async move {
 		match setup.await {
-			Ok(inner) => forward_stream(&target, inner, observer.as_ref(), &observe_result).await,
+			Ok(inner) => forward_stream(&target, inner.into(), observer.as_ref(), &observe_result).await,
 			Err(error) => {
 				let message = Rc::new(std::cell::RefCell::new(create_setup_error_message(
 					&model, &error, started_at,
@@ -171,7 +243,10 @@ impl ProviderStreams for LazyApi {
 		let (request_model, context) = (model.clone(), context.clone());
 		Ok(lazy_stream(
 			model,
-			move || async move { load().await?.stream(&request_model, &context, options) },
+			move || {
+				let loading = load();
+				async move { loading.await?.stream(&request_model, &context, options) }
+			},
 			None,
 		))
 	}
@@ -186,7 +261,10 @@ impl ProviderStreams for LazyApi {
 		let (request_model, context) = (model.clone(), context.clone());
 		Ok(lazy_stream(
 			model,
-			move || async move { load().await?.stream_simple(&request_model, &context, options) },
+			move || {
+				let loading = load();
+				async move { loading.await?.stream_simple(&request_model, &context, options) }
+			},
 			None,
 		))
 	}
@@ -202,12 +280,15 @@ impl ProviderStreams for LazyApi {
 				let (request_model, handle) = (model.clone(), handle.clone());
 				Ok(lazy_stream(
 					model,
-					move || async move {
-						let implementation = load().await?;
-						let Some(fetch_deferred) = implementation.fetch_deferred() else {
-							return Err(PiError::new("API does not support deferred responses"));
-						};
-						fetch_deferred(&request_model, &handle, options)
+					move || {
+						let loading = load();
+						async move {
+							let implementation = loading.await?;
+							let Some(fetch_deferred) = implementation.fetch_deferred() else {
+								return Err(PiError::new("API does not support deferred responses"));
+							};
+							fetch_deferred(&request_model, &handle, options)
+						}
 					},
 					None,
 				))
@@ -222,10 +303,10 @@ impl ProviderStreams for LazyApi {
 		let load = self.load.clone();
 		Some(Rc::new(
 			move |model: &Model, handle: &DeferredHandle, options: Option<DeferredCancelOptions>| {
-				let load = load.clone();
+				let loading = load();
 				let (model, handle) = (model.clone(), handle.clone());
-				Box::pin(async move {
-					let implementation = load().await?;
+				start_now(async move {
+					let implementation = loading.await?;
 					let Some(cancel_deferred) = implementation.cancel_deferred() else {
 						return Err(PiError::new("API cannot cancel deferred responses"));
 					};

@@ -1,8 +1,11 @@
 //! Port of `packages/ai/src/api/simple-options.ts`.
 //! PORT-STATUS: ported
 //!
-//! `thinkingBudgetForLevel`'s `{ ...DEFAULT_THINKING_BUDGETS, ...customBudgets }` treats an absent custom budget
-//! as not overriding the default; Rust has no key whose value is `undefined`.
+//! `thinkingBudgetForLevel`'s `{ ...DEFAULT_THINKING_BUDGETS, ...customBudgets }` lets a present `undefined` or `null`
+//! budget override the default; `ThinkingBudgets` reads both as absent, so the default applies. Likewise
+//! `resolveSamplingParams`' spread lets a present `undefined` request param remove the model's value, which an
+//! absent Rust field cannot express. `Math.min` and `Math.max` are [`math_min`] and [`math_max`], which return NaN
+//! for a NaN operand where `f64::min` and `f64::max` drop it.
 
 use serde_json::Map;
 
@@ -16,12 +19,22 @@ use crate::utils::estimate::estimate_context_tokens;
 const CONTEXT_SAFETY_TOKENS: f64 = 4096.0;
 const MIN_MAX_TOKENS: f64 = 1.0;
 
+/// `Math.min(a, b)`.
+fn math_min(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
+}
+
+/// `Math.max(a, b)`.
+fn math_max(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
+}
+
 pub fn clamp_max_tokens_to_context(model: &Model, context: &TranscriptContext, max_tokens: f64) -> f64 {
 	if model.context_window <= 0.0 {
-		return MIN_MAX_TOKENS.max(max_tokens);
+		return math_max(MIN_MAX_TOKENS, max_tokens);
 	}
 	let available = model.context_window - estimate_context_tokens(&context.messages).tokens - CONTEXT_SAFETY_TOKENS;
-	max_tokens.min(MIN_MAX_TOKENS.max(available))
+	math_min(max_tokens, math_max(MIN_MAX_TOKENS, available))
 }
 
 pub fn resolve_sampling_params(
@@ -135,7 +148,7 @@ pub fn thinking_budget_for_level(reasoning_level: ThinkingLevel, custom_budgets:
 
 /// Cap a thinking budget so at least MIN_ANSWER_TOKENS remain under a shared response ceiling.
 pub fn clamp_thinking_budget_to_answer_room(thinking_budget: f64, ceiling: f64) -> f64 {
-	thinking_budget.min(0f64.max(ceiling - MIN_ANSWER_TOKENS))
+	math_min(thinking_budget, math_max(0.0, ceiling - MIN_ANSWER_TOKENS))
 }
 
 /// `adjustMaxTokensForThinking`'s result.
@@ -155,7 +168,7 @@ pub fn adjust_max_tokens_for_thinking(
 	let mut thinking_budget = thinking_budget_for_level(reasoning_level, custom_budgets);
 	let max_tokens = match base_max_tokens {
 		None => model_max_tokens,
-		Some(base_max_tokens) => (base_max_tokens + thinking_budget).min(model_max_tokens),
+		Some(base_max_tokens) => math_min(base_max_tokens + thinking_budget, model_max_tokens),
 	};
 
 	if max_tokens <= thinking_budget {
