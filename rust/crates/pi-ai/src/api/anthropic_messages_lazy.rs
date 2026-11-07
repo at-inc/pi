@@ -2,12 +2,18 @@
 //! PORT-STATUS: pending
 
 // PORT-STUB: w3-anthropic
-// Signature copied from w2-ai-core's stub on `capy/rust-port-w2-ai-core` (c990cc571); the owning shard replaces it.
+// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
+use pi_host::PiError;
+
+use crate::api::lazy::lazy_api;
 use crate::types::ProviderStreams;
 
-/// `anthropicMessagesApi()`.
+/// `anthropicMessagesApi()`: every stream ends with an `API not ported` error event.
 pub fn anthropic_messages_api() -> Rc<dyn ProviderStreams> {
-	todo!("PORT-STUB")
+	lazy_api(
+		Rc::new(|| Box::pin(async { Err(PiError::new("API not ported")) })),
+		None,
+	)
 }

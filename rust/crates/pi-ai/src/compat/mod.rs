@@ -38,16 +38,10 @@ pub use crate::api::openai_completions_lazy::*;
 pub use crate::api::openai_responses_lazy::*;
 pub use crate::api::pi_messages_lazy::*;
 pub use crate::env_api_keys::*;
-// These modules are still pending (shard w2-ai-core) and empty, so their globs import nothing yet.
-#[allow(unused_imports)]
 pub use crate::image_models::*;
-#[allow(unused_imports)]
 pub use crate::images::*;
-#[allow(unused_imports)]
 pub use crate::images_api_registry::*;
-#[allow(unused_imports)]
 pub use crate::legacy_api_aliases::*;
-#[allow(unused_imports)]
 pub use crate::providers::images::register_builtins::*;
 pub use crate::*;
 
@@ -58,16 +52,8 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 use pi_host::{LocalBoxFuture, PiError, PiResult};
 
-use crate::models::{ModelsApiStreamOptions, ModelsSimpleStreamOptions, MutableModels, Provider};
 use crate::providers::all::builtin_models;
-use crate::providers::faux::{FauxProviderRegistration, RegisterFauxProviderOptions, create_faux_core};
-use crate::types::{
-	AssistantMessage, Context, Model, ProviderStreamOptions, ProviderStreams, SimpleStreamOptions, StreamFunction,
-	StreamOptions, TranscriptContext,
-};
-use crate::utils::event_stream::AssistantMessageEventStream;
 use crate::utils::text::js_trim;
-use crate::utils::transcript::normalize_context;
 
 // <generated-modules>
 pub mod extension_oauth_types;

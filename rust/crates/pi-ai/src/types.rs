@@ -805,6 +805,21 @@ fn present_json_value<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Opti
 	Value::deserialize(deserializer).map(Some)
 }
 
+/// A missing or `null` message `content` reads as an empty list, as `transformMessages` normalizes `content == null`
+/// from untyped callers and old session files (#6259, #6276).
+fn null_as_empty<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<Vec<T>, D::Error> {
+	Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// `null_as_empty` for `UserMessage.content`, which TS normalizes to `[]` rather than `""`.
+fn user_content_null_as_empty<'de, D: Deserializer<'de>>(deserializer: D) -> Result<UserMessageContent, D::Error> {
+	Ok(Option::<UserMessageContent>::deserialize(deserializer)?.unwrap_or_else(empty_user_content))
+}
+
+fn empty_user_content() -> UserMessageContent {
+	UserMessageContent::Blocks(Vec::new())
+}
+
 /// The `extra` of a block deserialized on its own, where serde hands the `type` tag to the flattened map too. The
 /// struct writes its tag itself, so keeping it here would write it twice.
 fn extra_without_type<'de, D: Deserializer<'de>>(deserializer: D) -> Result<JsonObject, D::Error> {
@@ -893,6 +908,7 @@ impl Default for SystemMessageContent {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename = "user", rename_all = "camelCase")]
 pub struct UserMessage {
+	#[serde(default = "empty_user_content", deserialize_with = "user_content_null_as_empty")]
 	pub content: UserMessageContent,
 	/// Unix timestamp in milliseconds
 	pub timestamp: f64,
@@ -918,6 +934,7 @@ impl Default for UserMessageContent {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename = "assistant", rename_all = "camelCase")]
 pub struct AssistantMessage {
+	#[serde(default, deserialize_with = "null_as_empty")]
 	pub content: Vec<AssistantContent>,
 	pub api: Api,
 	pub provider: ProviderId,
@@ -1011,6 +1028,7 @@ pub struct ToolResultMessage {
 	pub tool_call_id: String,
 	pub tool_name: String,
 	/// Supports text and images
+	#[serde(default, deserialize_with = "null_as_empty")]
 	pub content: Vec<UserContent>,
 	/// An explicit `null` stays `Some(Value::Null)`.
 	#[serde(

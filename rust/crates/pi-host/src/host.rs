@@ -24,6 +24,14 @@ pub trait Host {
 	fn sleep(&self, ms: f64) -> LocalBoxFuture<'static, ()>;
 	/// Fire-and-forget: the counterpart of `void promise` / an unawaited async call.
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>);
+	/// `fs.existsSync(path)`. Hosts without a file system (browsers, Workers) return `false`.
+	fn file_exists(&self, _path: &str) -> bool {
+		false
+	}
+	/// `os.homedir()`. Hosts without a file system (browsers, Workers) return `None`.
+	fn home_dir(&self) -> Option<String> {
+		None
+	}
 }
 
 thread_local! {
@@ -81,4 +89,14 @@ pub async fn sleep(ms: f64, signal: Option<&AbortSignal>) -> PiResult<()> {
 /// `void promise`.
 pub fn spawn_local(future: impl std::future::Future<Output = ()> + 'static) {
 	current().spawn_local(Box::pin(future));
+}
+
+/// `fs.existsSync(path)`; `false` on hosts without a file system.
+pub fn file_exists(path: &str) -> bool {
+	current().file_exists(path)
+}
+
+/// `os.homedir()`; `None` on hosts without a file system.
+pub fn home_dir() -> Option<String> {
+	current().home_dir()
 }

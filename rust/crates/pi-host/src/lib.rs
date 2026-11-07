@@ -23,7 +23,7 @@ pub mod testing;
 
 pub use abort::{AbortController, AbortSignal};
 pub use error::{PiError, PiResult};
-pub use host::{Host, current, env, monotonic_ms, now_ms, set_host, sleep, spawn_local};
+pub use host::{Host, current, env, file_exists, home_dir, monotonic_ms, now_ms, set_host, sleep, spawn_local};
 pub use http::{Body, FetchFunction, HttpRequest, HttpResponse, fetch};
 
 /// `futures::future::LocalBoxFuture` re-exported so ported code needs one import for async callbacks.

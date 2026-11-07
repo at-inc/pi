@@ -2,7 +2,7 @@
 //! single-threaded executor. Ported vitest suites that stub `globalThis.fetch` or use fake timers use this.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::{Pin, pin};
 use std::rc::Rc;
@@ -30,6 +30,8 @@ pub struct TestHost {
 	env: RefCell<HashMap<String, String>>,
 	clock_ms: RefCell<f64>,
 	requests: RefCell<Vec<RecordedRequest>>,
+	files: RefCell<HashSet<String>>,
+	home_dir: RefCell<Option<String>>,
 	spawner: futures::executor::LocalSpawner,
 	timers: RefCell<Vec<Timer>>,
 	next_timer: Cell<u64>,
@@ -129,6 +131,16 @@ impl TestHost {
 		*self.clock_ms.borrow_mut() += ms;
 	}
 
+	/// Makes `file_exists(path)` true.
+	pub fn add_file(&self, path: &str) {
+		self.files.borrow_mut().insert(path.into());
+	}
+
+	/// Sets `os.homedir()`. Without it the host has no file system, like a browser.
+	pub fn set_home_dir(&self, dir: &str) {
+		*self.home_dir.borrow_mut() = Some(dir.into());
+	}
+
 	/// Fires the earliest pending timer, moving the clock to its due time if that is later. Returns `false` when no
 	/// timer is pending.
 	fn fire_next_timer(&self) -> bool {
@@ -206,6 +218,14 @@ impl Host for TestHost {
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
 		self.spawner.spawn_local(future).expect("TestHost executor is gone");
 	}
+
+	fn file_exists(&self, path: &str) -> bool {
+		self.files.borrow().contains(path)
+	}
+
+	fn home_dir(&self) -> Option<String> {
+		self.home_dir.borrow().clone()
+	}
 }
 
 /// Wakes the test future: sets its flag and unparks the thread that runs it.
@@ -239,6 +259,8 @@ where
 		env: RefCell::new(HashMap::new()),
 		clock_ms: RefCell::new(1_700_000_000_000.0),
 		requests: RefCell::new(Vec::new()),
+		files: RefCell::new(HashSet::new()),
+		home_dir: RefCell::new(None),
 		spawner: pool.spawner(),
 		timers: RefCell::new(Vec::new()),
 		next_timer: Cell::new(0),

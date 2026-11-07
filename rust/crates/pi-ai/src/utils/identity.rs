@@ -3,8 +3,7 @@
 //!
 //! The runtime in the detailed `User-Agent` comes from the Rust build: `rust/<rust-version>` with Node-style platform
 //! and architecture names, and `(browser)` on wasm32, where TS reads `process` (`node/v24.x` or `bun/1.x`).
-//! `withClientIdentity` wraps the `Models` interface of `models.ts` (shard w2-ai-core) and is not ported here; see the
-//! PORT-TODO at the end of the file.
+//! `withClientIdentity` wraps the `Models` interface, so it is ported in `models.rs` next to that trait.
 
 use std::sync::LazyLock;
 
@@ -253,9 +252,3 @@ pub fn get_identity_headers(
 	headers.extend(get_attribution_headers(target, identity)?);
 	Ok(headers)
 }
-
-// PORT-TODO: w2-ai-core: `withClientIdentity(models, identity)` wraps `Models` / `MutableModels` from `models.ts`. It
-// returns a `Models` that delegates every method and merges `identity` under each request's `options.identity` with
-// `merge_client_identity(&[Some(identity), options.identity.as_ref()])` for `stream`, `complete`, `streamSimple`,
-// `completeSimple`, `streamDeferred`, `fetchDeferred`, `cancelDeferred`, `generateImages`, and `classify`, and keeps
-// `setProvider`/`deleteProvider`/`clearProviders` when `models` is mutable. Port it next to the `Models` trait.

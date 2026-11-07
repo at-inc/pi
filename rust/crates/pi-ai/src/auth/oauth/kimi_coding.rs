@@ -23,7 +23,9 @@ use crate::auth::oauth::device_code::{
 use crate::auth::oauth::trusted_url::trusted_http_url;
 use crate::auth::types::{AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction};
 use crate::utils::json_parse::json_parse;
-use crate::utils::kimi_coding::{KimiCodingEndpoints, kimi_coding_endpoints, select_kimi_coding_endpoints};
+use crate::utils::kimi_coding::{
+	KimiCodingEndpoints, KimiCodingEndpointsInput, kimi_coding_endpoints, select_kimi_coding_endpoints,
+};
 use crate::utils::provider_env::get_provider_env_value;
 use crate::utils::sleep::sleep;
 
@@ -61,7 +63,7 @@ fn credential_endpoints(credential: &OAuthCredential) -> PiResult<KimiCodingEndp
 		get_provider_env_value("KIMI_CODE_OAUTH_HOST", None).or_else(|| get_provider_env_value("KIMI_OAUTH_HOST", None))
 	});
 	let base_url = string_field(credential, "baseUrl").or_else(|| get_provider_env_value("KIMI_CODE_BASE_URL", None));
-	kimi_coding_endpoints(oauth_host.as_deref(), base_url.as_deref())
+	kimi_coding_endpoints(KimiCodingEndpointsInput { oauth_host, base_url })
 }
 
 fn request_signal(signal: &AbortSignal) -> AbortSignal {
