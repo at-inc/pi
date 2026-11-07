@@ -179,6 +179,141 @@ pub fn string_to_number(value: &str) -> f64 {
 	parse_signed_decimal(value)
 }
 
+/// `Date.parse(text)` for the forms HTTP and pi exchange: the ECMAScript date-time format (`YYYY-MM-DD` as UTC, or
+/// `YYYY-MM-DDTHH:mm[:ss[.sss]]` with `Z` or `±HH:mm`) and the IMF-fixdate / RFC 2822 form (`[Wdy,] DD Mon YYYY
+/// HH:MM[:SS] zone` with `GMT`, `UTC`, `UT`, `Z` or `±HHMM`). Returns NaN for any other string, which V8's lenient
+/// parser may still read. Same algorithm as w2-ai-core's local copy in `pi-ai/src/utils/provider_retry.rs`.
+pub fn date_parse(text: &str) -> f64 {
+	let text = text.trim_matches(is_js_whitespace);
+	parse_iso_date(text)
+		.or_else(|| parse_http_date(text))
+		.unwrap_or(f64::NAN)
+}
+
+const MONTHS: [&str; 12] = [
+	"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+];
+const MS_PER_DAY: f64 = 86_400_000.0;
+
+fn parse_iso_date(text: &str) -> Option<f64> {
+	let (date, time) = match text.split_once('T') {
+		Some((date, time)) => (date, Some(time)),
+		None => (text, None),
+	};
+	let mut parts = date.split('-');
+	let year = fixed_number(parts.next()?, 4)?;
+	let month = fixed_number(parts.next()?, 2)?;
+	let day = fixed_number(parts.next()?, 2)?;
+	if parts.next().is_some() || !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
+		return None;
+	}
+	let Some(time) = time else {
+		return Some(days_from_civil(year, month, day) * MS_PER_DAY);
+	};
+	let (clock, offset_ms) = if let Some(clock) = time.strip_suffix('Z') {
+		(clock, 0.0)
+	} else {
+		let sign_index = time.rfind(['+', '-'])?;
+		let (clock, offset) = time.split_at(sign_index);
+		let (hours, minutes) = offset[1..].split_once(':')?;
+		let offset_ms = (fixed_number(hours, 2)? * 60.0 + fixed_number(minutes, 2)?) * 60_000.0;
+		(clock, if offset.starts_with('-') { -offset_ms } else { offset_ms })
+	};
+	let (clock, millis) = match clock.split_once('.') {
+		Some((clock, fraction)) if !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit()) => {
+			(clock, fixed_number(&format!("{fraction:0<3}")[..3], 3)?)
+		}
+		Some(_) => return None,
+		None => (clock, 0.0),
+	};
+	let mut fields = clock.split(':');
+	let hour = fixed_number(fields.next()?, 2)?;
+	let minute = fixed_number(fields.next()?, 2)?;
+	let second = fields.next().map_or(Some(0.0), |second| fixed_number(second, 2))?;
+	if fields.next().is_some() {
+		return None;
+	}
+	Some(utc_ms(year, month, day, hour, minute, second)? + millis - offset_ms)
+}
+
+fn month_number(word: &str) -> Option<f64> {
+	let prefix = word.get(..3)?;
+	MONTHS
+		.iter()
+		.position(|name| prefix.eq_ignore_ascii_case(name))
+		.map(|index| index as f64 + 1.0)
+}
+
+fn parse_http_date(text: &str) -> Option<f64> {
+	let mut words: Vec<&str> = text.split([' ', ',']).filter(|word| !word.is_empty()).collect();
+	if words.first().is_some_and(|word| {
+		word.len() >= 3 && word.bytes().all(|byte| byte.is_ascii_alphabetic()) && month_number(word).is_none()
+	}) {
+		words.remove(0);
+	}
+	let [day, month, year, clock, zone] = words.as_slice() else {
+		return None;
+	};
+	let day = digits_number(day)?;
+	let month = month_number(month)?;
+	let year = digits_number(year)?;
+	let mut fields = clock.split(':');
+	let hour = digits_number(fields.next()?)?;
+	let minute = digits_number(fields.next()?)?;
+	let second = fields.next().map_or(Some(0.0), digits_number)?;
+	if fields.next().is_some() {
+		return None;
+	}
+	let offset_ms = match zone.to_ascii_uppercase().as_str() {
+		"GMT" | "UTC" | "UT" | "Z" => 0.0,
+		zone if zone.len() == 5 && zone.starts_with(['+', '-']) => {
+			let minutes = fixed_number(&zone[1..3], 2)? * 60.0 + fixed_number(&zone[3..], 2)?;
+			if zone.starts_with('-') {
+				-minutes * 60_000.0
+			} else {
+				minutes * 60_000.0
+			}
+		}
+		_ => return None,
+	};
+	if !(1.0..=31.0).contains(&day) {
+		return None;
+	}
+	Some(utc_ms(year, month, day, hour, minute, second)? - offset_ms)
+}
+
+fn fixed_number(text: &str, width: usize) -> Option<f64> {
+	if text.len() != width {
+		return None;
+	}
+	digits_number(text)
+}
+
+fn digits_number(text: &str) -> Option<f64> {
+	if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+		return None;
+	}
+	text.parse().ok()
+}
+
+fn utc_ms(year: f64, month: f64, day: f64, hour: f64, minute: f64, second: f64) -> Option<f64> {
+	if hour > 24.0 || minute > 59.0 || second > 59.0 || (hour == 24.0 && (minute > 0.0 || second > 0.0)) {
+		return None;
+	}
+	Some(days_from_civil(year, month, day) * MS_PER_DAY + ((hour * 60.0 + minute) * 60.0 + second) * 1000.0)
+}
+
+/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
+fn days_from_civil(year: f64, month: f64, day: f64) -> f64 {
+	let year = if month <= 2.0 { year - 1.0 } else { year };
+	let era = (year / 400.0).floor();
+	let year_of_era = year - era * 400.0;
+	let month_index = if month > 2.0 { month - 3.0 } else { month + 9.0 };
+	let day_of_year = ((153.0 * month_index + 2.0) / 5.0).floor() + day - 1.0;
+	let day_of_era = year_of_era * 365.0 + (year_of_era / 4.0).floor() - (year_of_era / 100.0).floor() + day_of_year;
+	era * 146_097.0 + day_of_era - 719_468.0
+}
+
 /// `str.length`: the number of UTF-16 code units.
 pub fn utf16_len(value: &str) -> usize {
 	value.encode_utf16().count()
@@ -300,5 +435,16 @@ mod tests {
 		assert_eq!(utf16_prefix("a😀b", 2), "a");
 		assert_eq!(utf16_prefix("a😀b", 3), "a😀");
 		assert_eq!(number_to_string(0.1 + 0.2), "0.30000000000000004");
+	}
+	#[test]
+	fn date_parse_reads_http_and_iso_dates() {
+		assert_eq!(date_parse("Wed, 21 Oct 2015 07:28:00 GMT"), 1_445_412_480_000.0);
+		assert_eq!(date_parse("21 Oct 2015 07:28:00 +0100"), 1_445_408_880_000.0);
+		assert_eq!(date_parse("2015-10-21T07:28:00.5Z"), 1_445_412_480_500.0);
+		assert_eq!(date_parse("2015-10-21T07:28:00+01:00"), 1_445_408_880_000.0);
+		assert_eq!(date_parse("2015-10-21"), 1_445_385_600_000.0);
+		assert_eq!(date_parse("2000-03-01"), 951_868_800_000.0);
+		assert!(date_parse("soon").is_nan());
+		assert!(date_parse("été 21 Oct 2015 07:28:00 GMT").is_nan());
 	}
 }
