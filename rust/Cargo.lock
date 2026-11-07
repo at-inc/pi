@@ -1018,6 +1018,7 @@ dependencies = [
  "futures",
  "indexmap",
  "pi-host",
+ "rand 0.9.5",
  "serde",
  "serde_json",
 ]

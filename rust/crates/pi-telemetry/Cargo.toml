@@ -11,6 +11,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 indexmap = { workspace = true }
 futures = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+pi-host = { workspace = true, features = ["testing"] }
+futures = { workspace = true, features = ["executor"] }
 
 [lints]
 workspace = true
