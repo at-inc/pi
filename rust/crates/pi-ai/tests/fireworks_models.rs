@@ -1,9 +1,7 @@
 //! Port of `packages/ai/test/fireworks-models.test.ts`.
 //!
 //! `getModel` (compat.ts) is `get_builtin_model`. `process.env` is the `TestHost` environment, so the `afterEach`
-//! restore is not needed. Not ported, because they capture requests through the OpenAI Completions API
-//! (`w3-openai-completions`): `omits unsupported long cache retention for %s` and the payload half of `routes Kimi K3
-//! through the OpenAI-compatible API with native effort controls`. They move with that API.
+//! restore is not needed. `it.each` cases run in a loop.
 //!
 //! The `Anthropic-compatible session affinity and tool compat` describe captures requests through the test host's
 //! `fetch` instead of a local `node:http` server; the model's `baseUrl` override is not needed.
@@ -74,6 +72,15 @@ fn test_context() -> Context {
 
 /// `streamSimple` with `reasoning` (`off` is `undefined`) and an `onPayload` that throws; returns the payload.
 async fn capture_simple_payload(model: &Model, reasoning: Option<ModelThinkingLevel>) -> Value {
+	capture_payload_with(model, reasoning, |_| {}).await
+}
+
+/// `capture_simple_payload` with further options set by `configure`.
+async fn capture_payload_with(
+	model: &Model,
+	reasoning: Option<ModelThinkingLevel>,
+	configure: impl FnOnce(&mut SimpleStreamOptions),
+) -> Value {
 	let captured: Rc<RefCell<Option<Value>>> = Rc::default();
 	let sink = captured.clone();
 	let base = StreamOptions {
@@ -94,6 +101,8 @@ async fn capture_simple_payload(model: &Model, reasoning: Option<ModelThinkingLe
 			.map(|level| serde_json::from_value(to_json(level)).unwrap()),
 		..SimpleStreamOptions::default()
 	};
+	let mut options = options;
+	configure(&mut options);
 	stream_simple(model, &test_context(), Some(options))
 		.unwrap()
 		.result()
@@ -124,6 +133,24 @@ mod fireworks_models {
 		assert_eq!(fast.base_url, base.base_url);
 		assert_eq!(fast.compat, base.compat);
 		assert_eq!(fast.thinking_level_map, base.thinking_level_map);
+	}
+
+	#[test]
+	fn omits_unsupported_long_cache_retention() {
+		for model_id in [
+			"accounts/fireworks/models/glm-5p3",
+			"accounts/fireworks/routers/glm-5p3-fast",
+		] {
+			pi_host::testing::run(|_| async move {
+				let payload = capture_payload_with(&fireworks(model_id), None, |options| {
+					options.cache_retention = Some(CacheRetention::Long);
+					options.session_id = Some("test-fireworks-session".into());
+				})
+				.await;
+
+				assert!(payload.get("prompt_cache_retention").is_none(), "{model_id}");
+			});
+		}
 	}
 
 	#[test]
@@ -159,6 +186,11 @@ mod fireworks_models {
 		assert_eq!(fast.base_url, base.base_url);
 		assert_json_eq(&to_json(&fast.compat), &compat);
 		assert_json_eq(&to_json(&fast.thinking_level_map), &thinking_level_map);
+
+		pi_host::testing::run(|_| async {
+			let payload = capture_simple_payload(&base, Some(Max)).await;
+			assert_eq!(payload["reasoning_effort"], "max");
+		});
 	}
 
 	// Regression for #9323: native effort must reach Messages without budget-based fallback.
