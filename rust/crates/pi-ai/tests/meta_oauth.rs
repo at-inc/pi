@@ -86,7 +86,7 @@ mod meta_oauth {
 			}
 			Err(PiError::new(format!("Unexpected fetch URL: {url}")))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let start = pi_host::now_ms();
 			let events = Rc::new(RefCell::new(Vec::new()));
 			let credential = meta_oauth()
@@ -122,7 +122,7 @@ mod meta_oauth {
 			assert_eq!(header(&request, "Authorization"), Some("Bearer identity-token"));
 			Ok(json_response(json!({ "api_key": "LLM|fresh-key" }), 200))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let now = pi_host::now_ms();
 			let credential = meta_oauth()
 				.refresh(
@@ -151,7 +151,7 @@ mod meta_oauth {
 				200,
 			))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let error = meta_oauth()
 				.refresh(
 					OAuthCredential::new("identity-token", "", 1.0),
@@ -166,7 +166,7 @@ mod meta_oauth {
 	#[test]
 	fn uses_the_minted_key_as_the_request_api_key() {
 		let fetch = handler(|_| Err(PiError::new("no fetch expected")));
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			assert_eq!(
 				meta_oauth()
 					.to_auth(OAuthCredential::new("identity-token", "LLM|key", 1.0))

@@ -152,6 +152,14 @@ pub fn run_with_env<T, Fut: Future<Output = T>>(
 	host::run(handler, env, test)
 }
 
+/// `run` on `pi_host::testing` with the `native` feature too, for suites that use vitest's fake timers.
+pub fn run_with_fake_timers<T, Fut: Future<Output = T>>(handler: FetchHandler, test: impl FnOnce() -> Fut) -> T {
+	pi_host::testing::run(|host| {
+		host.on_fetch(move |request| handler(request));
+		test()
+	})
+}
+
 /// The platform `fetch` the handler stubbed out.
 pub fn native_fetch(request: HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>> {
 	host::native_fetch(request)

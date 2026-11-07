@@ -155,7 +155,7 @@ mod x_ai_oauth_device_flow {
 			}
 			Err(PiError::new(format!("Unexpected request: {}", request.url)))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let start = pi_host::now_ms();
 			let device_codes: Rc<RefCell<Vec<DeviceCodeInfo>>> = Rc::new(RefCell::new(Vec::new()));
 			let polls_at_notify = Rc::new(Cell::new(usize::MAX));
@@ -212,7 +212,7 @@ mod x_ai_oauth_device_flow {
 			recorded.borrow_mut().push(pi_host::now_ms());
 			Ok(json_response(token_response(&[]), 200))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let start = pi_host::now_ms();
 			login_xai_for_test(|_| {}, None).await.unwrap();
 			// RFC 8628 default interval is 5 seconds when the server does not require a wait.
@@ -234,7 +234,7 @@ mod x_ai_oauth_device_flow {
 			}
 			Ok(json_response(token_response(&[]), 200))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let device_codes: Rc<RefCell<Vec<DeviceCodeInfo>>> = Rc::new(RefCell::new(Vec::new()));
 			let codes = device_codes.clone();
 			login_xai_for_test(move |info| codes.borrow_mut().push(info), None)
@@ -263,7 +263,7 @@ mod x_ai_oauth_device_flow {
 				200,
 			))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let error = login_xai_for_test(|_| {}, None).await.unwrap_err();
 			assert!(error.message.contains("Untrusted verification URI"));
 		});
@@ -278,7 +278,7 @@ mod x_ai_oauth_device_flow {
 					200,
 				))
 			});
-			common::run(fetch, || async {
+			common::run_with_fake_timers(fetch, || async {
 				let error = login_xai_for_test(|_| {}, None).await.unwrap_err();
 				assert!(
 					error.message.contains("Untrusted verification URI"),
@@ -300,7 +300,7 @@ mod x_ai_oauth_device_flow {
 					json_response(json!({ "error": error }), 400)
 				})
 			});
-			common::run(fetch, || async {
+			common::run_with_fake_timers(fetch, || async {
 				let failure = login_xai_for_test(|_| {}, None).await.unwrap_err();
 				assert!(
 					failure.message.contains("xAI device authorization was denied"),
@@ -318,7 +318,7 @@ mod x_ai_oauth_device_flow {
 			counted.set(counted.get() + 1);
 			Ok(json_response(device_code_response(&[]), 200))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let controller = AbortController::new();
 			let aborter = controller.clone();
 			let error = login_xai_for_test(move |_| aborter.abort(), Some(controller.signal()))
@@ -354,7 +354,7 @@ mod x_ai_oauth_device_flow {
 				200,
 			))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let rotated = refresh_xai_for_test("old-refresh").await.unwrap();
 			let preserved = refresh_xai_for_test("keep-refresh").await.unwrap();
 			assert_eq!(serde_json::to_value(&rotated).unwrap()["type"], "oauth");
@@ -377,7 +377,7 @@ mod x_ai_oauth_device_flow {
 	#[test]
 	fn assumes_a_one_hour_lifetime_when_expires_in_is_missing() {
 		let fetch = handler(|_| Ok(json_response(token_response(&[("expires_in", None)]), 200)));
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let start = pi_host::now_ms();
 			let credentials = refresh_xai_for_test("old-refresh").await.unwrap();
 			assert_eq!(credentials.expires, start + 3_600_000.0 - 300_000.0);
@@ -387,7 +387,7 @@ mod x_ai_oauth_device_flow {
 	#[test]
 	fn rejects_token_responses_with_missing_fields() {
 		let fetch = handler(|_| Ok(json_response(token_response(&[("access_token", None)]), 200)));
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let error = refresh_xai_for_test("old-refresh").await.unwrap_err();
 			assert!(error.message.contains("Invalid xAI OAuth response field: access_token"));
 		});
@@ -401,7 +401,7 @@ mod x_ai_oauth_device_flow {
 				400,
 			))
 		});
-		common::run(fetch, || async {
+		common::run_with_fake_timers(fetch, || async {
 			let error = refresh_xai_for_test("old-refresh").await.unwrap_err();
 			assert!(
 				error
