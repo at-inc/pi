@@ -130,6 +130,25 @@ impl Host for NativeHost {
 	fn home_dir(&self) -> Option<String> {
 		std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned())
 	}
+
+	fn read_file(&self, path: &str) -> LocalBoxFuture<'static, PiResult<String>> {
+		let path = path.to_string();
+		Box::pin(async move {
+			match tokio::fs::read(&path).await {
+				Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
+				Err(error) => Err(match error.kind() {
+					std::io::ErrorKind::NotFound => crate::host::file_not_found(&path),
+					std::io::ErrorKind::PermissionDenied => PiError::new(format!(
+						"EACCES: permission denied, open '{path}'"
+					))
+					.with_data(serde_json::json!({ "errno": -13, "code": "EACCES", "syscall": "open", "path": path })),
+					std::io::ErrorKind::IsADirectory => PiError::new("EISDIR: illegal operation on a directory, read")
+						.with_data(serde_json::json!({ "errno": -21, "code": "EISDIR", "syscall": "read" })),
+					_ => PiError::new(error.to_string()),
+				}),
+			}
+		})
+	}
 }
 
 /// Runs `main` on a current-thread tokio runtime inside a `LocalSet`, with a `NativeHost` installed.
