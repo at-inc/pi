@@ -252,6 +252,7 @@ fn api_key_credential(key: &str) -> Credential {
 	Credential::ApiKey(ApiKeyCredential {
 		key: Some(key.into()),
 		env: None,
+		extra: Default::default(),
 	})
 }
 
@@ -1201,6 +1202,7 @@ mod models_runtime {
 				Some(Some(Credential::ApiKey(ApiKeyCredential {
 					key: Some("ambient-key".into()),
 					env: None,
+					extra: Default::default(),
 				})))
 			);
 			assert_eq!(force_refresh.get(), Some(true));
@@ -1611,6 +1613,7 @@ mod models_runtime {
 							Ok(ApiKeyCredential {
 								key: Some("saved".into()),
 								env: None,
+								extra: Default::default(),
 							})
 						})
 					})
@@ -2000,6 +2003,7 @@ mod models_runtime {
 					Ok(ApiKeyCredential {
 						key: Some("logged-in".into()),
 						env: None,
+						extra: Default::default(),
 					})
 				})
 			}));
