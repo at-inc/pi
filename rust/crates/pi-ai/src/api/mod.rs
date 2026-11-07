@@ -25,6 +25,7 @@ pub mod llama_cpp_classify;
 pub mod llama_cpp_classify_lazy;
 pub mod mistral_conversations;
 pub mod mistral_conversations_lazy;
+pub mod openai_client;
 pub mod openai_codex_images;
 pub mod openai_codex_images_lazy;
 pub mod openai_codex_responses;
