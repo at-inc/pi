@@ -4,7 +4,8 @@
 //! existing `PORT-STUB: w3-bedrock-misc` `openrouter_images::generate_images`; it is
 //! `#[ignore = "needs w3-bedrock-misc: ..."]` until that adapter lands.
 //!
-//! Ported in part, with the adapters w3-openai-responses ports; the owning shards add theirs to the same lists:
+//! Ported in part; the owning shards add their adapters to the same lists:
+//! - "passes fetch through streamSimple to the Anthropic SDK": `api::anthropic_messages`.
 //! - "passes fetch through streamSimple to OpenAI SDK adapters": `api::openai_responses` and
 //!   `api::azure_openai_responses`. Missing: `api::openai_completions` (w3-openai-completions).
 //! - "uses fetch for Mistral, Codex SSE, and pi-messages HTTP requests": `api::openai_codex_responses` over SSE.
@@ -12,7 +13,6 @@
 //!
 //! Not ported, because the adapter files are still empty and calling their predicted `stream_simple` would break the
 //! crate's compile. They belong with the owning w3 shards:
-//! - "passes fetch through streamSimple to the Anthropic SDK" (`api::anthropic_messages`, w3-anthropic).
 //! - "rejects custom fetch for Google adapters instead of silently bypassing it" (`api::google_generative_ai` and
 //!   `api::google_vertex`, w3-google-mistral).
 //! - "allows Google adapters to receive globalThis.fetch explicitly" (`api::google_generative_ai`, w3-google-mistral).
@@ -26,8 +26,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use pi_ai::api::anthropic_messages;
 use pi_ai::api::openrouter_images::generate_images;
 use pi_ai::api::{azure_openai_responses, openai_codex_responses, openai_responses};
+use pi_ai::types::StreamOptions;
 use pi_ai::types::{
 	BaseModel, Context, ImageModel, ImagesContext, ImagesOptions, Message, Model, ModelCost, ModelInputModality,
 	ModelType, ProviderRequestOptions, SimpleStreamOptions, TextContent, TranscriptContext, Transport, UserContent,
@@ -102,6 +104,37 @@ fn simple_options(
 
 mod fetch_stream_option {
 	use super::*;
+
+	#[test]
+	fn passes_fetch_through_stream_simple_to_the_anthropic_sdk() {
+		run(|host| async move {
+			let (custom, calls) = custom_fetch();
+			let context = normalize_context(
+				&serde_json::from_value(serde_json::json!({
+					"messages": [{ "role": "user", "content": "hello", "timestamp": 1 }],
+				}))
+				.unwrap(),
+			);
+			let options = SimpleStreamOptions {
+				base: StreamOptions {
+					base: ProviderRequestOptions {
+						api_key: Some("test-key".into()),
+						fetch: Some(custom),
+						max_retries: Some(0.0),
+						..ProviderRequestOptions::default()
+					},
+					..StreamOptions::default()
+				},
+				..SimpleStreamOptions::default()
+			};
+			anthropic_messages::stream_simple(&create_model("anthropic-messages"), &context, Some(options))
+				.unwrap()
+				.result()
+				.await;
+			assert!(calls.get() > 0);
+			assert!(host.requests().is_empty());
+		});
+	}
 
 	#[test]
 	fn passes_fetch_through_stream_simple_to_open_ai_sdk_adapters() {

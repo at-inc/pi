@@ -18,6 +18,17 @@ pub struct HttpRequest {
 	pub headers: IndexMap<String, String>,
 	pub body: Option<Bytes>,
 	pub signal: Option<AbortSignal>,
+	/// `RequestInit.redirect`.
+	pub redirect: RedirectMode,
+}
+
+/// `RequestInit.redirect`. `Manual` returns a 3xx response as is instead of following it, like Node's fetch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RedirectMode {
+	#[default]
+	Follow,
+	Manual,
+	Error,
 }
 
 impl HttpRequest {

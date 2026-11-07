@@ -1,19 +1,16 @@
 //! Port of `packages/ai/src/api/openai-completions.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
 
-// PORT-STUB: w3-openai-completions
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::PiError;
-
 use crate::api::lazy::lazy_api;
+use crate::api::openai_completions::OpenAICompletionsStreams;
 use crate::types::ProviderStreams;
 
-/// `openAICompletionsApi()`: every stream ends with an `API not ported` error event.
+/// `openAICompletionsApi()`: the openai-completions API, loaded on first use.
 pub fn openai_completions_api() -> Rc<dyn ProviderStreams> {
 	lazy_api(
-		Rc::new(|| Box::pin(async { Err(PiError::new("API not ported")) })),
+		Rc::new(|| Box::pin(async { Ok(Rc::new(OpenAICompletionsStreams) as Rc<dyn ProviderStreams>) })),
 		None,
 	)
 }

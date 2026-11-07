@@ -829,6 +829,7 @@ mod streamable_http_transport {
 												headers: Default::default(),
 												body: None,
 												signal: None,
+												..Default::default()
 											})
 											.await?,
 										);

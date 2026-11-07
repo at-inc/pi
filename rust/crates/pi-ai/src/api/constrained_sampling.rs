@@ -2,8 +2,8 @@
 //! PORT-STATUS: pending
 
 // PORT-STUB: w3-bedrock-misc
-// The items below are implemented by w3-openai-completions, which calls them on every request; the owning shard
-// replaces this block with the full port of the file.
+// The items below are implemented by w3-openai-completions and w3-anthropic, which call them on every request; the
+// owning shard replaces this block with the full port of the file.
 
 use indexmap::IndexMap;
 use pi_host::js::{js_key_order, json_stringify};
@@ -214,6 +214,31 @@ pub fn make_strict_json_schema(
 		StrictSchemaError::Unsupported(message) => PiError::new(message),
 		StrictSchemaError::Other(error) => error,
 	})
+}
+
+/// Returns true for a tool that asks for strict JSON-schema sampling only when possible (`strict: "prefer"`).
+pub fn prefers_json_schema_strict_sampling(tool: &Tool) -> bool {
+	matches!(
+		tool.constrained_sampling,
+		Some(ToolConstrainedSampling::Config(ConstrainedSamplingConfig::JsonSchema {
+			strict: ConstrainedSamplingStrictness::Prefer
+		}))
+	)
+}
+
+/// Claude rejects (on the Anthropic API and on Bedrock) a request whose strict tools exceed its limits with one of these
+/// messages. Observed limits: 20 strict tools, and 16 optional or union-typed parameters across all strict tools.
+const STRICT_TOOL_LIMIT_ERROR_MESSAGES: [&str; 3] = [
+	"The compiled grammar is too large",
+	"Too many strict tools (",
+	"Schemas contains too many parameters with union types (",
+];
+
+/// Returns true when a provider error message says the request's strict tools exceed the provider's limits.
+pub fn is_strict_tool_limit_error_message(message: &str) -> bool {
+	STRICT_TOOL_LIMIT_ERROR_MESSAGES
+		.iter()
+		.any(|limit_message| message.contains(limit_message))
 }
 
 pub fn get_json_schema_tool_parameters(tool: &Tool, strict: Option<bool>) -> PiResult<Value> {

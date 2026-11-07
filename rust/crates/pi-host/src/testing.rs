@@ -34,6 +34,7 @@ pub struct TestHost {
 	clock_ms: RefCell<f64>,
 	requests: RefCell<Vec<RecordedRequest>>,
 	files: RefCell<HashSet<String>>,
+	file_contents: RefCell<HashMap<String, String>>,
 	home_dir: RefCell<Option<String>>,
 	spawner: futures::executor::LocalSpawner,
 	timers: RefCell<Vec<Timer>>,
@@ -148,6 +149,12 @@ impl TestHost {
 		self.files.borrow_mut().insert(path.into());
 	}
 
+	/// Writes a file: `read_file(path)` returns `contents` and `file_exists(path)` is true.
+	pub fn write_file(&self, path: &str, contents: &str) {
+		self.files.borrow_mut().insert(path.into());
+		self.file_contents.borrow_mut().insert(path.into(), contents.into());
+	}
+
 	/// Sets `os.homedir()`. Without it the host has no file system, like a browser.
 	pub fn set_home_dir(&self, dir: &str) {
 		*self.home_dir.borrow_mut() = Some(dir.into());
@@ -237,6 +244,12 @@ impl Host for TestHost {
 
 	fn home_dir(&self) -> Option<String> {
 		self.home_dir.borrow().clone()
+	}
+
+	fn read_file(&self, path: &str) -> LocalBoxFuture<'static, PiResult<String>> {
+		let contents = self.file_contents.borrow().get(path).cloned();
+		let error = crate::host::file_not_found(path);
+		Box::pin(async move { contents.ok_or(error) })
 	}
 
 	fn websocket(&self, url: &str, headers: &IndexMap<String, String>) -> Option<PiResult<Rc<dyn WebSocket>>> {
@@ -393,6 +406,7 @@ where
 		clock_ms: RefCell::new(1_700_000_000_000.0),
 		requests: RefCell::new(Vec::new()),
 		files: RefCell::new(HashSet::new()),
+		file_contents: RefCell::new(HashMap::new()),
 		home_dir: RefCell::new(None),
 		spawner: pool.spawner(),
 		timers: RefCell::new(Vec::new()),

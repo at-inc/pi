@@ -1,29 +1,70 @@
-//! Port of `packages/ai/test/cache-retention.test.ts`: the "OpenAI Responses Provider" describe.
+//! Port of `packages/ai/test/cache-retention.test.ts`: the "Anthropic Provider" and "OpenAI Responses Provider"
+//! describes.
 //!
-//! Not ported here: the "Anthropic Provider" describe (`api::anthropic_messages`, w3-anthropic) and the "OpenAI
-//! Completions Provider" describe (`api::openai_completions`, w3-openai-completions); both adapters are still
-//! `PORT-STATUS: pending` on this branch, and their shards add those modules to this file. The two
-//! `skipIf(!process.env.OPENAI_API_KEY)` cases are e2e. `PI_CACHE_RETENTION` is read from the test host's environment,
+//! The "OpenAI Completions Provider" describe moves with `api::openai_completions` (w3-openai-completions). The
+//! `it.skipIf(!process.env.ANTHROPIC_API_KEY)` and `skipIf(!process.env.OPENAI_API_KEY)` cases go through `stream`
+//! with a real key and are e2e; they are not ported. `PI_CACHE_RETENTION` is read from the test host's environment,
 //! which starts empty like the `beforeEach` that deletes it.
 
+mod anthropic_support;
 mod openai_responses_support;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
-use openai_responses_support::{context, responses_options, with};
+use anthropic_support::{context, model};
+use openai_responses_support::{context as responses_context, responses_options, with};
+use pi_ai::api::anthropic_messages::{AnthropicOptions, stream};
 use pi_ai::api::openai_responses::{OpenAIResponsesOptions, stream as stream_open_ai_responses};
 use pi_ai::providers::all::get_builtin_model;
-use pi_ai::types::{AssistantMessageEvent, CacheRetention, Model, OnPayload, TranscriptContext};
+use pi_ai::types::{AssistantMessageEvent, CacheRetention, Model, OnPayload, StreamOptions, TranscriptContext};
 use pi_host::PiError;
 use pi_host::testing::run;
 use serde_json::{Value, json};
+
+fn retention_context() -> TranscriptContext {
+	context(json!({
+		"systemPrompt": "You are a helpful assistant.",
+		"messages": [{ "role": "user", "content": "Hello", "timestamp": 1 }],
+	}))
+}
+
+/// Streams `model` with a fake key and a `stopAfterPayload` hook, and returns the captured payload.
+async fn capture_payload(model: &Model, cache_retention: Option<CacheRetention>) -> Value {
+	let captured: Rc<RefCell<Option<Value>>> = Rc::default();
+	let sink = captured.clone();
+	let mut base = StreamOptions {
+		cache_retention,
+		..StreamOptions::default()
+	};
+	base.api_key = Some("fake-key".into());
+	base.on_payload = Some(Rc::new(move |payload, _| {
+		*sink.borrow_mut() = Some(payload);
+		Box::pin(async { Err(PiError::new("payload captured")) })
+	}));
+	let options = AnthropicOptions {
+		base,
+		..AnthropicOptions::default()
+	};
+	let _ = stream(model, &retention_context(), Some(options)).result().await;
+	captured.borrow_mut().take().expect("payload captured")
+}
+
+fn proxy_model(compat: Option<Value>) -> Model {
+	let mut model = model("anthropic", "claude-haiku-4-5");
+	model.base_url = "https://my-proxy.example.com/v1".into();
+	if let Some(Value::Object(compat)) = compat {
+		model.compat = Some(compat);
+	}
+	model
+}
 
 fn get_model(provider: &str, model_id: &str) -> Model {
 	get_builtin_model(provider, model_id).unwrap_or_else(|| panic!("{provider}/{model_id} is defined"))
 }
 
 fn hello_context() -> TranscriptContext {
-	context(json!({
+	responses_context(json!({
 		"systemPrompt": "You are a helpful assistant.",
 		"messages": [{ "role": "user", "content": "Hello", "timestamp": pi_host::now_ms() }],
 	}))
@@ -31,7 +72,7 @@ fn hello_context() -> TranscriptContext {
 
 /// Streams until the first error with `onPayload: stopAfterPayload(...)` and returns the captured payload.
 async fn capture(model: &Model, configure: impl FnOnce(&mut OpenAIResponsesOptions)) -> Value {
-	let captured = Rc::new(std::cell::RefCell::new(None));
+	let captured = Rc::new(RefCell::new(None));
 	let target = captured.clone();
 	let on_payload: OnPayload = Rc::new(move |payload, _model| {
 		*target.borrow_mut() = Some(payload);
@@ -53,6 +94,67 @@ async fn capture(model: &Model, configure: impl FnOnce(&mut OpenAIResponsesOptio
 
 mod cache_retention_pi_cache_retention {
 	use super::*;
+
+	mod anthropic_provider {
+		use super::*;
+
+		#[test]
+		fn should_add_ttl_for_non_api_anthropic_com_base_url_by_default() {
+			run(|host| {
+				host.set_env("PI_CACHE_RETENTION", "long");
+				async {
+					let payload = capture_payload(&proxy_model(None), None).await;
+					assert_eq!(
+						payload["system"][0]["cache_control"],
+						json!({ "type": "ephemeral", "ttl": "1h" })
+					);
+				}
+			});
+		}
+
+		#[test]
+		fn should_omit_ttl_when_supports_long_cache_retention_is_false() {
+			run(|_| async {
+				let model = proxy_model(Some(json!({ "supportsLongCacheRetention": false })));
+				let payload = capture_payload(&model, Some(CacheRetention::Long)).await;
+				assert_eq!(payload["system"][0]["cache_control"], json!({ "type": "ephemeral" }));
+			});
+		}
+
+		#[test]
+		fn should_omit_cache_control_when_cache_retention_is_none() {
+			run(|_| async {
+				let model = model("anthropic", "claude-haiku-4-5");
+				let payload = capture_payload(&model, Some(CacheRetention::None)).await;
+				assert!(payload["system"][0].get("cache_control").is_none());
+			});
+		}
+
+		#[test]
+		fn should_add_cache_control_to_string_user_messages() {
+			run(|_| async {
+				let model = model("anthropic", "claude-haiku-4-5");
+				let payload = capture_payload(&model, None).await;
+				let messages = payload["messages"].as_array().unwrap();
+				let content = messages.last().unwrap()["content"]
+					.as_array()
+					.expect("content is an array");
+				assert_eq!(content.last().unwrap()["cache_control"], json!({ "type": "ephemeral" }));
+			});
+		}
+
+		#[test]
+		fn should_set_1h_cache_ttl_when_cache_retention_is_long() {
+			run(|_| async {
+				let model = model("anthropic", "claude-haiku-4-5");
+				let payload = capture_payload(&model, Some(CacheRetention::Long)).await;
+				assert_eq!(
+					payload["system"][0]["cache_control"],
+					json!({ "type": "ephemeral", "ttl": "1h" })
+				);
+			});
+		}
+	}
 
 	mod open_ai_responses_provider {
 		use super::*;

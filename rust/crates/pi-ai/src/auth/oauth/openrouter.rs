@@ -176,6 +176,7 @@ async fn request_key(code: &str, verifier: &str, signal: &AbortSignal) -> PiResu
 			"code_challenge_method": "S256",
 		})))),
 		signal: Some(signal.clone()),
+		..Default::default()
 	};
 	let response = pi_host::fetch(request, None).await?;
 	let ok = response.ok();

@@ -92,6 +92,7 @@ async fn fetch_metadata(
 			.collect(),
 			body: None,
 			signal: signal.cloned(),
+			..Default::default()
 		},
 		fetch,
 	)

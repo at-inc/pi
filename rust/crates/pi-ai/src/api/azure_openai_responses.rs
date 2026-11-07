@@ -11,7 +11,8 @@
 //! - `new AzureOpenAI(...)` is `new_azure_openai`, built on the `OpenAI` client of `openai_client.rs`: it adds the
 //!   `api-version` query, sends `api-key` in place of `Authorization`, and names the client `AzureOpenAI` in
 //!   `User-Agent`, as default headers. `OPENAI_CUSTOM_HEADERS` therefore cannot override `User-Agent` or `api-key`
-//!   (the SDK applies it after them), and `redirect: "manual"` is not set, as `HttpRequest` has no redirect mode.
+//!   (the SDK applies it after them), and `redirect: "manual"` is not set, as the `openai_client.rs` client has no
+//!   option to set `HttpRequest.redirect`.
 
 use std::rc::Rc;
 

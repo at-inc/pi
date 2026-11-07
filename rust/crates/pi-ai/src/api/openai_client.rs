@@ -121,7 +121,7 @@ pub struct OpenAI {
 	timeout: f64,
 	max_retries: f64,
 	fetch: Option<FetchFunction>,
-	default_headers: NullableHeaders,
+	default_headers: DefaultHeaders,
 	default_query: Option<IndexMap<String, String>>,
 }
 
@@ -146,8 +146,12 @@ impl OpenAI {
 			Some(base_url) => base_url,
 			None => read_env("OPENAI_BASE_URL").unwrap_or_default(),
 		};
-		let mut default_headers = NullableHeaders::default();
+		let raw_default_headers = options.default_headers.unwrap_or_default();
+		// The SDK keeps `defaultHeaders` as given and builds them per request, so a bad name fails inside the request,
+		// unless `OPENAI_CUSTOM_HEADERS` makes the constructor build them.
+		let mut default_headers = DefaultHeaders::Object(raw_default_headers.clone());
 		if let Some(custom_headers) = read_env("OPENAI_CUSTOM_HEADERS") {
+			let mut built = NullableHeaders::default();
 			let mut parsed: IndexMap<String, String> = IndexMap::new();
 			for line in custom_headers.split('\n') {
 				if let Some(colon) = line.find(':') {
@@ -158,12 +162,12 @@ impl OpenAI {
 				}
 			}
 			for (name, value) in &parsed {
-				default_headers.set(name, Some(value))?;
+				built.set(name, Some(value))?;
 			}
-		}
-		let raw_default_headers = options.default_headers.unwrap_or_default();
-		for (name, value) in &raw_default_headers {
-			default_headers.set(name, value.as_deref())?;
+			for (name, value) in &raw_default_headers {
+				built.set(name, value.as_deref())?;
+			}
+			default_headers = DefaultHeaders::Built(built);
 		}
 		Ok(Self {
 			api_key,
@@ -352,7 +356,14 @@ impl OpenAI {
 		if let Some(api_key) = &self.api_key {
 			headers.set("Authorization", Some(&format!("Bearer {api_key}")))?;
 		}
-		headers.extend(&self.default_headers)?;
+		match &self.default_headers {
+			DefaultHeaders::Object(rows) => {
+				for (name, value) in rows {
+					headers.set(name, value.as_deref())?;
+				}
+			}
+			DefaultHeaders::Built(built) => headers.extend(built)?,
+		}
 		headers.set("content-type", Some("application/json"))?;
 		for (name, value) in options.headers.iter().flatten() {
 			headers.set(name, value.as_deref())?;
@@ -705,6 +716,13 @@ pub fn stream_from_sse_response(
 			yield_(Ok(data)).await;
 		}
 	})
+}
+
+/// `options.defaultHeaders`: the object the caller passed, or the headers the constructor built from it.
+#[derive(Clone, Debug)]
+enum DefaultHeaders {
+	Object(ProviderHeaders),
+	Built(NullableHeaders),
 }
 
 /// `NullableHeaders`: header values by lowercase name, and the names explicitly set to `null`.

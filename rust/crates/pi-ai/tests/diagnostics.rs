@@ -1,17 +1,20 @@
 //! Port of `packages/ai/test/provider-error-diagnostics.test.ts`, the cases that call `createProviderErrorDiagnostic`
-//! directly, and the cases that stream through the Responses and Codex APIs (module `streaming_providers`). The
-//! streaming cases for Anthropic (w3-anthropic) and OpenAI Completions (w3-openai-completions) move with those
-//! providers; the `it.each(providers)` lists here hold only "responses" and "codex". The `Headers` instance, `undefined` values and the `1n` payload have no counterpart in a `PiError`, whose
-//! `data` is already JSON, so those inputs become plain JSON objects and the serialization fallback is not reachable.
+//! directly, the Anthropic rows of the `$name` tables that stream through each API (`anthropic_` tests), and the
+//! cases that stream through the Responses and Codex APIs (module `streaming_providers`, whose `it.each(providers)`
+//! lists hold "responses" and "codex"). The OpenAI Completions rows move with that provider's w3 shard. The
+//! `JSON.parse(JSON.stringify(...))` round trip is `serde_json::to_value` of the diagnostic. The `Headers` instance,
+//! `undefined` values and the `1n` payload have no counterpart in a `PiError`, whose `data` is already JSON, so those
+//! inputs become plain JSON objects and the serialization fallback is not reachable.
 //! `createProviderErrorDiagnostic(null)` becomes a thrown JSON `null`.
 
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use pi_ai::api::anthropic_messages::{AnthropicOptions, stream as stream_anthropic};
 use pi_ai::api::{openai_codex_responses, openai_responses};
 use pi_ai::types::{
-	AssistantContent, AssistantMessage, AssistantMessageEvent, Context, Message, Model, StopReason, StreamOptions,
-	TranscriptContext, Transport, UserMessage,
+	AssistantContent, AssistantMessage, AssistantMessageEvent, Context, Message, Model, ProviderRequestOptions,
+	StopReason, StreamOptions, TranscriptContext, Transport, UserMessage,
 };
 use pi_ai::utils::diagnostics::{
 	AssistantMessageDiagnostic, DiagnosticErrorCode, append_assistant_message_diagnostic,
@@ -164,6 +167,114 @@ fn reports_non_error_throws_as_thrown_values() {
 		serde_json::to_value(&diagnostic.details).unwrap(),
 		json!({ "status": 429, "headers": { "retry-after": "60" }, "payload": { "message": "Plan limit" } })
 	);
+}
+
+const TOKEN: &str = "test.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoidGVzdCJ9fQ.test";
+
+/// `model("anthropic-messages")`.
+fn anthropic_model() -> Model {
+	serde_json::from_value(json!({
+		"id": "test-model",
+		"name": "Test",
+		"api": "anthropic-messages",
+		"provider": "test",
+		"baseUrl": "https://provider.invalid/v1",
+		"reasoning": false,
+		"input": ["text"],
+		"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+		"contextWindow": 10000,
+		"maxTokens": 1000,
+	}))
+	.unwrap()
+}
+
+/// The `anthropic` row's `stream(options)` with `{ apiKey: token, transport: "sse", maxRetries: 0, fetch }`.
+async fn stream_anthropic_with(fetch: FetchFunction, signal: Option<pi_host::AbortSignal>) -> AssistantMessage {
+	let context = normalize_context(
+		&serde_json::from_value(json!({ "messages": [{ "role": "user", "content": "Hello", "timestamp": 0 }] }))
+			.unwrap(),
+	);
+	let options = AnthropicOptions {
+		base: StreamOptions {
+			base: ProviderRequestOptions {
+				api_key: Some(TOKEN.into()),
+				max_retries: Some(0.0),
+				signal,
+				fetch: Some(fetch),
+				..ProviderRequestOptions::default()
+			},
+			transport: Some(Transport::Sse),
+			..StreamOptions::default()
+		},
+		..AnthropicOptions::default()
+	};
+	stream_anthropic(&anthropic_model(), &context, Some(options))
+		.result()
+		.await
+		.unwrap()
+}
+
+#[test]
+fn anthropic_preserves_http_metadata_through_json_serialization() {
+	pi_host::testing::run(|_| async {
+		let error = json!({
+			"code": "usage_limit_reached",
+			"type": "rate_limit_error",
+			"message": "Plan limit",
+			"plan_type": "pro",
+			"resets_at": 2000000000,
+		});
+		let body = pi_host::js::json_stringify(&json!({ "error": error }));
+		let fetch: FetchFunction = Rc::new(move |_| {
+			let body = body.clone();
+			Box::pin(async move {
+				Ok(HttpResponse::from_bytes(
+					429,
+					IndexMap::from([
+						("content-type".to_string(), "application/json".to_string()),
+						("retry-after".to_string(), "60".to_string()),
+						("x-request-id".to_string(), "test-request".to_string()),
+					]),
+					body,
+				))
+			})
+		});
+		let output = stream_anthropic_with(fetch, None).await;
+		assert_eq!(output.stop_reason, StopReason::Error);
+		let diagnostic = output
+			.diagnostics
+			.as_ref()
+			.and_then(|diagnostics| diagnostics.iter().find(|item| item.r#type == "provider_error"))
+			.map(|diagnostic| serde_json::to_value(diagnostic).unwrap())
+			.unwrap_or(Value::Null);
+		let details = &diagnostic["details"];
+		assert_eq!(details["status"], json!(429));
+		assert_eq!(details["headers"]["retry-after"], json!("60"));
+		assert_eq!(details["headers"]["x-request-id"], json!("test-request"));
+		// SDKs differ on whether .error includes the outer error envelope.
+		let payload = &details["payload"];
+		assert_eq!(
+			payload.get("error").filter(|error| !error.is_null()).unwrap_or(payload),
+			&error
+		);
+	});
+}
+
+#[test]
+fn anthropic_does_not_classify_cancellation_as_a_provider_failure() {
+	pi_host::testing::run(|_| async {
+		let controller = AbortController::new();
+		controller.abort();
+		let fetch: FetchFunction = Rc::new(|_| Box::pin(async { Err(PiError::new("Request was aborted")) }));
+		let output = stream_anthropic_with(fetch, Some(controller.signal())).await;
+		assert_eq!(output.stop_reason, StopReason::Aborted);
+		assert!(
+			!output
+				.diagnostics
+				.as_ref()
+				.is_some_and(|diagnostics| diagnostics.iter().any(|item| item.r#type == "provider_error"))
+		);
+	});
 }
 
 mod streaming_providers {
