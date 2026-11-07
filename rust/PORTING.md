@@ -153,6 +153,28 @@ These definitions are fixed; the pi-ai types shard implements them exactly.
   `Serialize`. This replaces TypeScript declaration merging (`CustomAgentMessages`): apps' custom messages
   pass through the core untouched.
 
+### Decisions from wave 1 review
+
+- **Key order of typed structs.** Typed structs serialize in field declaration order (keep fields in TS
+  interface order). Byte-exact key order is required only for JSON that is sent to a provider, hashed, used as
+  a cache key, or compared as a string by a test. Build that JSON explicitly with `json!`/`Map::insert` in the
+  TS insertion order instead of serializing a typed struct.
+- **Unknown keys survive.** Apps attach their own fields to messages and models, and JS keeps them. Every
+  serialized struct in the message and model model carries `#[serde(flatten)] pub extra:
+  serde_json::Map<String, Value>` as its last field: the four message structs, the content block structs,
+  `Usage` and its cost struct, `DeferredHandle`, `Tool`, `Model`/`ImageModel`/`ClassifierModel`, and their
+  pi-agent counterparts. Code that builds these structs uses `..Default::default()` or `extra: Map::new()`.
+- **Accept what the TS runtime accepts.** Validation follows the TypeScript runtime, not its type annotations.
+  If the TS code would accept a value at runtime (an arbitrary `userAgent` string, an unknown model `type`),
+  Rust must not reject it during deserialization: use an open newtype or keep the raw value. If the TS code
+  throws, Rust returns an error with the same message (`categories: null` included).
+- **Integer-like keys.** `pi_host::js::json_stringify` orders array-index keys first, ascending, like
+  JavaScript. `pi_host::js::js_key_order` applies the same order to a `Value` in place when code needs JS
+  `Object.keys` order.
+- **`EventStream::result()`** resolves with a copy of the final message taken when the stream completed. The
+  TS promise resolves with the live object, but nothing mutates the final message after `done`/`error`; code
+  that would must hold the `SharedAssistantMessage` from the event instead.
+
 ### Option bags
 
 Option interfaces (`StreamOptions`, `SimpleStreamOptions`, `AnthropicOptions`, `AgentLoopConfig`) carry
