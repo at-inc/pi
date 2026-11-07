@@ -249,6 +249,7 @@ mod native_support {
 			headers: Default::default(),
 			body: None,
 			signal: None,
+			..Default::default()
 		}
 	}
 

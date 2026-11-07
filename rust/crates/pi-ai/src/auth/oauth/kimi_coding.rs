@@ -86,6 +86,7 @@ fn form_request(url: String, fields: &[(&str, &str)], signal: &AbortSignal) -> H
 		headers,
 		body: Some(Bytes::from(body)),
 		signal: Some(request_signal(signal)),
+		..Default::default()
 	}
 }
 

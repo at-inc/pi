@@ -23,8 +23,11 @@ pub mod testing;
 
 pub use abort::{AbortController, AbortSignal};
 pub use error::{PiError, PiResult};
-pub use host::{Host, current, env, file_exists, home_dir, monotonic_ms, now_ms, set_host, sleep, spawn_local};
-pub use http::{Body, FetchFunction, HttpRequest, HttpResponse, fetch};
+pub use host::{
+	Host, current, env, file_exists, file_not_found, home_dir, monotonic_ms, now_ms, read_file, set_host, sleep,
+	spawn_local,
+};
+pub use http::{Body, FetchFunction, HttpRequest, HttpResponse, RedirectMode, fetch};
 
 /// `futures::future::LocalBoxFuture` re-exported so ported code needs one import for async callbacks.
 pub type LocalBoxFuture<'a, T> = futures::future::LocalBoxFuture<'a, T>;

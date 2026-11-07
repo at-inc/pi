@@ -425,6 +425,7 @@ async fn token_request(
 			headers,
 			body: Some(body.into()),
 			signal: options.signal.clone(),
+			..Default::default()
 		},
 		options.fetch.as_ref(),
 	)
@@ -495,6 +496,7 @@ pub async fn register_client(
 			.collect(),
 			body: Some(pi_host::js::json_stringify(&body).into()),
 			signal: options.signal,
+			..Default::default()
 		},
 		options.fetch.as_ref(),
 	)

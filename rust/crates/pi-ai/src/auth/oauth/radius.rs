@@ -93,6 +93,7 @@ async fn load_radius_oauth_discovery(gateway: &str, signal: &AbortSignal) -> PiR
 			headers: IndexMap::from([("accept".to_string(), "application/json".to_string())]),
 			body: None,
 			signal: Some(signal.clone()),
+			..Default::default()
 		},
 		None,
 	)
@@ -190,6 +191,7 @@ async fn post_form(url: String, body: Bytes, signal: &AbortSignal) -> PiResult<H
 			headers: form_headers(),
 			body: Some(body),
 			signal: Some(signal.clone()),
+			..Default::default()
 		},
 		None,
 	)
