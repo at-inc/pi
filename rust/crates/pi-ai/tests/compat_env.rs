@@ -87,7 +87,6 @@ mod compat_legacy_api_fallback {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs api/*_lazy.rs from the w3 shards and utils/transcript.rs and providers/all.rs from w2-ai-core"]
 	fn dispatches_unknown_providers_through_the_legacy_api_registry() {
 		let _reset = ResetApiProviders;
 		let captured_api_key: Rc<RefCell<Option<String>>> = Rc::default();
