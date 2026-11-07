@@ -6,13 +6,13 @@
 //! "rejects custom fetch for Google adapters instead of silently bypassing it" and "allows Google adapters to receive
 //! globalThis.fetch explicitly" (w3-google-mistral).
 //!
-//! Not ported, because the adapter files are still empty and calling their predicted `stream_simple` would break the
-//! crate's compile. They belong with the owning w3 shards:
+//! Not ported, because some of their adapter files are still empty on this branch and calling their predicted
+//! `stream_simple` would break the crate's compile. They belong with the owning w3 shards:
 //! - "passes fetch through streamSimple to the Anthropic SDK" (`api::anthropic_messages`, w3-anthropic).
 //! - "passes fetch through streamSimple to OpenAI SDK adapters" (`api::openai_completions`, w3-openai-completions;
 //!   `api::openai_responses` and `api::azure_openai_responses`, w3-openai-responses).
-//! - "uses fetch for Mistral, Codex SSE, and pi-messages HTTP requests" (`api::mistral_conversations`,
-//!   w3-google-mistral; `api::openai_codex_responses`, w3-openai-responses; `api::pi_messages`, w3-bedrock-misc).
+//! - "uses fetch for Mistral, Codex SSE, and pi-messages HTTP requests": `api::mistral_conversations` is ported, but the
+//!   case also needs `api::openai_codex_responses` (w3-openai-responses) and `api::pi_messages` (w3-bedrock-misc).
 //!
 //! Differences from the TS:
 //! - The stubbed global `fetch` is the test host's fetch, which records every request; "ambient fetch must not be

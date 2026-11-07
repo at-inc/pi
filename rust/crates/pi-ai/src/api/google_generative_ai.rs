@@ -3,13 +3,15 @@
 //!
 //! The `@google/genai` SDK is `api/google_client.rs`. Differences from the TS:
 //! - `GoogleOptions` read from `ProviderStreamOptions.extra`: `toolChoice` is read when it is a string and
-//!   `thinking` when it is an object; a `thinking.level` outside `GoogleApiThinkingLevel` reads as absent, where the
-//!   TS sends `thinkingConfig` without a level and ignores `budgetTokens`.
+//!   `thinking` when it is an object. `thinking.enabled` follows JS truthiness. A `thinking.level` that is present but
+//!   outside `GoogleApiThinkingLevel` sends `thinkingConfig` without a level and ignores `budgetTokens`, as in the TS.
+//!   A `budgetTokens` that is not a number is omitted, where the TS sends the value as is.
 //! - Stream chunks are the SDK's `GenerateContentResponse` as JSON and are read with the wire types: a part `text`,
 //!   `thoughtSignature`, `finishReason` or `responseId` that is not a string is ignored, function call `args` that are
 //!   not an object read as `{}`, and a non-numeric usage count reads as 0.
 //! - The abort signal is passed to the client next to the params, so it still applies when `onPayload` replaces the
-//!   params (the TS signal lives in `params.config.abortSignal`).
+//!   params (the TS signal lives in `params.config.abortSignal`). The payload `onPayload` receives has no
+//!   `config.abortSignal` key, which `JSON.stringify` shows as `{}` in the TS.
 //! - The current text or thinking block is always the last content block, so it is tracked by kind, not by object.
 //! - `google-vertex.ts` repeats this module's stream loop and `buildParams`; the Rust `google_vertex` calls
 //!   `stream_google_response` and `build_params` here instead, keeping its own tool call counter and messages.
@@ -25,7 +27,9 @@ use pi_host::js::{json_stringify, number_to_string};
 use pi_host::{PiError, PiResult};
 use serde_json::{Map, Value, json};
 
-use crate::api::google_client::{GenerateContentStream, GoogleGenAI, GoogleGenAIOptions, HttpOptions};
+use crate::api::google_client::{
+	GenerateContentStream, GoogleGenAI, GoogleGenAIOptions, HttpOptions, js_string, js_truthy,
+};
 use crate::api::google_shared::{
 	GoogleApiThinkingLevel, GoogleRetryOptions, ResolvedGoogleThinkingLevel, convert_messages, convert_tools,
 	get_disabled_google_thinking_config, is_thinking_part, map_stop_reason, resolve_google_function_calling_mode,
@@ -97,9 +101,14 @@ impl From<ProviderStreamOptions> for GoogleOptions {
 
 /// `GoogleOptions.thinking` from JSON, shared with the Vertex options.
 pub(crate) fn thinking_options_from_json(thinking: &Map<String, Value>) -> GoogleThinkingOptions {
+	// `buildParams` branches on `level !== undefined`: a present level, valid or not, means the budget is ignored.
+	let level_present = thinking.contains_key("level");
 	GoogleThinkingOptions {
-		enabled: thinking.get("enabled").and_then(Value::as_bool).unwrap_or(false),
-		budget_tokens: thinking.get("budgetTokens").and_then(Value::as_f64),
+		enabled: thinking.get("enabled").is_some_and(js_truthy),
+		budget_tokens: thinking
+			.get("budgetTokens")
+			.and_then(Value::as_f64)
+			.filter(|_| !level_present),
 		level: thinking
 			.get("level")
 			.and_then(Value::as_str)
@@ -455,11 +464,7 @@ impl GoogleStreamBlocks<'_> {
 			Some(provided_id) if !needs_new_id => provided_id.to_string(),
 			_ => format!(
 				"{}_{}_{}",
-				match name {
-					None => "undefined".to_string(),
-					Some(Value::String(name)) => name.clone(),
-					Some(name) => json_stringify(name),
-				},
+				name.map_or_else(|| "undefined".to_string(), js_string),
 				number_to_string(pi_host::now_ms()),
 				self.tool_call_counter.fetch_add(1, Ordering::Relaxed) + 1
 			),

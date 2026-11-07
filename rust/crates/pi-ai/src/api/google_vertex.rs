@@ -354,9 +354,10 @@ fn resolve_custom_base_url(base_url: &str) -> Option<&str> {
 	Some(trimmed)
 }
 
-static API_VERSION_SEGMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^v\d+(?:beta\d*)?$").expect("valid regex"));
+static API_VERSION_SEGMENT: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"^v[0-9]+(?:beta[0-9]*)?$").expect("valid regex"));
 static API_VERSION_IN_URL: LazyLock<Regex> =
-	LazyLock::new(|| Regex::new(r"(?:^|/)v\d+(?:beta\d*)?(?:/|$)").expect("valid regex"));
+	LazyLock::new(|| Regex::new(r"(?:^|/)v[0-9]+(?:beta[0-9]*)?(?:/|$)").expect("valid regex"));
 
 fn base_url_includes_api_version(base_url: &str) -> bool {
 	match url::Url::parse(base_url) {

@@ -966,7 +966,7 @@ pub(crate) fn js_string(value: &Value) -> String {
 }
 
 /// JavaScript truthiness of a JSON value.
-fn js_truthy(value: &Value) -> bool {
+pub(crate) fn js_truthy(value: &Value) -> bool {
 	match value {
 		Value::Null => false,
 		Value::Bool(value) => *value,
