@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/google-shared.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Gemini `Content` and `Part` values, and the tool declarations, are JSON values built in the TS object-literal key
 //! order; they are what `onPayload` sees, before the client converts them to the wire format. The SDK enums

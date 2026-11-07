@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/mistral-conversations.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS calls the Mistral HTTP API with `fetch` directly (no SDK), so there is no client file. Differences from the
 //! TS:
