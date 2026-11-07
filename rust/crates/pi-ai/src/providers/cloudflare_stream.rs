@@ -30,19 +30,50 @@ where
 	};
 	let account_placeholder = format!("{{{CLOUDFLARE_ACCOUNT_ID}}}");
 	let gateway_placeholder = format!("{{{CLOUDFLARE_GATEWAY_ID}}}");
-	let base_url = model
-		.base_url
-		.replace(
-			&account_placeholder,
-			env.get(CLOUDFLARE_ACCOUNT_ID).unwrap_or(&account_placeholder),
-		)
-		.replace(
-			&gateway_placeholder,
-			env.get(CLOUDFLARE_GATEWAY_ID).unwrap_or(&gateway_placeholder),
-		);
+	let base_url = replace_all(
+		&model.base_url,
+		&account_placeholder,
+		env.get(CLOUDFLARE_ACCOUNT_ID).unwrap_or(&account_placeholder),
+	);
+	let base_url = replace_all(
+		&base_url,
+		&gateway_placeholder,
+		env.get(CLOUDFLARE_GATEWAY_ID).unwrap_or(&gateway_placeholder),
+	);
 	let mut resolved = model.clone();
 	resolved.base_url = base_url;
 	resolved
+}
+
+/// `String.prototype.replaceAll` with a string pattern: the replacement expands `$$`, `$&`, `$\`` and `$'`, and
+/// any other `$` stays literal because a string pattern has no capture groups.
+fn replace_all(haystack: &str, pattern: &str, replacement: &str) -> String {
+	let mut out = String::with_capacity(haystack.len());
+	let mut last = 0;
+	for (start, matched) in haystack.match_indices(pattern) {
+		out.push_str(&haystack[last..start]);
+		last = start + matched.len();
+		let mut rest = replacement;
+		while let Some(dollar) = rest.find('$') {
+			out.push_str(&rest[..dollar]);
+			rest = &rest[dollar + 1..];
+			let expanded = match rest.chars().next() {
+				Some('$') => "$",
+				Some('&') => matched,
+				Some('`') => &haystack[..start],
+				Some('\'') => &haystack[last..],
+				_ => {
+					out.push('$');
+					continue;
+				}
+			};
+			out.push_str(expanded);
+			rest = &rest[1..];
+		}
+		out.push_str(rest);
+	}
+	out.push_str(&haystack[last..]);
+	out
 }
 
 struct CloudflareStreams {

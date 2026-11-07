@@ -134,3 +134,21 @@ mod cloudflare_provider_streams {
 		});
 	}
 }
+
+mod port_regressions {
+	use pi_ai::providers::cloudflare_stream::resolve_cloudflare_model;
+
+	use super::*;
+
+	#[test]
+	fn expands_replacement_patterns_in_env_values_like_replace_all() {
+		let mut model = model();
+		model.base_url = "https://x/{CLOUDFLARE_ACCOUNT_ID}/y/{CLOUDFLARE_ACCOUNT_ID}".into();
+		let env = ProviderEnv::from([("CLOUDFLARE_ACCOUNT_ID".to_string(), "a$$b$&c$`d$'e$1$<n>$".to_string())]);
+
+		assert_eq!(
+			resolve_cloudflare_model(&model, Some(&env)).base_url,
+			"https://x/a$b{CLOUDFLARE_ACCOUNT_ID}chttps://x/d/y/{CLOUDFLARE_ACCOUNT_ID}e$1$<n>$/y/a$b{CLOUDFLARE_ACCOUNT_ID}chttps://x/{CLOUDFLARE_ACCOUNT_ID}/y/de$1$<n>$"
+		);
+	}
+}
