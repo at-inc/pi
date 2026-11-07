@@ -13,6 +13,7 @@ mod fetch;
 mod host;
 mod json;
 mod options;
+mod server;
 mod websocket;
 
 pub use host::init;

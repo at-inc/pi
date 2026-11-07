@@ -1,7 +1,8 @@
-// Runs the TS package's own openai-completions tests against the facade: their `../src/<module>` imports resolve to
-// test/facade/<module>, which re-exports the facade module (and bridges a mocked `openai` SDK, see
-// test/facade/openai-bridge.ts). Only the modules this slice provides are mapped; a test that imports another module
-// fails to resolve, so the tests that need one are excluded below with the reason.
+// Runs the TS package's own openai-completions and auth/OAuth tests against the facade: their `../src/<module>` imports
+// resolve to test/facade/<module>, which re-exports the facade module (and bridges a mocked `openai` SDK, see
+// test/facade/openai-bridge.ts). Only the modules the slices provide are mapped; a test that imports another module
+// fails to resolve, so the tests that need one are excluded below with the reason. test/auth holds the facade's own
+// tests for behavior whose TS test cannot run yet.
 
 import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -17,6 +18,20 @@ const facadeShims = join(here, "test/facade");
 export const skipped: Record<string, string> = {
 	"test/azure-openai-completions.test.ts":
 		"imports ../src/providers/azure.ts; providers belong to the pi-ai models slice",
+	"test/anthropic-auth-token.test.ts":
+		"imports ../src/api/anthropic-messages.ts and ../src/providers/anthropic.ts; both belong to the pi-ai models slice",
+	"test/github-copilot-oauth.test.ts":
+		"imports ../src/providers/github-copilot.ts; providers belong to the pi-ai models slice",
+	"test/kimi-coding-oauth.test.ts":
+		"imports ../src/providers/kimi-coding.ts; providers belong to the pi-ai models slice",
+	"test/oauth-auth.test.ts":
+		"imports ../src/providers/{anthropic,github-copilot,openai}.ts; providers belong to the pi-ai models slice",
+	"test/openrouter-oauth.test.ts":
+		"imports ../src/providers/openrouter.ts; providers belong to the pi-ai models slice",
+	"test/models-runtime.test.ts":
+		"registers plain-object providers (Models.setProvider) and calls calculateCost, both of the pi-ai models slice; login and logout are covered by test/auth/models-login.test.ts",
+	"test/models-entry.test.ts":
+		"spawns node on the TS package's own src and dist (packages/ai), so it never loads the facade",
 };
 
 function facadeModules(): Plugin {
@@ -42,7 +57,15 @@ export default defineConfig({
 	ssr: { resolve: { conditions: ["source"] } },
 	test: {
 		root: tsPackage,
-		include: ["test/openai-completions-*.test.ts", "test/azure-openai-completions.test.ts"],
+		include: [
+			"test/openai-completions-*.test.ts",
+			"test/azure-openai-completions.test.ts",
+			"test/*oauth*.test.ts",
+			"test/anthropic-auth-token.test.ts",
+			"test/models-runtime.test.ts",
+			"test/models-entry.test.ts",
+			join(here, "test/auth/*.test.ts"),
+		],
 		exclude: Object.keys(skipped),
 		testTimeout: 30000,
 	},

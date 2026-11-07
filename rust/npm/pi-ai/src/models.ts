@@ -1,11 +1,13 @@
-// models: createProvider and createModels over Rust providers. The slice bridges static providers with api-key auth
-// (`resolve`, `check`) and Rust API implementations or JS ones; the methods marked notBridged belong to later slices.
+// models: createProvider and createModels over Rust providers. The slice bridges static providers with JS auth objects
+// (api-key and OAuth), Rust API implementations or JS ones, JS credential and models stores and auth contexts, and
+// login/logout; the methods marked notBridged belong to later slices.
 
 import type {
 	Api,
 	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
+	Credential,
 	Model,
 	ProviderAuth,
 	ProviderStreams,
@@ -81,9 +83,6 @@ class RustModels implements ts.MutableModels {
 	readonly #providers = new Map<string, ts.Provider>();
 
 	constructor(options?: ts.CreateModelsOptions) {
-		if (options?.credentials || options?.modelsStore || options?.authContext) {
-			notBridged("createModels({ credentials, modelsStore, authContext })");
-		}
 		this.#handle = wasm.aiCreateModels(options ?? {});
 	}
 
@@ -180,12 +179,12 @@ class RustModels implements ts.MutableModels {
 		return notBridged("Models.getAuth");
 	}
 
-	login(): never {
-		return notBridged("Models.login");
+	async login(...[providerId, type, interaction, options]: Parameters<ts.Models["login"]>): Promise<Credential> {
+		return this.#handle.login(providerId, type, interaction, options);
 	}
 
-	logout(): never {
-		return notBridged("Models.logout");
+	async logout(...[providerId, options]: Parameters<ts.Models["logout"]>): Promise<void> {
+		return this.#handle.logout(providerId, options);
 	}
 
 	streamDeferred(): never {

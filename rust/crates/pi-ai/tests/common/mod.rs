@@ -77,6 +77,15 @@ mod host {
 		fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
 			self.native.spawn_local(future)
 		}
+		fn listen_http(
+			&self,
+			host: &str,
+			port: u16,
+			handler: pi_host::server::HttpServerHandler,
+			on_error: pi_host::server::HttpServerErrorHandler,
+		) -> LocalBoxFuture<'static, PiResult<std::rc::Rc<dyn pi_host::server::HttpServer>>> {
+			self.native.listen_http(host, port, handler, on_error)
+		}
 	}
 
 	pub fn run<T, Fut: Future<Output = T>>(

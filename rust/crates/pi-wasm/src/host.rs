@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use js_sys::{Function, Object, Promise, Reflect};
+use pi_host::server::{HttpServer, HttpServerErrorHandler, HttpServerHandler};
 use pi_host::websocket::WebSocket;
 use pi_host::{Host, HttpRequest, HttpResponse, LocalBoxFuture, PiResult};
 use wasm_bindgen::prelude::*;
@@ -33,6 +34,36 @@ export interface PiHost {
 	readFile(path: string): Promise<string>;
 	/** `new WebSocket(url, { headers })`; `undefined` without a WebSocket client. */
 	webSocket(url: string, headers: Record<string, string>): WebSocket | undefined;
+	/**
+	 * `http.createServer(handler).listen(port, host)`: resolves with the server once it listens and rejects with the
+	 * listen error. `onError` receives the server's later `error` events.
+	 */
+	listen(
+		host: string,
+		port: number,
+		handler: (request: PiHttpRequest) => Promise<PiHttpResponse>,
+		onError: (error: unknown) => void,
+	): Promise<PiHttpServer>;
+}
+
+/** A request of `PiHost.listen`: its method and raw target. */
+export interface PiHttpRequest {
+	method: string;
+	url: string;
+}
+
+/** `response.writeHead(status, headers)` plus `response.end(body)`. */
+export interface PiHttpResponse {
+	status: number;
+	headers: Record<string, string>;
+	body: string;
+}
+
+/** A server of `PiHost.listen`. */
+export interface PiHttpServer {
+	readonly port: number;
+	close(): void;
+	closeAllConnections(): void;
 }
 "#;
 
@@ -59,6 +90,14 @@ extern "C" {
 	fn read_file(this: &JsHostObject, path: &str) -> Result<Promise, JsValue>;
 	#[wasm_bindgen(method, catch, js_name = webSocket)]
 	fn web_socket(this: &JsHostObject, url: &str, headers: &JsValue) -> Result<JsValue, JsValue>;
+	#[wasm_bindgen(method, catch)]
+	fn listen(
+		this: &JsHostObject,
+		host: &str,
+		port: u16,
+		handler: &JsValue,
+		on_error: &JsValue,
+	) -> Result<Promise, JsValue>;
 
 	#[wasm_bindgen(js_namespace = console, js_name = error)]
 	fn console_error(message: &str);
@@ -136,5 +175,16 @@ impl Host for JsHost {
 			Ok(socket) if socket.is_undefined() || socket.is_null() => None,
 			Ok(socket) => Some(Ok(crate::websocket::JsWebSocket::open(socket))),
 		}
+	}
+
+	fn listen_http(
+		&self,
+		host: &str,
+		port: u16,
+		handler: HttpServerHandler,
+		on_error: HttpServerErrorHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn HttpServer>>> {
+		let (handler, on_error) = crate::server::callbacks(handler, on_error);
+		crate::server::listening(self.object.listen(host, port, &handler, &on_error))
 	}
 }
