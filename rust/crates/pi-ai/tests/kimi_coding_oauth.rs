@@ -12,7 +12,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use common::{FetchHandler, form_body, json_response, run_with_env};
+use common::{FetchHandler, form_body, json_response, run_with_env_and_fake_timers};
 use pi_ai::auth::oauth::kimi_coding::kimi_coding_oauth;
 use pi_ai::auth::types::{AuthEvent, AuthPrompt, AuthPromptKind, ModelAuth, OAuthCredential, ProviderAuthInteraction};
 use pi_host::{AbortController, HttpRequest, HttpResponse, LocalBoxFuture, PiError, PiResult};
@@ -132,7 +132,7 @@ mod kimi_code_oauth {
 			}
 			Err(PiError::new(format!("Unexpected fetch URL: {url}")))
 		});
-		run_with_env(fetch, &EMPTY_ENV, || async {
+		run_with_env_and_fake_timers(fetch, &EMPTY_ENV, || async {
 			let start = pi_host::now_ms();
 			let events = no_events();
 			let credential = kimi_coding_oauth()
@@ -176,7 +176,7 @@ mod kimi_code_oauth {
 			}
 			Err(PiError::new(format!("Unexpected fetch URL: {url}")))
 		});
-		run_with_env(fetch, &EMPTY_ENV, || async {
+		run_with_env_and_fake_timers(fetch, &EMPTY_ENV, || async {
 			let failure = kimi_coding_oauth()
 				.login(create_interaction(no_events(), "mainland-cn"), None)
 				.await
@@ -216,7 +216,7 @@ mod kimi_code_oauth {
 			}
 			Err(PiError::new(format!("Unexpected fetch URL: {url}")))
 		});
-		run_with_env(
+		run_with_env_and_fake_timers(
 			fetch,
 			&env_with("KIMI_CODE_OAUTH_HOST", "https://auth.example.com/"),
 			|| async {
@@ -250,7 +250,7 @@ mod kimi_code_oauth {
 				200,
 			))
 		});
-		run_with_env(fetch, &EMPTY_ENV, || async {
+		run_with_env_and_fake_timers(fetch, &EMPTY_ENV, || async {
 			let before = pi_host::now_ms();
 			let oauth = kimi_coding_oauth();
 			let credential = oauth
@@ -311,7 +311,7 @@ mod kimi_code_oauth {
 			}
 			Err(PiError::new(format!("Unexpected fetch URL: {url}")))
 		});
-		let credential = run_with_env(fetch.clone(), &EMPTY_ENV, || async {
+		let credential = run_with_env_and_fake_timers(fetch.clone(), &EMPTY_ENV, || async {
 			let events = no_events();
 			let credential = kimi_coding_oauth()
 				.login(create_interaction(events.clone(), "global"), None)
@@ -332,7 +332,7 @@ mod kimi_code_oauth {
 			("KIMI_OAUTH_HOST", ""),
 			("KIMI_CODE_BASE_URL", "https://api.kimi.com/coding"),
 		];
-		run_with_env(fetch, &changed_env, || async {
+		run_with_env_and_fake_timers(fetch, &changed_env, || async {
 			// Round-trip through storage as a restarted client would.
 			let stored: OAuthCredential = serde_json::from_value(credential_json(&credential)).unwrap();
 			let refreshed = kimi_coding_oauth()
@@ -375,7 +375,7 @@ mod kimi_code_oauth {
 				}
 				Err(PiError::new(format!("Unexpected fetch URL: {url}")))
 			});
-			run_with_env(fetch, &env_with(name, value), || async {
+			run_with_env_and_fake_timers(fetch, &env_with(name, value), || async {
 				let prompted = Rc::new(Cell::new(false));
 				let flag = prompted.clone();
 				let interaction = with_prompt(no_events(), move |_| {
@@ -401,7 +401,7 @@ mod kimi_code_oauth {
 			counted.set(counted.get() + 1);
 			Err(PiError::new("fetch must not run"))
 		});
-		run_with_env(fetch, &EMPTY_ENV, || async {
+		run_with_env_and_fake_timers(fetch, &EMPTY_ENV, || async {
 			let interaction = with_prompt(no_events(), |_| Box::pin(async { Err(PiError::new("Canceled")) }));
 			let error = kimi_coding_oauth().login(interaction, None).await.unwrap_err();
 			assert!(error.message.contains("Canceled"));
@@ -426,7 +426,7 @@ mod kimi_code_oauth {
 				)
 			})
 		});
-		run_with_env(fetch, &EMPTY_ENV, || async {
+		run_with_env_and_fake_timers(fetch, &EMPTY_ENV, || async {
 			let start = pi_host::now_ms();
 			let refreshed = kimi_coding_oauth()
 				.refresh(OAuthCredential::new("old", "old", 0.0), AbortController::new().signal())
@@ -439,7 +439,7 @@ mod kimi_code_oauth {
 
 		// invalid_grant is not retried.
 		let fetch = handler(|_| Ok(json_response(json!({ "error": "invalid_grant" }), 400)));
-		run_with_env(fetch, &EMPTY_ENV, || async {
+		run_with_env_and_fake_timers(fetch, &EMPTY_ENV, || async {
 			let error = kimi_coding_oauth()
 				.refresh(OAuthCredential::new("old", "old", 0.0), AbortController::new().signal())
 				.await

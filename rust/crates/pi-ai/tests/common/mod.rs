@@ -154,8 +154,20 @@ pub fn run_with_env<T, Fut: Future<Output = T>>(
 
 /// `run` on `pi_host::testing` with the `native` feature too, for suites that use vitest's fake timers.
 pub fn run_with_fake_timers<T, Fut: Future<Output = T>>(handler: FetchHandler, test: impl FnOnce() -> Fut) -> T {
+	run_with_env_and_fake_timers(handler, &[], test)
+}
+
+/// `run_with_fake_timers` with `vi.stubEnv` for each of `env`.
+pub fn run_with_env_and_fake_timers<T, Fut: Future<Output = T>>(
+	handler: FetchHandler,
+	env: &[(&str, &str)],
+	test: impl FnOnce() -> Fut,
+) -> T {
 	pi_host::testing::run(|host| {
 		host.on_fetch(move |request| handler(request));
+		for (name, value) in env {
+			host.set_env(name, value);
+		}
 		test()
 	})
 }
