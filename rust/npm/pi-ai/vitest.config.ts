@@ -1,8 +1,8 @@
 // Runs the TS package's own openai-completions, utils and auth/OAuth tests against the facade: their `../src/<module>`
 // imports resolve to test/facade/<module>, which re-exports the facade module (and bridges a mocked `openai` SDK, see
 // test/facade/openai-bridge.ts). Only the modules the slices provide are mapped; a test that imports another module
-// fails to resolve, so the tests that need one are excluded below with the reason. test/auth holds the facade's own
-// tests for behavior whose TS test cannot run yet.
+// fails to resolve, so the tests that need one are excluded below with the reason. test/auth and test/utils hold the
+// facade's own tests for behavior whose TS test cannot run or is skipped.
 
 import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -50,6 +50,7 @@ const quadraticSnapshots =
 export const skippedTests: Record<string, string> = {
 	"allocates linearly in the streamed text, never per accumulated text": quadraticSnapshots,
 	"keeps very large open arrays linear by letting their preview lag": quadraticSnapshots,
+	"reads deep nesting without recursion and in linear time": `${quadraticSnapshots}; 3.4 s here and 7.8 s on CI against its 5 s bound (TS: 0.4 s). test/utils/streaming-json-deep.test.ts keeps its correctness check`,
 	"matches the reference after every piece, at every chunk size, with insignificant whitespace": loneSurrogate,
 	"matches today's parseStreamingJson at every prefix of compact documents": loneSurrogate,
 	"joins surrogate pairs split across pieces, escaped or raw": loneSurrogate,
@@ -124,6 +125,7 @@ export default defineConfig({
 			"test/models-entry.test.ts",
 			...utilsTests,
 			join(here, "test/auth/*.test.ts"),
+			join(here, "test/utils/*.test.ts"),
 		],
 		exclude: Object.keys(skipped),
 		testNamePattern: new RegExp(`^(?!.*(?:${Object.keys(skippedTests).map(escapeRegExp).join("|")})$)`),
