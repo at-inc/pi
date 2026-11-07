@@ -75,7 +75,7 @@ pub fn js_fetch(
 }
 
 /// The `HttpResponse` of a JS `Response` (or a response-like object with the same fields).
-fn read_response(response: &JsValue, signal: Option<JsSignal>) -> HttpResponse {
+pub(crate) fn read_response(response: &JsValue, signal: Option<JsSignal>) -> HttpResponse {
 	let field = |name: &str| Reflect::get(response, &name.into()).unwrap_or(JsValue::UNDEFINED);
 	let status = field("status").as_f64().unwrap_or(0.0) as u16;
 	let status_text = field("statusText").as_string().unwrap_or_default();

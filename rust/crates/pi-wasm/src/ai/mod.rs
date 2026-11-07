@@ -5,6 +5,7 @@ mod anthropic_messages;
 mod azure_openai_responses;
 mod bedrock_converse_stream;
 mod compat;
+mod github_copilot_headers;
 mod google_generative_ai;
 mod google_vertex;
 mod mistral_conversations;
@@ -14,7 +15,9 @@ mod openai_completions;
 mod openai_responses;
 mod pi_messages;
 mod provider_bridge;
+mod simple_options;
 mod transcript;
+mod transform_messages;
 
 use pi_ai::{Context, Model, TranscriptContext};
 use wasm_bindgen::JsValue;

@@ -3,7 +3,8 @@
 //! itself, from which the callbacks and the signal are read. Callbacks are called with the options object as `this`
 //! and the caller's own JS model object, as the TS calls them.
 
-use std::rc::Rc;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 
 use js_sys::{Function, Object, Reflect};
 use pi_ai::{
@@ -11,7 +12,7 @@ use pi_ai::{
 	OnPayload, OnProviderStreamEvent, OnResponse, ProviderImagesOptions, ProviderRequestOptions, ProviderResponse,
 	ProviderStreamOptions, SimpleStreamOptions, StreamOptions, TransformHeadersFunction,
 };
-use pi_host::{FetchFunction, PiResult};
+use pi_host::{FetchFunction, HttpRequest, HttpResponse, LocalBoxFuture, PiResult};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use wasm_bindgen::JsCast;
@@ -200,9 +201,32 @@ pub fn simple_stream_options(options: JsValue, model: &JsValue) -> Option<Simple
 	options.is_given().then(|| options.simple_stream_options(model))
 }
 
-/// `options.fetch` as a `FetchFunction`.
+thread_local! {
+	/// The last `options.fetch` and its `FetchFunction`, both weak: while that `FetchFunction` lives, the same JS
+	/// function maps to it again, as Rust code that keys a cache on the fetch's identity (the Anthropic federation
+	/// client) compares the caller's JS function in the TS.
+	static LAST_FETCH: RefCell<Option<(Weak<Function>, Weak<FetchClosure>)>> = const { RefCell::new(None) };
+}
+
+/// The closure behind a `FetchFunction`.
+type FetchClosure = dyn Fn(HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>>;
+
+/// `options.fetch` as a `FetchFunction`, the same one for the same JS function while it is alive.
 pub fn fetch_function(fetch: Function) -> FetchFunction {
-	Rc::new(move |request| crate::fetch::js_fetch(fetch.clone(), JsValue::UNDEFINED, request))
+	let cached = LAST_FETCH.with_borrow(|last| {
+		let (function, fetch_function) = last.as_ref()?;
+		let function = function.upgrade()?;
+		Object::is(&function, &fetch).then(|| fetch_function.upgrade())?
+	});
+	if let Some(cached) = cached {
+		return cached;
+	}
+	let function = Rc::new(fetch);
+	let captured = function.clone();
+	let fetch_function: FetchFunction =
+		Rc::new(move |request| crate::fetch::js_fetch((*captured).clone(), JsValue::UNDEFINED, request));
+	LAST_FETCH.set(Some((Rc::downgrade(&function), Rc::downgrade(&fetch_function))));
+	fetch_function
 }
 
 /// `options.onPayload(payload, model)`. A callback that returns `undefined` keeps the payload, including changes it made

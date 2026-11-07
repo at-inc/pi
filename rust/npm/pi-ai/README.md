@@ -17,6 +17,16 @@
   `stream`, `complete`, `streamSimple`, `completeSimple`).
 - `./utils/transcript`: `normalizeContext`.
 - `./types`: types only.
+- `./api/anthropic-messages`: `stream` (including `options.client`, a pre-built SDK client called through JS),
+  `streamSimple`.
+- `./api/anthropic-messages.lazy`: `anthropicMessagesApi`.
+- `./api/pi-messages`: `stream`, `streamSimple`, `PiMessagesResponseError`.
+- `./api/pi-messages.lazy`: `piMessagesApi`.
+- `./api/transform-messages`: `splitErrorToolResultImages`, `transformMessages`.
+- `./api/github-copilot-headers`: `inferCopilotInitiator`, `hasCopilotVisionInput`, `buildCopilotDynamicHeaders`.
+- `./api/simple-options`: `clampMaxTokensToContext`, `resolveSamplingParams`, `buildBaseOptions`, `MIN_ANSWER_TOKENS`,
+  `DEFAULT_THINKING_BUDGETS`, `clampReasoning`, `thinkingBudgetForLevel`, `clampThinkingBudgetToAnswerRoom`,
+  `adjustMaxTokensForThinking`.
 
 ## Not bridged yet
 
@@ -38,3 +48,11 @@ package. `getModel` reads the Rust catalog, which is built from the same catalog
 - An event's `partial` holds the text up to that event. In the TS, the live partial may already hold text from
   later deltas of the same network chunk when an async consumer reads it. Both converge at `text_end`,
   `thinking_end` and `done`. `toolCall.arguments` reads the core's current arguments, as the TS's live object does.
+- `PiMessagesResponseError` is a TS class: the Rust stream reports a backend error response as an error message, so
+  there is no Rust object behind it.
+- `buildBaseOptions` computes the data fields in Rust; `signal`, `telemetry`, `fetch` and the callbacks are the
+  caller's own objects, as in the TS.
+- `transformMessages` returns new message objects, also for messages it leaves unchanged, and calls
+  `normalizeToolCallId` with a copy of the source message.
+- The Anthropic Messages `User-Agent` on wasm is `pi/<version> (browser)`; the TS on Node reports its platform and
+  runtime. The host does not expose them to the core yet.
