@@ -59,7 +59,9 @@ impl Host for NativeHost {
 				}
 				None => send.await,
 			}
-			.map_err(|error| PiError::type_error(format!("fetch failed: {error}")))?;
+			.map_err(|error| {
+				PiError::type_error("fetch failed").with_data(serde_json::json!({ "cause": error.to_string() }))
+			})?;
 			let status = response.status();
 			let mut headers: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
 			for (name, value) in response.headers() {
@@ -74,9 +76,9 @@ impl Host for NativeHost {
 			}
 			let url = response.url().to_string();
 			let signal = request.signal.clone();
-			let body = response
-				.bytes_stream()
-				.map_err(|error| PiError::type_error(format!("terminated: {error}")));
+			let body = response.bytes_stream().map_err(|error| {
+				PiError::type_error("terminated").with_data(serde_json::json!({ "cause": error.to_string() }))
+			});
 			let body = match signal {
 				Some(signal) => body
 					.take_while(move |_| futures::future::ready(!signal.aborted()))

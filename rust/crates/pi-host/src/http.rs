@@ -79,9 +79,11 @@ impl HttpResponse {
 		Ok(out)
 	}
 
-	/// `await response.text()`: lossy UTF-8 decoding, like `TextDecoder` without `fatal`.
+	/// `await response.text()`: lossy UTF-8 decoding with a leading BOM removed, like `TextDecoder` without `fatal`.
 	pub async fn text(self) -> PiResult<String> {
-		Ok(String::from_utf8_lossy(&self.bytes().await?).into_owned())
+		let bytes = self.bytes().await?;
+		let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+		Ok(String::from_utf8_lossy(bytes).into_owned())
 	}
 
 	/// `await response.json()`.
