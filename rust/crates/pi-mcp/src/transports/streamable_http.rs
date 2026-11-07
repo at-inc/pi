@@ -562,7 +562,8 @@ async fn token(inner: &Rc<Inner>) -> PiResult<Option<String>> {
 	Ok(token)
 }
 
-fn set_header(headers: &mut IndexMap<String, String>, name: &str, value: &str) {
+/// `headers.set(name, value)` on a header map that keeps the caller's casing.
+pub(crate) fn set_header(headers: &mut IndexMap<String, String>, name: &str, value: &str) {
 	match headers.keys().position(|key| key.eq_ignore_ascii_case(name)) {
 		Some(index) => {
 			headers.shift_remove_index(index);

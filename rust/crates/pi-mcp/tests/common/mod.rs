@@ -459,3 +459,75 @@ impl FakeNetwork {
 		})
 	}
 }
+
+/// A native host whose `fetch` reaches `FakeNetwork` servers in-process and everything else over the real
+/// network, for tests that mix in-process servers with real sockets (the OAuth callback server).
+#[cfg(feature = "native")]
+pub struct NetworkHost {
+	native: pi_host::native::NativeHost,
+	pub network: Rc<FakeNetwork>,
+}
+
+#[cfg(feature = "native")]
+impl NetworkHost {
+	/// Starts an in-process HTTP server and returns its origin.
+	pub fn listen(
+		&self,
+		handler: impl Fn(ServerRequest, ServerResponse) -> LocalBoxFuture<'static, PiResult<()>> + 'static,
+	) -> String {
+		self.network.listen(handler)
+	}
+}
+
+#[cfg(feature = "native")]
+impl Host for NetworkHost {
+	fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>> {
+		if self.network.serves(&request.url) {
+			return self.network.fetch(request);
+		}
+		self.native.fetch(request)
+	}
+
+	fn now_ms(&self) -> f64 {
+		self.native.now_ms()
+	}
+
+	fn monotonic_ms(&self) -> f64 {
+		self.native.monotonic_ms()
+	}
+
+	fn env(&self, key: &str) -> Option<String> {
+		self.native.env(key)
+	}
+
+	fn sleep(&self, ms: f64) -> LocalBoxFuture<'static, ()> {
+		self.native.sleep(ms)
+	}
+
+	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
+		self.native.spawn_local(future);
+	}
+}
+
+/// Runs `test` on a current-thread tokio runtime inside a `LocalSet`, with a `NetworkHost` installed.
+#[cfg(feature = "native")]
+pub fn run_native<F, Fut, T>(test: F) -> T
+where
+	F: FnOnce(Rc<NetworkHost>) -> Fut,
+	Fut: Future<Output = T>,
+{
+	let runtime = tokio::runtime::Builder::new_current_thread()
+		.enable_all()
+		.build()
+		.expect("tokio runtime");
+	let host = Rc::new(NetworkHost {
+		native: pi_host::native::NativeHost::new(),
+		network: Rc::new(FakeNetwork::default()),
+	});
+	let previous = set_host(host.clone());
+	let output = tokio::task::LocalSet::new().block_on(&runtime, test(host));
+	if let Some(previous) = previous {
+		set_host(previous);
+	}
+	output
+}
