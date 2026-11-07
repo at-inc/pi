@@ -33,6 +33,8 @@ pub struct TestHost {
 	clock_ms: RefCell<f64>,
 	requests: RefCell<Vec<RecordedRequest>>,
 	timers: RefCell<Vec<Weak<Timer>>>,
+	files: RefCell<std::collections::HashSet<String>>,
+	home_dir: RefCell<Option<String>>,
 	spawner: futures::executor::LocalSpawner,
 }
 
@@ -146,6 +148,16 @@ impl TestHost {
 		}
 		true
 	}
+
+	/// Makes `file_exists(path)` true.
+	pub fn add_file(&self, path: &str) {
+		self.files.borrow_mut().insert(path.into());
+	}
+
+	/// Sets `os.homedir()`. Without it the host has no file system, like a browser.
+	pub fn set_home_dir(&self, dir: &str) {
+		*self.home_dir.borrow_mut() = Some(dir.into());
+	}
 }
 
 impl Host for TestHost {
@@ -191,6 +203,14 @@ impl Host for TestHost {
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
 		self.spawner.spawn_local(future).expect("TestHost executor is gone");
 	}
+
+	fn file_exists(&self, path: &str) -> bool {
+		self.files.borrow().contains(path)
+	}
+
+	fn home_dir(&self) -> Option<String> {
+		self.home_dir.borrow().clone()
+	}
 }
 
 struct MainWake {
@@ -220,6 +240,8 @@ where
 		clock_ms: RefCell::new(1_700_000_000_000.0),
 		requests: RefCell::new(Vec::new()),
 		timers: RefCell::new(Vec::new()),
+		files: RefCell::new(std::collections::HashSet::new()),
+		home_dir: RefCell::new(None),
 		spawner: pool.spawner(),
 	});
 	let previous = set_host(host.clone());
