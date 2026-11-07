@@ -8,7 +8,14 @@
 //!   uses: a tool call `name`/`id`, a chunk `id`/`model` or a delta `content` that is not a string is ignored, a
 //!   non-numeric usage field reads as 0, and a truthy `finish_reason` that is not a string is stored in
 //!   `rawStopReason` as `String(value)`. A `tool_calls` value that is truthy but not an array fails with the
-//!   `not iterable` TypeError (the TS iterates a string's characters).
+//!   `not iterable` TypeError (the TS iterates a string's characters). A truthy tool call `arguments` that is not a
+//!   string is stringified before it becomes the `toolcall_delta` `delta`, which is a string.
+//! - `model.compat` is read through the typed compat schema: a value outside a field's TS type (an unknown
+//!   `thinkingFormat`, `vllmPriority: null`) reads as absent, where the TS would use it as-is.
+//! - Rust strings cannot hold a lone surrogate, so truncating an `openai` tool call id to 40 UTF-16 units stops
+//!   before a surrogate pair the TS would split.
+//! - The `prompt_cache_key` and `prompt_cache_retention` keys the TS declares as `undefined` are absent from the
+//!   params `onPayload` sees; they keep their TS position when sampling params set them.
 //! - Content blocks are tracked by their index in `output.content` instead of object identity; blocks are only ever
 //!   appended, so the index is the TS `blocks.indexOf(block)`.
 
@@ -20,7 +27,7 @@ use std::rc::Rc;
 use futures::StreamExt;
 use indexmap::IndexMap;
 use pi_host::js::{json_stringify, number_to_string, utf16_len, utf16_prefix};
-use pi_host::{PiError, PiResult};
+use pi_host::{LocalBoxFuture, PiError, PiResult};
 use serde_json::{Map, Value, json};
 
 use crate::api::constrained_sampling::{
@@ -385,68 +392,79 @@ pub fn stream(
 		..AssistantMessage::default()
 	}));
 	let options = options.unwrap_or_default();
+	// The TS async IIFE runs synchronously up to its first `await` (the `onPayload` result), so the client, the params
+	// and the `onPayload` call happen before `stream` returns, and a failure among them ends the stream synchronously.
+	let request = match prepare_request(model, &normalized_context, &options) {
+		Ok(request) => request,
+		Err(error) => {
+			fail_stream(&stream, &output, &options, &RefCell::new(None), &error);
+			return stream;
+		}
+	};
 	let model = model.clone();
 	let events = stream.clone();
 	pi_host::spawn_local(async move {
 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
 		// Keep them in memory during streaming and serialize once when the block is finalized.
 		let streamed_reasoning_details: RefCell<Option<Vec<ReasoningDetail>>> = RefCell::new(None);
-		let result = run_stream(
-			&events,
-			&model,
-			&normalized_context,
-			&options,
-			&output,
-			&streamed_reasoning_details,
-		)
-		.await;
-		let Err(error) = result else {
-			return;
-		};
-		{
-			let mut message = output.borrow_mut();
-			for block in &mut message.content {
-				if let AssistantContent::Thinking(block) = block {
-					apply_streamed_reasoning_details(block, &streamed_reasoning_details);
-				}
-			}
-			let aborted = options.signal.as_ref().is_some_and(|signal| signal.aborted());
-			message.stop_reason = if aborted {
-				StopReason::Aborted
-			} else {
-				StopReason::Error
-			};
-			let mut error_message = format_provider_error(&normalize_provider_error(&error), None);
-			// Some providers via OpenRouter give additional information in this field.
-			// normalizeProviderError already stringifies the parsed body (error.error)
-			// into errorMessage, so only append the raw metadata when it is not already
-			// present to avoid double-printing it.
-			let raw_metadata = error
-				.data
-				.as_ref()
-				.and_then(|data| data.get("error"))
-				.and_then(|error| error.get("metadata"))
-				.and_then(|metadata| metadata.get("raw"));
-			if let Some(raw_metadata) = raw_metadata.filter(|raw| is_truthy(raw)) {
-				let raw_metadata = js_to_string(raw_metadata);
-				if !error_message.contains(&raw_metadata) {
-					error_message.push('\n');
-					error_message.push_str(&raw_metadata);
-				}
-			}
-			message.error_message = Some(error_message);
-			if message.stop_reason == StopReason::Error {
-				append_assistant_message_diagnostic(&mut message, create_provider_error_diagnostic(&error));
-			}
+		let result = run_stream(&events, &model, request, &options, &output, &streamed_reasoning_details).await;
+		if let Err(error) = result {
+			fail_stream(&events, &output, &options, &streamed_reasoning_details, &error);
 		}
-		let reason = output.borrow().stop_reason;
-		events.push(AssistantMessageEvent::Error {
-			reason,
-			error: output.clone(),
-		});
-		events.end(None);
 	});
 	stream
+}
+
+/// The `catch` block of `stream`: records `error` on the output and ends the stream with an `error` event.
+fn fail_stream(
+	events: &AssistantMessageEventStream,
+	output: &SharedAssistantMessage,
+	options: &OpenAICompletionsOptions,
+	streamed_reasoning_details: &RefCell<Option<Vec<ReasoningDetail>>>,
+	error: &PiError,
+) {
+	{
+		let mut message = output.borrow_mut();
+		for block in &mut message.content {
+			if let AssistantContent::Thinking(block) = block {
+				apply_streamed_reasoning_details(block, streamed_reasoning_details);
+			}
+		}
+		let aborted = options.signal.as_ref().is_some_and(|signal| signal.aborted());
+		message.stop_reason = if aborted {
+			StopReason::Aborted
+		} else {
+			StopReason::Error
+		};
+		let mut error_message = format_provider_error(&normalize_provider_error(error), None);
+		// Some providers via OpenRouter give additional information in this field.
+		// normalizeProviderError already stringifies the parsed body (error.error)
+		// into errorMessage, so only append the raw metadata when it is not already
+		// present to avoid double-printing it.
+		let raw_metadata = error
+			.data
+			.as_ref()
+			.and_then(|data| data.get("error"))
+			.and_then(|error| error.get("metadata"))
+			.and_then(|metadata| metadata.get("raw"));
+		if let Some(raw_metadata) = raw_metadata.filter(|raw| is_truthy(raw)) {
+			let raw_metadata = js_to_string(raw_metadata);
+			if !error_message.contains(&raw_metadata) {
+				error_message.push('\n');
+				error_message.push_str(&raw_metadata);
+			}
+		}
+		message.error_message = Some(error_message);
+		if message.stop_reason == StopReason::Error {
+			append_assistant_message_diagnostic(&mut message, create_provider_error_diagnostic(error));
+		}
+	}
+	let reason = output.borrow().stop_reason;
+	events.push(AssistantMessageEvent::Error {
+		reason,
+		error: output.clone(),
+	});
+	events.end(None);
 }
 
 fn apply_streamed_reasoning_details(
@@ -459,15 +477,20 @@ fn apply_streamed_reasoning_details(
 	}
 }
 
-/// The `try` block of `stream`.
-async fn run_stream(
-	stream: &AssistantMessageEventStream,
+/// The synchronous start of the `try` block of `stream`: the client, the params and the pending `onPayload` result.
+struct PreparedRequest {
+	client: OpenAI,
+	params: Value,
+	next_params: Option<LocalBoxFuture<'static, PiResult<Option<Value>>>>,
+	compat: ResolvedOpenAICompletionsCompat,
+	grammar_tool_input_properties: IndexMap<String, String>,
+}
+
+fn prepare_request(
 	model: &Model,
 	context: &TranscriptContext,
 	options: &OpenAICompletionsOptions,
-	output: &SharedAssistantMessage,
-	streamed_reasoning_details: &RefCell<Option<Vec<ReasoningDetail>>>,
-) -> PiResult<()> {
+) -> PiResult<PreparedRequest> {
 	let api_key = get_client_api_key(&model.provider, options.api_key.as_deref(), options.headers.as_ref())?;
 	let compat = get_compat(model);
 	let grammar_tool_input_properties = create_grammar_tool_input_properties(
@@ -490,7 +513,7 @@ async fn run_stream(
 		cache_session_id,
 		&compat,
 	)?;
-	let mut params = build_params(
+	let params = build_params(
 		model,
 		context,
 		Some(options),
@@ -498,8 +521,37 @@ async fn run_stream(
 		cache_retention,
 		&grammar_tool_input_properties,
 	)?;
-	if let Some(on_payload) = &options.on_payload
-		&& let Some(next_params) = on_payload(params.clone(), model).await?
+	let next_params = options
+		.on_payload
+		.as_ref()
+		.map(|on_payload| on_payload(params.clone(), model));
+	Ok(PreparedRequest {
+		client,
+		params,
+		next_params,
+		compat,
+		grammar_tool_input_properties,
+	})
+}
+
+/// The rest of the `try` block of `stream`, from the awaited `onPayload` result on.
+async fn run_stream(
+	stream: &AssistantMessageEventStream,
+	model: &Model,
+	request: PreparedRequest,
+	options: &OpenAICompletionsOptions,
+	output: &SharedAssistantMessage,
+	streamed_reasoning_details: &RefCell<Option<Vec<ReasoningDetail>>>,
+) -> PiResult<()> {
+	let PreparedRequest {
+		client,
+		mut params,
+		next_params,
+		compat,
+		grammar_tool_input_properties,
+	} = request;
+	if let Some(next_params) = next_params
+		&& let Some(next_params) = next_params.await?
 	{
 		params = next_params;
 	}
@@ -1226,15 +1278,31 @@ fn build_params(
 	params.insert("messages".into(), Value::Null);
 	params.insert("stream".into(), Value::Bool(true));
 	let long_cache_retention = cache_retention == CacheRetention::Long && compat.supports_long_cache_retention;
-	if ((url_hostname(&model.base_url).as_deref() == Some("api.openai.com") && cache_retention != CacheRetention::None)
-		|| long_cache_retention)
-		&& let Some(prompt_cache_key) =
-			clamp_openai_prompt_cache_key(options.and_then(|options| options.session_id.as_deref()))
+	let prompt_cache_key = if (url_hostname(&model.base_url).as_deref() == Some("api.openai.com")
+		&& cache_retention != CacheRetention::None)
+		|| long_cache_retention
 	{
-		params.insert("prompt_cache_key".into(), Value::String(prompt_cache_key));
+		clamp_openai_prompt_cache_key(options.and_then(|options| options.session_id.as_deref()))
+	} else {
+		None
+	};
+	// The TS literal declares both keys even when they are `undefined`, so a later `Object.assign` of sampling params
+	// fills them in place. Unset keys hold a `null` placeholder here and are removed at the end.
+	let mut unset_keys: Vec<&str> = Vec::new();
+	match prompt_cache_key {
+		Some(prompt_cache_key) => {
+			params.insert("prompt_cache_key".into(), Value::String(prompt_cache_key));
+		}
+		None => {
+			params.insert("prompt_cache_key".into(), Value::Null);
+			unset_keys.push("prompt_cache_key");
+		}
 	}
 	if long_cache_retention {
 		params.insert("prompt_cache_retention".into(), Value::String("24h".into()));
+	} else {
+		params.insert("prompt_cache_retention".into(), Value::Null);
+		unset_keys.push("prompt_cache_retention");
 	}
 
 	if compat.supports_usage_in_streaming {
@@ -1475,8 +1543,12 @@ fn build_params(
 	);
 	if let Some(sampling_params) = sampling_params {
 		for (key, value) in sampling_params {
+			unset_keys.retain(|unset_key| *unset_key != key);
 			params.insert(key, value);
 		}
+	}
+	for key in unset_keys {
+		params.shift_remove(key);
 	}
 
 	Ok(Value::Object(params))
