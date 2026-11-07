@@ -9,7 +9,7 @@
 
 use pi_host::{PiError, PiResult};
 
-use crate::auth::types::{AuthPrompt, AuthSelectOption, ProviderAuthInteraction};
+use crate::auth::types::{AuthPrompt, AuthPromptKind, AuthSelectOption, ProviderAuthInteraction};
 use crate::utils::provider_env::get_provider_env_value;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -69,7 +69,7 @@ pub async fn select_kimi_coding_endpoints(interaction: &ProviderAuthInteraction)
 		return kimi_coding_endpoints(KimiCodingEndpointsInput { oauth_host, base_url });
 	}
 
-	let region = (interaction.prompt)(AuthPrompt::Select {
+	let region = (interaction.prompt)(AuthPrompt::new(AuthPromptKind::Select {
 		message: "Select your Kimi account region:".into(),
 		options: vec![
 			AuthSelectOption {
@@ -83,8 +83,7 @@ pub async fn select_kimi_coding_endpoints(interaction: &ProviderAuthInteraction)
 				description: None,
 			},
 		],
-		signal: None,
-	})
+	}))
 	.await?;
 	interaction.signal.throw_if_aborted()?;
 	if region != "global" && region != "mainland-cn" {

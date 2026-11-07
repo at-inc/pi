@@ -10,7 +10,7 @@ use indexmap::IndexMap;
 use pi_host::{AbortSignal, PiResult};
 
 use crate::auth::types::{
-	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthPrompt, AuthResult, ModelAuth,
+	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthPrompt, AuthPromptKind, AuthResult, ModelAuth,
 };
 use crate::types::ProviderEnv;
 
@@ -96,19 +96,17 @@ async fn resolve_cloudflare_env(
 }
 
 fn text_prompt(message: &str) -> AuthPrompt {
-	AuthPrompt::Text {
+	AuthPrompt::new(AuthPromptKind::Text {
 		message: message.into(),
 		placeholder: None,
-		signal: None,
-	}
+	})
 }
 
 fn secret_prompt(message: &str) -> AuthPrompt {
-	AuthPrompt::Secret {
+	AuthPrompt::new(AuthPromptKind::Secret {
 		message: message.into(),
 		placeholder: None,
-		signal: None,
-	}
+	})
 }
 
 pub fn cloudflare_workers_ai_auth() -> ApiKeyAuth {
@@ -121,6 +119,7 @@ pub fn cloudflare_workers_ai_auth() -> ApiKeyAuth {
 				Ok(ApiKeyCredential {
 					key: Some(key),
 					env: Some(ProviderEnv::from([(CLOUDFLARE_ACCOUNT_ID.to_string(), account_id)])),
+					extra: Default::default(),
 				})
 			})
 		})),
@@ -166,6 +165,7 @@ pub fn cloudflare_ai_gateway_auth() -> ApiKeyAuth {
 						(CLOUDFLARE_ACCOUNT_ID.to_string(), account_id),
 						(CLOUDFLARE_GATEWAY_ID.to_string(), gateway_id),
 					])),
+					extra: Default::default(),
 				})
 			})
 		})),

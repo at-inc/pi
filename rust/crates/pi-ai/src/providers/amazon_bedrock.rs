@@ -12,8 +12,8 @@ use pi_host::{AbortSignal, PiError, PiResult};
 
 use crate::api::bedrock_converse_stream_lazy::bedrock_converse_stream_api;
 use crate::auth::types::{
-	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthEvent, AuthInfoLink, AuthPrompt, AuthResult,
-	AuthSelectOption, ModelAuth, ProviderAuth,
+	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthEvent, AuthInfoLink, AuthPrompt, AuthPromptKind,
+	AuthResult, AuthSelectOption, ModelAuth, ProviderAuth,
 };
 use crate::models::{CreateProviderOptions, Provider, ProviderApi, create_provider};
 use crate::providers::amazon_bedrock_models::AMAZON_BEDROCK_MODELS;
@@ -56,28 +56,27 @@ fn bedrock_auth() -> ApiKeyAuth {
 		login: Some(Rc::new(|interaction| {
 			Box::pin(async move {
 				interaction.signal.throw_if_aborted()?;
-				let method = (interaction.prompt)(AuthPrompt::Select {
+				let method = (interaction.prompt)(AuthPrompt::new(AuthPromptKind::Select {
 					message: "Select Amazon Bedrock authentication method:".into(),
 					options: vec![
 						select_option("bearer-token", "Bearer token"),
 						select_option("aws-profile", "AWS profile"),
 						select_option("credential-chain", "Existing AWS credential chain"),
 					],
-					signal: None,
-				})
+				}))
 				.await?;
 				interaction.signal.throw_if_aborted()?;
 				if method == "bearer-token" {
 					return Ok(ApiKeyCredential {
 						key: Some(
-							(interaction.prompt)(AuthPrompt::Secret {
+							(interaction.prompt)(AuthPrompt::new(AuthPromptKind::Secret {
 								message: "Enter Amazon Bedrock bearer token".into(),
 								placeholder: None,
-								signal: None,
-							})
+							}))
 							.await?,
 						),
 						env: None,
+						extra: Default::default(),
 					});
 				}
 				(interaction.notify)(AuthEvent::Info {
@@ -89,25 +88,24 @@ fn bedrock_auth() -> ApiKeyAuth {
 					}]),
 				});
 				if method == "aws-profile" {
-					let profile = (interaction.prompt)(AuthPrompt::Text {
+					let profile = (interaction.prompt)(AuthPrompt::new(AuthPromptKind::Text {
 						message: "Enter AWS profile name".into(),
 						placeholder: None,
-						signal: None,
-					})
+					}))
 					.await?;
 					return Ok(ApiKeyCredential {
 						key: None,
 						env: Some(ProviderEnv::from([("AWS_PROFILE".to_string(), profile)])),
+						extra: Default::default(),
 					});
 				}
 				if method != "credential-chain" {
 					return Err(PiError::new(format!("Unknown Amazon Bedrock auth method: {method}")));
 				}
-				(interaction.prompt)(AuthPrompt::Text {
+				(interaction.prompt)(AuthPrompt::new(AuthPromptKind::Text {
 					message: "Configure AWS credentials, then press Enter to continue".into(),
 					placeholder: None,
-					signal: None,
-				})
+				}))
 				.await?;
 				Ok(ApiKeyCredential::default())
 			})

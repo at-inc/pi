@@ -14,7 +14,7 @@ use crate::api::anthropic_messages_lazy::anthropic_messages_api;
 use crate::auth::helpers::{LazyOAuthInput, lazy_oauth};
 use crate::auth::oauth::load::load_anthropic_oauth;
 use crate::auth::types::{
-	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthPrompt, AuthResult, ModelAuth, ProviderAuth,
+	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthPrompt, AuthPromptKind, AuthResult, ModelAuth, ProviderAuth,
 };
 use crate::env_api_keys::{
 	ANTHROPIC_API_KEY_ENV, ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_FEDERATION_RULE_ID_ENV,
@@ -31,16 +31,16 @@ fn anthropic_api_key_auth() -> ApiKeyAuth {
 		login: Some(Rc::new(|interaction| {
 			Box::pin(async move {
 				interaction.signal.throw_if_aborted()?;
-				let key = (interaction.prompt)(AuthPrompt::Secret {
+				let key = (interaction.prompt)(AuthPrompt::new(AuthPromptKind::Secret {
 					message: "Enter Anthropic API key".into(),
 					placeholder: None,
-					signal: None,
-				})
+				}))
 				.await?;
 				interaction.signal.throw_if_aborted()?;
 				Ok(ApiKeyCredential {
 					key: Some(key),
 					env: None,
+					extra: Default::default(),
 				})
 			})
 		})),
