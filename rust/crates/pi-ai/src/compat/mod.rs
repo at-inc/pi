@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/compat.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Temporary compatibility entrypoint preserving the old global pi-ai API
 //! surface: api-dispatch `stream()`/`complete()` with env API key injection,

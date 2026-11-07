@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-codex-images.lazy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Rust has no dynamic import: `generateImages` calls the statically linked module. The module takes `ImagesOptions`,
 //! so the extra option keys are not passed on, as the TS module reads none.

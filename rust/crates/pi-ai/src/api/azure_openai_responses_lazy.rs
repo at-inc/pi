@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/azure-openai-responses.lazy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Rust has no dynamic import: the loader hands out the statically linked module.
 

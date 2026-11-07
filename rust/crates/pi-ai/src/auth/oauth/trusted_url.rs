@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/trusted-url.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The WHATWG `URL` parser is the `url` crate, which implements the same standard. It is stricter on invalid
 //! punycode labels: `https://xn--a.com/` is rejected, where Node keeps it.

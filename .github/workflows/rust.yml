@@ -1,0 +1,78 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "packages/ai/catalog/**"
+      - "packages/ai/scripts/**"
+      - "scripts/update-model-catalog-pin.mjs"
+      - ".github/workflows/rust.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # pi-ai's build script embeds the model catalog data.
+      - name: Hydrate pinned model data
+        run: node scripts/update-model-catalog-pin.mjs --hydrate
+
+      - name: Install toolchain
+        working-directory: rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: rust
+
+      - name: Format
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: rust
+        run: cargo fmt --all --check
+
+      - name: Lint
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: rust
+        run: cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: rust
+        run: cargo test --locked --workspace --all-features --no-fail-fast
+
+      - name: Check wasm32
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: rust
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --locked --target wasm32-unknown-unknown -p pi-ai -p pi-agent -p pi-mcp

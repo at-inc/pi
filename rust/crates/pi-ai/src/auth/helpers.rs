@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/helpers.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `lazyOAuth`'s anonymous input object is `LazyOAuthInput`. The cached promise is a `Shared` future, so a rejected
 //! load stays cached like the rejected TS promise.

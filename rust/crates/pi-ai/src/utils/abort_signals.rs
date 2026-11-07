@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/abort-signals.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 use pi_host::abort::ListenerId;
 use pi_host::{AbortController, AbortSignal};

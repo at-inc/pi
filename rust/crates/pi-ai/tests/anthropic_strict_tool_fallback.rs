@@ -8,10 +8,9 @@
 //!   `data` carrying `headers`, `error` and `type`.
 //! - `expect(JSON.stringify(transcript)).toBe(original)` holds by construction, since `stream` borrows the transcript
 //!   immutably; the assertion is kept on the serialized transcript.
-//!
-//! Not ported: "preserves prefer through pi-messages so the gateway's Anthropic adapter can fall back". It streams
-//! through `api::pi_messages`, which is still `PORT-STATUS: pending` (another w3 shard), so calling it would not
-//! compile.
+//! - The pi-messages case's gateway `fetch` streams the request's `context` through the Anthropic adapter and answers
+//!   with one `done` SSE event, like the TS. `TranscriptContext` is serialize-only, so the wire context is read as a
+//!   `Context` (messages only) and passed through `normalize_context`, which returns those messages unchanged.
 
 mod anthropic_support;
 
@@ -22,9 +21,11 @@ use anthropic_support::context;
 use futures::StreamExt;
 use indexmap::IndexMap;
 use pi_ai::api::anthropic_messages::{AnthropicOptions, stream};
+use pi_ai::api::pi_messages::{PiMessagesOptions, stream as stream_pi_messages};
 use pi_ai::types::{
-	CacheRetention, Message, Model, ProviderRequestOptions, StopReason, StreamOptions, TranscriptContext,
+	CacheRetention, Context, Message, Model, ProviderRequestOptions, StopReason, StreamOptions, TranscriptContext,
 };
+use pi_ai::utils::transcript::normalize_context;
 use pi_host::js::json_stringify;
 use pi_host::testing::run;
 use pi_host::{AbortController, FetchFunction, HttpResponse, PiError};
@@ -533,6 +534,73 @@ mod anthropic_preferred_strict_tool_fallback {
 					.map(|payload| tool_at(payload, 0).get("strict").cloned())
 					.collect::<Vec<_>>(),
 				[Some(json!(true)), None, Some(json!(true))]
+			);
+		});
+	}
+
+	#[test]
+	fn preserves_prefer_through_pi_messages_so_the_gateway_s_anthropic_adapter_can_fall_back() {
+		run(|_| async {
+			let (payloads, options) = harness(|_, attempt| {
+				if attempt == 1 {
+					grammar_error_response()
+				} else {
+					success_response()
+				}
+			});
+			let transcript = transcript(vec![tool("lookup", Some("prefer"))]);
+			let mut gateway_model = model();
+			gateway_model.api = "pi-messages".into();
+			gateway_model.provider = "radius".into();
+			gateway_model.base_url = "https://radius.example/v1".into();
+			gateway_model.compat = None;
+			let expected_context: Value =
+				serde_json::from_str(&json_stringify(&serde_json::to_value(&transcript).unwrap())).unwrap();
+			let fetch: FetchFunction = Rc::new(move |request| {
+				let request: Value = serde_json::from_slice(request.body.as_deref().unwrap_or_default()).unwrap();
+				assert_eq!(request["context"], expected_context);
+				let upstream_context =
+					normalize_context(&serde_json::from_value::<Context>(request["context"].clone()).unwrap());
+				let options = options.clone();
+				Box::pin(async move {
+					let upstream = stream(&model(), &upstream_context, Some(options))
+						.result()
+						.await
+						.unwrap();
+					Ok(sse(format!(
+						"data: {}\n\n",
+						json_stringify(
+							&json!({ "type": "done", "reason": upstream.stop_reason, "usage": upstream.usage })
+						)
+					)))
+				})
+			});
+			let result = stream_pi_messages(
+				&gateway_model,
+				&transcript,
+				Some(PiMessagesOptions {
+					base: StreamOptions {
+						base: ProviderRequestOptions {
+							api_key: Some("radius-test".into()),
+							fetch: Some(fetch),
+							..ProviderRequestOptions::default()
+						},
+						..StreamOptions::default()
+					},
+					..PiMessagesOptions::default()
+				}),
+			)
+			.result()
+			.await
+			.unwrap();
+			assert_eq!(result.stop_reason, StopReason::Stop);
+			assert_eq!(
+				payloads
+					.borrow()
+					.iter()
+					.map(|payload| tool_at(payload, 0).get("strict").cloned())
+					.collect::<Vec<_>>(),
+				[Some(json!(true)), None]
 			);
 		});
 	}

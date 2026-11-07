@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/kimi-coding.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Kimi Code (subscription) OAuth flow
 //!

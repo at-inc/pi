@@ -1,7 +1,7 @@
 //! Port of `packages/ai/test/oauth-callback-server.test.ts`.
 //!
 //! Needs the `native` feature: the tests run on the tokio host and reach the real loopback socket through
-//! `pi_host::fetch`. Tests whose server renders a page wait for `utils/oauth_page.rs` (w2-ai-core).
+//! `pi_host::fetch`.
 
 #![cfg(feature = "native")]
 
@@ -97,7 +97,6 @@ mod oauth_callback_server {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/oauth_page.rs from w2-ai-core"]
 	fn ignores_stray_requests_and_resolves_with_the_completed_code() {
 		pi_host::native::run(|| async {
 			let server = start(options()).await.unwrap();
@@ -156,7 +155,6 @@ mod oauth_callback_server {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/oauth_page.rs from w2-ai-core"]
 	fn uses_the_redirect_host_and_skips_the_state_check_when_none_is_expected() {
 		pi_host::native::run(|| async {
 			let server = start(OAuthCallbackServerOptions {
@@ -176,7 +174,6 @@ mod oauth_callback_server {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/oauth_page.rs from w2-ai-core"]
 	fn shows_completion_failures_on_the_page_and_rejects_the_wait() {
 		pi_host::native::run(|| async {
 			let server = start(OAuthCallbackServerOptions {
@@ -206,7 +203,6 @@ mod oauth_callback_server {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/oauth_page.rs from w2-ai-core"]
 	fn rejects_the_wait_when_the_provider_redirects_with_an_error() {
 		pi_host::native::run(|| async {
 			let server = start(options()).await.unwrap();
@@ -237,7 +233,6 @@ mod oauth_callback_server {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/oauth_page.rs from w2-ai-core"]
 	fn completes_only_the_first_callback() {
 		pi_host::native::run(|| async {
 			let finish_exchange: Rc<RefCell<Option<oneshot::Sender<String>>>> = Rc::new(RefCell::new(None));
@@ -276,7 +271,6 @@ mod oauth_callback_server {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/oauth_page.rs from w2-ai-core"]
 	fn resolves_with_undefined_after_cancel() {
 		pi_host::native::run(|| async {
 			let server = start(options()).await.unwrap();
@@ -354,7 +348,6 @@ mod wait_for_callback_or_manual_input {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/oauth_page.rs from w2-ai-core"]
 	fn returns_the_browser_callback_and_aborts_the_manual_prompt() {
 		pi_host::native::run(|| async {
 			let manual_signal: Rc<RefCell<Option<AbortSignal>>> = Rc::new(RefCell::new(None));

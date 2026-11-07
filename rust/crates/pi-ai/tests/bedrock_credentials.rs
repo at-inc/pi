@@ -24,6 +24,15 @@ use serde_json::{Value, json};
 
 const HOME: &str = "/home/pi-test";
 
+/// `~/.aws/<name>` under `HOME`, joined like the client's `path.join`, so the path matches on Windows too.
+fn aws_file(name: &str) -> String {
+	std::path::Path::new(HOME)
+		.join(".aws")
+		.join(name)
+		.to_string_lossy()
+		.into_owned()
+}
+
 fn context() -> Context {
 	serde_json::from_value(json!({ "messages": [{ "role": "user", "content": "hello", "timestamp": 1 }] })).unwrap()
 }
@@ -94,7 +103,7 @@ mod bedrock_credential_priority {
 		run(|host| async move {
 			setup(&host);
 			host.write_file(
-				&format!("{HOME}/.aws/credentials"),
+				&aws_file("credentials"),
 				"[explicit-profile]\naws_access_key_id = AKIAEXPLICIT\naws_secret_access_key = explicitsecret\n\n[scoped-profile]\naws_access_key_id = AKIASCOPED\naws_secret_access_key = scopedsecret\n",
 			);
 			let model = get_builtin_model("amazon-bedrock", "us.anthropic.claude-opus-4-8").unwrap();
@@ -128,12 +137,9 @@ mod bedrock_credential_priority {
 		run(|host| async move {
 			setup(&host);
 			host.set_env("AWS_PROFILE", "ambient-profile");
+			host.write_file(&aws_file("config"), "[profile ambient-profile]\nregion = eu-west-3\n");
 			host.write_file(
-				&format!("{HOME}/.aws/config"),
-				"[profile ambient-profile]\nregion = eu-west-3\n",
-			);
-			host.write_file(
-				&format!("{HOME}/.aws/credentials"),
+				&aws_file("credentials"),
 				"[ambient-profile]\naws_access_key_id = AKIAAMBIENTPROFILE\naws_secret_access_key = ambientsecret\n",
 			);
 			let model = get_builtin_model("amazon-bedrock", "us.anthropic.claude-opus-4-8").unwrap();

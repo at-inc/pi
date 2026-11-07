@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/openrouter.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! OpenRouter OAuth PKCE flow.
 //!

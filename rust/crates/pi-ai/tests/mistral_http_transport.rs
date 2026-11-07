@@ -685,4 +685,67 @@ mod mistral_http_transport {
 			);
 		});
 	}
+
+	// Not in the TS suite: the TypeErrors V8 reports for a null or missing `function` and tool choice function, checked
+	// against the TS with an oracle script.
+	#[test]
+	fn reports_v8_type_errors_for_null_or_missing_functions() {
+		run(|_host| async move {
+			let model = mistral_model("mistral-large-latest");
+			let cases = [
+				(
+					vec![json!({ "index": 0, "function": null })],
+					"Cannot read properties of null (reading 'name')",
+				),
+				(
+					vec![
+						json!({ "index": 0, "function": { "name": "get", "arguments": "{" } }),
+						json!({ "index": 0 }),
+					],
+					"Cannot read properties of undefined (reading 'arguments')",
+				),
+				(
+					vec![
+						json!({ "index": 0, "function": { "name": "get", "arguments": "{" } }),
+						json!({ "index": 0, "function": null }),
+					],
+					"Cannot read properties of null (reading 'arguments')",
+				),
+			];
+			for (tool_calls, expected) in cases {
+				let events: Vec<Value> = tool_calls
+					.into_iter()
+					.map(|tool_call| json!({ "choices": [{ "delta": { "tool_calls": [tool_call] } }] }))
+					.collect();
+				let (fetch, _request) = recording_fetch(move || create_sse_response(&events, &[]));
+				let message = result(&model, &hello_context(), options("test", fetch)).await;
+				assert_eq!(message.error_message.as_deref(), Some(expected));
+			}
+
+			for (tool_choice, expected) in [
+				(
+					json!({ "type": "function", "function": null }),
+					"Cannot read properties of null (reading 'name')",
+				),
+				(
+					json!({ "type": "function" }),
+					"Cannot read properties of undefined (reading 'name')",
+				),
+				(json!(5), "Cannot read properties of undefined (reading 'name')"),
+			] {
+				let (fetch, request) = recording_fetch(|| create_sse_response(&[create_terminal_event()], &[]));
+				let message = result(
+					&model,
+					&hello_context(),
+					MistralOptions {
+						tool_choice: Some(tool_choice),
+						..options("test", fetch)
+					},
+				)
+				.await;
+				assert_eq!(message.error_message.as_deref(), Some(expected));
+				assert!(request.borrow().is_none());
+			}
+		});
+	}
 }

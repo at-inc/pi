@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/openai-chatgpt.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! OpenAI Responses API token sharing through Sign in with ChatGPT.
 //!

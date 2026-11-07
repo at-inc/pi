@@ -1,13 +1,17 @@
 //! Port of `packages/ai/src/providers/model-schema.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The schemas are JSON values (see `schema_builders.rs`). Each `Static<typeof XSchema>` type alias becomes the
 //! Rust type of the values the schema accepts.
+//!
+//! `ModelCost`, `ModelCostTier` and `ModelCostRates` accept what TS arithmetic accepts: a missing or `null` rate reads
+//! as `NaN` and is left out when written, and unknown cost keys survive in `extra`. A `null` rate differs: TS computes
+//! with it as `0` and writes it back as `null`.
 
 use std::sync::LazyLock;
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value, json};
 
 use super::schema_builders::{Properties, open_object as object, opt};
 
@@ -389,37 +393,124 @@ pub struct ModelPromptCache {
 	pub long: Option<f64>,
 }
 
-/// `Static<typeof ModelCostRatesSchema>`.
+/// `Static<typeof ModelCostRatesSchema>`. A missing or `null` rate reads as `NaN` (see `ModelCost`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCostRates {
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub input: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub output: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub cache_read: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub cache_write: f64,
 }
 
-/// `Static<typeof ModelCostTierSchema>`.
+/// `Static<typeof ModelCostTierSchema>`. A missing or `null` number reads as `NaN` (see `ModelCost`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCostTier {
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub input_tokens_above: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub input: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub output: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub cache_read: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub cache_write: f64,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
 }
 
-/// `Static<typeof ModelCostSchema>`.
+/// `Static<typeof ModelCostSchema>`. TS reads the catalog and custom models as plain objects and does arithmetic on
+/// whatever rate is there; a missing rate is `undefined`, which turns a computed cost into `NaN`. A missing or `null`
+/// rate therefore reads as `NaN` here, so the arithmetic matches, and is left out when written, so a model read from
+/// JSON writes back the keys it had. A `null` rate is the one case that differs: TS computes with it as `0` and
+/// writes it back as `null`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCost {
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub input: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub output: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub cache_read: f64,
+	#[serde(
+		default = "missing_rate",
+		deserialize_with = "rate",
+		skip_serializing_if = "is_missing_rate"
+	)]
 	pub cache_write: f64,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub tiers: Option<Vec<ModelCostTier>>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
+}
+
+fn missing_rate() -> f64 {
+	f64::NAN
+}
+
+fn rate<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+	Ok(Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::NAN))
+}
+
+fn is_missing_rate(rate: &f64) -> bool {
+	rate.is_nan()
 }
 
 /// `Static<typeof ModelImageResizeOptionsSchema>`.
@@ -456,4 +547,56 @@ pub struct ModelInputLimits {
 	pub max_request_bytes: Option<f64>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub images: Option<ModelImageInputLimits>,
+}
+
+#[cfg(test)]
+mod tests {
+	use pi_host::js::json_stringify;
+
+	use crate::models::calculate_cost;
+	use crate::types::{AnyModel, Usage};
+
+	// Expected values come from running the TS: `JSON.stringify(calculateCost(model, usage))`.
+	#[test]
+	fn reads_a_cost_with_a_missing_rate_and_app_fields_like_the_ts() {
+		let json = serde_json::json!({
+			"id": "m", "name": "M", "api": "openai-completions", "provider": "p", "baseUrl": "https://x.test",
+			"input": ["text"],
+			"cost": {
+				"input": 2, "output": 4, "cacheRead": 1, "appRate": "keep",
+				"tiers": [{ "inputTokensAbove": 10, "input": 3, "output": 5, "cacheRead": 1, "appTier": 1 }],
+			},
+			"reasoning": false, "contextWindow": 100, "maxTokens": 10,
+		});
+		let AnyModel::Chat(model) = serde_json::from_value::<AnyModel>(json.clone()).unwrap() else {
+			panic!("expected a chat model");
+		};
+		assert!(model.cost.cache_write.is_nan());
+		// Same keys and values; the app fields follow the declared ones, as for every typed struct.
+		assert_eq!(
+			serde_json::from_str::<serde_json::Value>(&json_stringify(&model)).unwrap(),
+			json
+		);
+
+		let mut usage = Usage {
+			input: 1_000_000.0,
+			output: 1_000_000.0,
+			total_tokens: 2_000_000.0,
+			..Usage::default()
+		};
+		assert_eq!(
+			json_stringify(&calculate_cost(&model, &mut usage)),
+			r#"{"input":3,"output":5,"cacheRead":0,"cacheWrite":null,"total":null,"totalFromProvider":false}"#
+		);
+		let mut usage = Usage {
+			input: 5.0,
+			output: 1.0,
+			total_tokens: 6.0,
+			..Usage::default()
+		};
+		assert_eq!(
+			json_stringify(&calculate_cost(&model, &mut usage)),
+			r#"{"input":0.000009999999999999999,"output":0.000004,"cacheRead":0,"cacheWrite":null,"total":null,"totalFromProvider":false}"#
+		);
+	}
 }

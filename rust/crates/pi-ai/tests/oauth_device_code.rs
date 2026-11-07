@@ -140,3 +140,28 @@ mod oauth_device_code_polling {
 		});
 	}
 }
+
+// Review regression: a NaN expiry makes `Date.now() < deadline` false, so TS times out without polling.
+mod oauth_device_code_review {
+	use super::*;
+
+	#[test]
+	fn times_out_without_polling_when_the_expiry_is_nan() {
+		pi_host::testing::run(|_| async {
+			let poll_times = Rc::new(RefCell::new(Vec::new()));
+			let result = poll_oauth_device_code_flow(OAuthDeviceCodePollOptions {
+				interval_seconds: None,
+				expires_in_seconds: Some(f64::NAN),
+				wait_before_first_poll: None,
+				poll: scripted(
+					vec![OAuthDeviceCodePollResult::Complete { value: "token".into() }],
+					poll_times.clone(),
+				),
+				signal: AbortController::new().signal(),
+			})
+			.await;
+			assert_eq!(result.unwrap_err().message, "Device flow timed out");
+			assert!(poll_times.borrow().is_empty());
+		});
+	}
+}

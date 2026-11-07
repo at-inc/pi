@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/compat/extension-oauth-types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `OAuthLoginCallbacks` is a struct of `Rc` callbacks; optional methods are `Option` fields.
 

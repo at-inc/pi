@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/diagnostics.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TypeScript takes the thrown value as `unknown`; the Rust port takes a `Thrown`: the `PiError` that stands in for an
 //! `Error`, or the JSON value of anything else that was thrown. A TS error's own fields (`statusCode`, `headers`,

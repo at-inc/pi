@@ -1,12 +1,5 @@
 //! Port of `packages/ai/test/models-runtime.test.ts`.
 //!
-//! The credential store, the default auth context, `resolve_provider_auth` and `refresh_stored_oauth_credential`
-//! are `PORT-STUB: w2-ai-auth` on this branch. Tests whose TS only needs some store and context (refresh, login,
-//! logout) get in-file doubles through `test_models()`: `TestCredentialStore`, a map with `InMemoryCredentialStore`'s
-//! read/list/modify/delete results but no per-provider queue, and `TestAuthContext`, which has no env vars and no
-//! files. Tests that exercise the real store or auth resolution keep the TS setup (`create_models(None)`,
-//! `InMemoryCredentialStore::new()`) and are `#[ignore = "needs w2-ai-auth: ..."]`; they pass against the auth branch.
-//!
 //! Differences from the TS:
 //! - "swallows provider source failures for both all-provider and single-provider listing" is not ported:
 //!   `Provider.get_models` returns a `Vec` and cannot throw, so `Models` has no guard to test (see `models.rs`).
@@ -29,9 +22,9 @@ use indexmap::IndexMap;
 use pi_ai::auth::credential_store::InMemoryCredentialStore;
 use pi_ai::auth::resolve::AuthResolutionOverrides;
 use pi_ai::auth::types::{
-	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthCheck, AuthContext, AuthInteraction, AuthOperationOptions,
-	AuthResult, AuthType, Credential, CredentialInfo, CredentialModifier, CredentialStore, ModelAuth, OAuthAuth,
-	OAuthCredential, OAuthRefreshFunction, ProviderAuth,
+	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthCheck, AuthInteraction, AuthOperationOptions, AuthResult,
+	AuthType, Credential, CredentialInfo, CredentialModifier, CredentialStore, ModelAuth, OAuthAuth, OAuthCredential,
+	OAuthRefreshFunction, ProviderAuth,
 };
 use pi_ai::models::{
 	CreateModelsOptions, CreateProviderOptions, GetAuthTarget, GetModelsFunction, ModelsError, ModelsErrorCode,
@@ -376,97 +369,6 @@ impl Gate {
 	}
 }
 
-/// Stand-in for `InMemoryCredentialStore` while it is a stub: same results, no per-provider queue.
-#[derive(Default)]
-struct TestCredentialStore {
-	credentials: Rc<RefCell<IndexMap<String, Credential>>>,
-}
-
-fn throw_if_aborted(options: &Option<AuthOperationOptions>) -> PiResult<()> {
-	match options.as_ref().and_then(|options| options.signal.as_ref()) {
-		Some(signal) => signal.throw_if_aborted(),
-		None => Ok(()),
-	}
-}
-
-impl CredentialStore for TestCredentialStore {
-	fn read(
-		&self,
-		provider_id: &str,
-		options: Option<AuthOperationOptions>,
-	) -> LocalBoxFuture<'static, PiResult<Option<Credential>>> {
-		let result = throw_if_aborted(&options).map(|()| self.credentials.borrow().get(provider_id).cloned());
-		Box::pin(async move { result })
-	}
-
-	fn list(&self, options: Option<AuthOperationOptions>) -> LocalBoxFuture<'static, PiResult<Vec<CredentialInfo>>> {
-		let result = throw_if_aborted(&options).map(|()| {
-			self.credentials
-				.borrow()
-				.iter()
-				.map(|(provider_id, credential)| CredentialInfo {
-					provider_id: provider_id.clone(),
-					r#type: credential.r#type(),
-				})
-				.collect()
-		});
-		Box::pin(async move { result })
-	}
-
-	fn modify(
-		&self,
-		provider_id: &str,
-		f: CredentialModifier,
-		options: Option<AuthOperationOptions>,
-	) -> LocalBoxFuture<'static, PiResult<Option<Credential>>> {
-		let (credentials, provider_id) = (self.credentials.clone(), provider_id.to_string());
-		Box::pin(async move {
-			throw_if_aborted(&options)?;
-			let current = credentials.borrow().get(&provider_id).cloned();
-			let next = f(current.clone()).await?;
-			throw_if_aborted(&options)?;
-			if let Some(next) = &next {
-				credentials.borrow_mut().insert(provider_id, next.clone());
-			}
-			Ok(next.or(current))
-		})
-	}
-
-	fn delete(
-		&self,
-		provider_id: &str,
-		options: Option<AuthOperationOptions>,
-	) -> LocalBoxFuture<'static, PiResult<()>> {
-		let result = throw_if_aborted(&options).map(|()| {
-			self.credentials.borrow_mut().shift_remove(provider_id);
-		});
-		Box::pin(async move { result })
-	}
-}
-
-/// Stand-in for the default auth context while it is a stub: no env vars, no files.
-struct TestAuthContext;
-
-impl AuthContext for TestAuthContext {
-	fn env(&self, _name: &str) -> LocalBoxFuture<'static, Option<String>> {
-		Box::pin(async { None })
-	}
-
-	fn file_exists(&self, _path: &str) -> LocalBoxFuture<'static, bool> {
-		Box::pin(async { false })
-	}
-}
-
-/// `createModels(options)` with the stand-in store and context where the options leave them out.
-fn test_models(options: Option<CreateModelsOptions>) -> Rc<dyn MutableModels> {
-	let mut options = options.unwrap_or_default();
-	options
-		.credentials
-		.get_or_insert_with(|| Rc::new(TestCredentialStore::default()));
-	options.auth_context.get_or_insert_with(|| Rc::new(TestAuthContext));
-	create_models(Some(options))
-}
-
 struct EmptyStreams;
 
 impl ProviderStreams for EmptyStreams {
@@ -682,7 +584,6 @@ mod models_runtime {
 	use super::*;
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore"]
 	fn enumerates_credential_metadata_without_exposing_secrets() {
 		pi_host::testing::run(|_| async {
 			let credentials = InMemoryCredentialStore::new();
@@ -724,7 +625,9 @@ mod models_runtime {
 				output: 45.0,
 				cache_read: 1.0,
 				cache_write: 12.5,
+				..ModelCostTier::default()
 			}]),
+			..ModelCost::default()
 		};
 		let create_usage = |cache_write: f64| Usage {
 			input: 200000.0,
@@ -841,7 +744,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn keeps_chat_reads_independent_from_the_all_model_catalog() {
 		pi_host::testing::run(|_| async {
 			let mut provider = test_provider(TestProviderInput {
@@ -874,7 +776,7 @@ mod models_runtime {
 		pi_host::testing::run(|_| async {
 			let list = Rc::new(RefCell::new(vec![test_model("dyn", "before")]));
 			let refreshes = Rc::new(Cell::new(0));
-			let models = test_models(None);
+			let models = create_models(None);
 			models.set_provider(Rc::new(test_provider(TestProviderInput {
 				id: "dyn",
 				get_models: Some({
@@ -939,7 +841,7 @@ mod models_runtime {
 	fn restricts_refresh_work_to_selected_providers() {
 		pi_host::testing::run(|_| async {
 			let calls = Rc::new(RefCell::new(Vec::<String>::new()));
-			let models = test_models(None);
+			let models = create_models(None);
 			for id in ["one", "two"] {
 				let calls = calls.clone();
 				models.set_provider(Rc::new(test_provider(TestProviderInput {
@@ -1012,7 +914,7 @@ mod models_runtime {
 				..CreateProviderOptions::default()
 			})
 			.unwrap();
-			let models = test_models(Some(CreateModelsOptions {
+			let models = create_models(Some(CreateModelsOptions {
 				models_store: Some(store.clone() as Rc<dyn ModelsStore>),
 				..CreateModelsOptions::default()
 			}));
@@ -1041,7 +943,7 @@ mod models_runtime {
 			})));
 			let store = EntryStore { entry: entry.clone() };
 			let state = Rc::new(RefCell::new("initial"));
-			let models = test_models(Some(CreateModelsOptions {
+			let models = create_models(Some(CreateModelsOptions {
 				models_store: Some(Rc::new(store)),
 				..CreateModelsOptions::default()
 			}));
@@ -1100,7 +1002,7 @@ mod models_runtime {
 	#[test]
 	fn persists_dynamic_catalogs_and_restores_them_without_network_access() {
 		pi_host::testing::run(|_| async {
-			let credentials: Rc<dyn CredentialStore> = Rc::new(TestCredentialStore::default());
+			let credentials: Rc<dyn CredentialStore> = Rc::new(InMemoryCredentialStore::new());
 			let models_store: Rc<dyn ModelsStore> = Rc::new(InMemoryModelsStore::new());
 			store_credential(&*credentials, "dynamic", api_key_credential("key")).await;
 			let create_dynamic_provider = |fetched: Option<Vec<AnyModel>>| {
@@ -1126,14 +1028,14 @@ mod models_runtime {
 				..CreateModelsOptions::default()
 			};
 
-			let online = test_models(Some(options.clone()));
+			let online = create_models(Some(options.clone()));
 			online.set_provider(Rc::new(create_dynamic_provider(Some(vec![chat(&test_model(
 				"dynamic", "fetched",
 			))]))));
 			assert_eq!(online.refresh(None).await.unwrap().errors.len(), 0);
 			assert!(online.get_model("dynamic", "fetched").is_some());
 
-			let offline = test_models(Some(options));
+			let offline = create_models(Some(options));
 			offline.set_provider(Rc::new(create_dynamic_provider(None)));
 			let restored = offline
 				.refresh(Some(ModelsRefreshOptions {
@@ -1153,7 +1055,7 @@ mod models_runtime {
 			let effective_credential = Rc::new(RefCell::new(None::<Option<Credential>>));
 			let force_refresh = Rc::new(Cell::new(None::<bool>));
 			let unconfigured_refreshes = Rc::new(Cell::new(0));
-			let models = test_models(None);
+			let models = create_models(None);
 			models.set_provider(Rc::new(test_provider(TestProviderInput {
 				id: "configured",
 				auth: Some(ProviderAuth {
@@ -1230,7 +1132,7 @@ mod models_runtime {
 					..TestProviderInput::default()
 				})
 			};
-			let models = test_models(None);
+			let models = create_models(None);
 			models.set_provider(Rc::new(Provider {
 				base_url: Some("https://regional.example.test/v1".into()),
 				..inner
@@ -1248,7 +1150,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, refresh_stored_oauth_credential"]
 	fn refreshes_expired_oauth_before_refreshing_models() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -1296,7 +1197,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, refresh_stored_oauth_credential"]
 	fn persists_an_oauth_refresh_that_started_before_the_model_refresh_was_cancelled() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -1354,7 +1254,7 @@ mod models_runtime {
 	fn always_gives_providers_a_concrete_signal() {
 		pi_host::testing::run(|_| async {
 			let received_signal = Rc::new(RefCell::new(None::<AbortSignal>));
-			let models = test_models(None);
+			let models = create_models(None);
 			models.set_provider(Rc::new(test_provider(TestProviderInput {
 				id: "dynamic",
 				refresh_models: {
@@ -1382,7 +1282,7 @@ mod models_runtime {
 				signals: storage_signals.clone(),
 			};
 			let provider_signal = Rc::new(RefCell::new(None::<AbortSignal>));
-			let models = test_models(Some(CreateModelsOptions {
+			let models = create_models(Some(CreateModelsOptions {
 				models_store: Some(Rc::new(store)),
 				..CreateModelsOptions::default()
 			}));
@@ -1438,7 +1338,7 @@ mod models_runtime {
 	fn returns_aborted_state_without_reporting_cancellation_as_a_provider_error() {
 		pi_host::testing::run(|_| async {
 			let controller = AbortController::new();
-			let models = test_models(None);
+			let models = create_models(None);
 			models.set_provider(Rc::new(test_provider(TestProviderInput {
 				id: "dynamic",
 				refresh_models: {
@@ -1477,7 +1377,7 @@ mod models_runtime {
 			let (reject_refresh, stalled) = oneshot::channel::<PiError>();
 			let stalled = Rc::new(RefCell::new(Some(stalled)));
 			let calls = Rc::new(Cell::new(0));
-			let models = test_models(None);
+			let models = create_models(None);
 			models.set_provider(Rc::new(test_provider(TestProviderInput {
 				id: "dynamic",
 				refresh_models: {
@@ -1530,7 +1430,7 @@ mod models_runtime {
 			let calls = Rc::new(Cell::new(0));
 			let first_started = Gate::new();
 			let first_blocked = Gate::new();
-			let models = test_models(Some(CreateModelsOptions {
+			let models = create_models(Some(CreateModelsOptions {
 				models_store: Some(store.clone() as Rc<dyn ModelsStore>),
 				..CreateModelsOptions::default()
 			}));
@@ -1598,7 +1498,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn passes_caller_signals_to_provider_auth_callbacks() {
 		pi_host::testing::run(|_| async {
 			let controller = AbortController::new();
@@ -1672,7 +1571,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn stops_waiting_for_non_cooperative_auth_callbacks() {
 		pi_host::testing::run(|_| async {
 			let check_started = Gate::new();
@@ -1738,7 +1636,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore"]
 	fn cancels_queued_credential_mutations_without_running_them_later() {
 		pi_host::testing::run(|_| async {
 			let credentials = InMemoryCredentialStore::new();
@@ -1786,7 +1683,6 @@ mod models_runtime {
 
 	// Radius bug report 01a10855-43d8-7447-a710-2acf5ee0b2ee: refresh_token_invalidated after a cancelled refresh.
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn persists_an_oauth_refresh_that_started_before_the_request_was_cancelled() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -1841,7 +1737,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn resolves_auth_stored_credential_owns_the_provider_ambient_only_when_nothing_stored() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -1915,7 +1810,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn checks_provider_auth_without_refreshing_oauth_and_filters_available_models() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -1996,7 +1890,7 @@ mod models_runtime {
 	#[test]
 	fn runs_provider_login_and_logout_through_the_credential_store() {
 		pi_host::testing::run(|_| async {
-			let credentials: Rc<dyn CredentialStore> = Rc::new(TestCredentialStore::default());
+			let credentials: Rc<dyn CredentialStore> = Rc::new(InMemoryCredentialStore::new());
 			let mut api_key = env_key_auth(None);
 			api_key.login = Some(Rc::new(|_| {
 				Box::pin(async {
@@ -2007,7 +1901,7 @@ mod models_runtime {
 					})
 				})
 			}));
-			let models = test_models(Some(CreateModelsOptions {
+			let models = create_models(Some(CreateModelsOptions {
 				credentials: Some(credentials.clone()),
 				..CreateModelsOptions::default()
 			}));
@@ -2033,7 +1927,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn a_stored_credential_without_a_matching_handler_blocks_ambient_fallback() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -2103,7 +1996,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn refreshes_expired_oauth_credentials_and_persists_the_rotated_credential() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -2131,7 +2023,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn refreshes_oauth_credentials_with_less_than_five_minutes_remaining() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -2153,7 +2044,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn honors_a_callers_longer_oauth_minimum_validity() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -2179,7 +2069,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn rejects_with_code_oauth_when_refresh_fails_preserving_the_stored_credential() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -2200,7 +2089,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn serializes_concurrent_oauth_refreshes_through_store_modify_no_double_refresh() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -2247,7 +2135,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn valid_oauth_tokens_resolve_without_touching_modify() {
 		pi_host::testing::run(|_| async {
 			let modifies = Rc::new(Cell::new(0));
@@ -2270,7 +2157,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn wraps_credential_store_failures_in_models_error() {
 		pi_host::testing::run(|_| async {
 			// read failure
@@ -2300,7 +2186,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn keeps_the_underlying_reason_in_wrapped_oauth_refresh_errors() {
 		pi_host::testing::run(|_| async {
 			let credentials = Rc::new(InMemoryCredentialStore::new());
@@ -2327,7 +2212,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn wraps_api_key_auth_failures_in_models_error() {
 		pi_host::testing::run(|_| async {
 			let failing = ApiKeyAuth {
@@ -2351,7 +2235,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn uses_explicit_request_api_key_and_env_during_provider_auth_resolution() {
 		pi_host::testing::run(|_| async {
 			let calls: Calls = Rc::default();
@@ -2422,7 +2305,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn merges_resolved_auth_into_stream_options_explicit_options_win_per_field() {
 		pi_host::testing::run(|_| async {
 			let calls: Calls = Rc::default();
@@ -2498,7 +2380,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn adds_model_headers_only_for_model_auth_and_transforms_assembled_headers_once() {
 		pi_host::testing::run(|_| async {
 			let calls: Calls = Rc::default();
@@ -2586,7 +2467,6 @@ mod models_runtime {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn streams_through_the_provider() {
 		pi_host::testing::run(|_| async {
 			let models = create_models(None);

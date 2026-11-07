@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-codex-images.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `error instanceof OpenAI.APIError && error.headers && error.status !== undefined` is a `PiError` with a status and an
 //! object `data.headers`, the shape `openai_client.rs` gives HTTP status errors. `APIConnectionTimeoutError` is the error

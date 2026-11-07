@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/xai.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! xAI OAuth device-code flow.
 //!

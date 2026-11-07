@@ -220,7 +220,7 @@ pub fn prefers_json_schema_strict_sampling(tool: &Tool) -> bool {
 	matches!(
 		constrained_sampling_config(tool),
 		Some(ConstrainedSamplingConfig::JsonSchema {
-			strict: ConstrainedSamplingStrictness::Prefer
+			strict: Some(ConstrainedSamplingStrictness::Prefer)
 		})
 	)
 }
@@ -620,14 +620,16 @@ pub fn resolve_json_schema_strict_sampling(
 		return match strict_json_schema(&tool.parameters, is_unsupported_keyword) {
 			Ok(_) => Ok(Some(true)),
 			Err(StrictSchemaError::Other(error)) => Err(error),
-			Err(StrictSchemaError::Unsupported(_)) if *strict != ConstrainedSamplingStrictness::Require => Ok(None),
+			Err(StrictSchemaError::Unsupported(_)) if *strict != Some(ConstrainedSamplingStrictness::Require) => {
+				Ok(None)
+			}
 			Err(StrictSchemaError::Unsupported(message)) => Err(PiError::new(format!(
 				"Tool \"{}\" requires JSON-schema constrained sampling, but {message}.",
 				tool.name
 			))),
 		};
 	}
-	if *strict == ConstrainedSamplingStrictness::Require {
+	if *strict == Some(ConstrainedSamplingStrictness::Require) {
 		return Err(PiError::new(format!(
 			"Tool \"{}\" requires JSON-schema constrained sampling, but strict tools are unsupported.",
 			tool.name

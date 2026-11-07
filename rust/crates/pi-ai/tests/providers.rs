@@ -1,12 +1,8 @@
 //! Port of `packages/ai/test/providers.test.ts`.
 //!
 //! `getModel`/`getModels` (compat.ts) are aliases of `get_builtin_model`/`get_builtin_models`, so
-//! `returns empty results for unknown provider ids` checks the `all.rs` getters once. `fauxAssistantMessage`
-//! (providers/faux.ts, pending) is built inline as a text-only assistant message.
-//!
-//! Not ported: the `fauxProvider` describe (`streams queued responses through a Models collection`, `submits, polls,
-//! and redeems deferred responses`, `records cancellation and returns deferred fetch failures in-band`). It tests
-//! `providers/faux.ts`, which is pending in w2-ai-core and moves with that file.
+//! `returns empty results for unknown provider ids` checks the `all.rs` getters once. `expect.any(String)` on the
+//! deferred handle id is a non-empty check; `toMatchObject` compares the named fields.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -33,13 +29,14 @@ use pi_ai::providers::amazon_bedrock::amazon_bedrock_provider;
 use pi_ai::providers::anthropic::anthropic_provider;
 use pi_ai::providers::cloudflare_ai_gateway::cloudflare_ai_gateway_provider;
 use pi_ai::providers::cloudflare_workers_ai::cloudflare_workers_ai_provider;
+use pi_ai::providers::faux::faux_assistant_message;
 use pi_ai::providers::google_vertex::google_vertex_provider;
 use pi_ai::providers::model_schema::ModelThinkingLevel;
 use pi_ai::types::FetchDeferredFunction;
 use pi_ai::types::{
-	AnyModel, AssistantContent, AssistantMessage, AssistantMessageEvent, BaseModel, Context, DeferredHandle, Message,
-	Model, ModelCost, ModelInputModality, ProviderEnv, ProviderStreamOptions, ProviderStreams, SimpleStreamOptions,
-	StopReason, TextContent, TranscriptContext, UserMessage, UserMessageContent,
+	AnyModel, AssistantMessageEvent, BaseModel, Context, DeferredHandle, Message, Model, ModelCost, ModelInputModality,
+	ProviderEnv, ProviderStreamOptions, ProviderStreams, SimpleStreamOptions, StopReason, TranscriptContext,
+	UserMessage, UserMessageContent,
 };
 use pi_ai::utils::event_stream::AssistantMessageEventStream;
 use pi_ai::utils::transcript::normalize_context;
@@ -470,7 +467,6 @@ mod builtin_providers {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn resolves_anthropic_bearer_auth_from_env_with_auth_token_precedence() {
 		pi_host::testing::run(|_| async {
 			let models = models_with_auth_context(
@@ -501,7 +497,6 @@ mod builtin_providers {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn preserves_anthropic_oauth_token_precedence_over_the_api_key() {
 		pi_host::testing::run(|_| async {
 			let models = models_with_auth_context(
@@ -567,7 +562,6 @@ mod builtin_providers {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn reports_bedrock_as_configured_from_ambient_aws_credentials_without_an_api_key() {
 		pi_host::testing::run(|_| async {
 			let models = models_with_auth_context(&[("AWS_PROFILE", "dev")], &[]);
@@ -585,7 +579,6 @@ mod builtin_providers {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn requires_cloudflare_workers_ai_account_config_and_returns_scoped_env() {
 		pi_host::testing::run(|_| async {
 			let missing_account = models_with_auth_context(&[("CLOUDFLARE_API_KEY", "cf-key")], &[]);
@@ -617,7 +610,6 @@ mod builtin_providers {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn requires_cloudflare_ai_gateway_account_and_gateway_config_and_returns_scoped_env_headers() {
 		pi_host::testing::run(|_| async {
 			let missing_gateway = models_with_auth_context(
@@ -720,7 +712,6 @@ mod builtin_providers {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn resolves_vertex_via_adc_file_plus_project_and_location() {
 		pi_host::testing::run(|_| async {
 			let adc = "~/.config/gcloud/application_default_credentials.json";
@@ -763,7 +754,6 @@ mod env_api_key_auth {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: envApiKeyAuth (auth/helpers.ts, w2-ai-auth)"]
 	fn prefers_the_stored_credential_key_and_falls_back_through_env_vars_in_order() {
 		pi_host::testing::run(|_| async {
 			let auth = env_api_key_auth("Test key", &["FIRST_KEY", "SECOND_KEY"]);
@@ -808,7 +798,6 @@ mod env_api_key_auth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: envApiKeyAuth (auth/helpers.ts, w2-ai-auth)"]
 	fn login_prompts_for_a_secret_and_returns_an_api_key_credential() {
 		pi_host::testing::run(|_| async {
 			let auth = env_api_key_auth("Test key", &["TEST_KEY"]);
@@ -837,23 +826,9 @@ mod env_api_key_auth {
 mod create_provider {
 	use super::*;
 
-	fn fake_assistant_message(text: &str) -> AssistantMessage {
-		AssistantMessage {
-			content: vec![AssistantContent::Text(TextContent {
-				text: text.into(),
-				..TextContent::default()
-			})],
-			api: "faux".into(),
-			provider: "faux".into(),
-			model: "faux-1".into(),
-			stop_reason: StopReason::Stop,
-			..AssistantMessage::default()
-		}
-	}
-
 	fn completed_stream() -> AssistantMessageEventStream {
 		let stream = AssistantMessageEventStream::new();
-		let message = Rc::new(RefCell::new(fake_assistant_message("ok")));
+		let message = Rc::new(RefCell::new(faux_assistant_message("ok", None)));
 		stream.push(AssistantMessageEvent::Start {
 			partial: message.clone(),
 		});
@@ -995,7 +970,6 @@ mod create_provider {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn dispatches_on_model_api_for_mixed_api_providers() {
 		pi_host::testing::run(|_| async {
 			let calls = Calls::default();
@@ -1033,7 +1007,6 @@ mod create_provider {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAuth (auth/resolve.ts, w2-ai-auth)"]
 	fn merges_provider_resolved_env_into_stream_options() {
 		pi_host::testing::run(|_| async {
 			let captured: Rc<RefCell<(Option<ProviderEnv>, Option<String>)>> = Rc::default();
@@ -1130,7 +1103,6 @@ mod create_provider {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore, the default store of create_models (auth/credential-store.ts, w2-ai-auth)"]
 	fn lets_a_newer_dynamic_refresh_bypass_and_supersede_older_network_work() {
 		pi_host::testing::run(|_| async {
 			let fetches = Rc::new(RefCell::new(0));
@@ -1201,6 +1173,159 @@ mod create_provider {
 			finish_first.send(()).unwrap();
 			assert_eq!(ids((provider.get_models)()), ["listed-2"]);
 			assert_eq!(stored_ids(store).await, ["listed-2"]);
+		});
+	}
+}
+
+mod faux_provider {
+	use super::*;
+	use pi_ai::models::{ModelsDeferredFetchOptions, ModelsSimpleStreamOptions};
+	use pi_ai::providers::faux::{
+		FauxDeferredOptions, FauxResponseStep, RegisterFauxProviderOptions, faux_provider as create_faux_provider,
+	};
+	use pi_ai::types::{DeferredFetchOptions, DeferredOption, DeferredWindow};
+	use pi_host::PiError;
+
+	#[test]
+	fn streams_queued_responses_through_a_models_collection() {
+		pi_host::testing::run(|_| async {
+			let faux = create_faux_provider(None);
+			let models = create_models(None);
+			models.set_provider(faux.provider.clone());
+			faux.set_responses(vec![faux_assistant_message("hello from faux", None).into()]);
+
+			let model = models.get_models(Some(&faux.provider.id))[0].clone();
+			let result = models.complete_simple(&model, &user_context(), None).await.unwrap();
+			assert_eq!(result.stop_reason, StopReason::Stop);
+			assert_eq!(
+				to_json(&result.content),
+				json!([{ "type": "text", "text": "hello from faux" }])
+			);
+			assert_eq!(faux.state.borrow().call_count, 1);
+		});
+	}
+
+	#[test]
+	fn submits_polls_and_redeems_deferred_responses() {
+		pi_host::testing::run(|_| async {
+			let faux = create_faux_provider(Some(RegisterFauxProviderOptions {
+				deferred: Some(FauxDeferredOptions {
+					pending_fetches: Some(1.0),
+					poll_after_ms: Some(25.0),
+				}),
+				..RegisterFauxProviderOptions::default()
+			}));
+			let models = create_models(None);
+			models.set_provider(faux.provider.clone());
+			faux.set_responses(vec![faux_assistant_message("ready", None).into()]);
+			let model = faux.get_model(None).unwrap();
+
+			let submission = models.stream_simple(
+				&model,
+				&user_context(),
+				Some(ModelsSimpleStreamOptions::from(SimpleStreamOptions {
+					deferred: Some(DeferredOption::Window {
+						window: Some(DeferredWindow::Hours1),
+					}),
+					..SimpleStreamOptions::default()
+				})),
+			);
+			let mut event_types = Vec::new();
+			while let Some(event) = submission.next().await {
+				event_types.push(to_json(&event)["type"].as_str().unwrap().to_string());
+			}
+			let deferred = submission.result().await.unwrap();
+			assert_eq!(event_types, ["start", "done"]);
+			assert_eq!(deferred.stop_reason, StopReason::Deferred);
+			assert!(deferred.content.is_empty());
+			let handle = deferred
+				.deferred
+				.clone()
+				.expect("Faux response did not include a deferred handle");
+			let handle_json = to_json(&handle);
+			assert!(handle_json["id"].as_str().is_some_and(|id| !id.is_empty()));
+			assert_eq!(
+				handle_json,
+				json!({
+					"provider": &*model.provider,
+					"modelId": model.id,
+					"api": &*model.api,
+					"id": handle_json["id"],
+					"pollAfterMs": 25.0,
+				})
+			);
+
+			let pending = models.fetch_deferred(&model, &handle, None).await.unwrap();
+			assert_eq!(pending.stop_reason, StopReason::Deferred);
+			assert_eq!(pending.deferred.as_ref(), Some(&handle));
+
+			let ready = models
+				.fetch_deferred(
+					&model,
+					&handle,
+					Some(ModelsDeferredFetchOptions::from(DeferredFetchOptions {
+						wait: Some(0.0),
+						..DeferredFetchOptions::default()
+					})),
+				)
+				.await
+				.unwrap();
+			assert_eq!(ready.stop_reason, StopReason::Stop);
+			assert_eq!(to_json(&ready.content), json!([{ "type": "text", "text": "ready" }]));
+			assert!(ready.usage.total_tokens > 0.0);
+			let state = faux.state.borrow();
+			assert_eq!((state.call_count, state.deferred_fetch_count), (1, 2));
+		});
+	}
+
+	#[test]
+	fn records_cancellation_and_returns_deferred_fetch_failures_in_band() {
+		pi_host::testing::run(|_| async {
+			let faux = create_faux_provider(None);
+			let models = create_models(None);
+			models.set_provider(faux.provider.clone());
+			faux.set_responses(vec![
+				FauxResponseStep::Factory(Rc::new(|_, _, _, _| {
+					Box::pin(async { Err(PiError::new("deferred failed")) })
+				})),
+				faux_assistant_message("cancelled", None).into(),
+			]);
+			let model = faux.get_model(None).unwrap();
+			let deferred_options = || {
+				Some(ModelsSimpleStreamOptions::from(SimpleStreamOptions {
+					deferred: Some(DeferredOption::Enabled(true)),
+					..SimpleStreamOptions::default()
+				}))
+			};
+
+			let failed_submission = models
+				.complete_simple(&model, &user_context(), deferred_options())
+				.await
+				.unwrap();
+			let failed_handle = failed_submission
+				.deferred
+				.expect("Faux response did not include a deferred handle");
+			let failed = models.fetch_deferred(&model, &failed_handle, None).await.unwrap();
+			assert_eq!(failed.stop_reason, StopReason::Error);
+			assert_eq!(failed.error_message.as_deref(), Some("deferred failed"));
+
+			let cancelled_submission = models
+				.complete_simple(&model, &user_context(), deferred_options())
+				.await
+				.unwrap();
+			let cancelled_handle = cancelled_submission
+				.deferred
+				.expect("Faux response did not include a deferred handle");
+			models.cancel_deferred(&model, &cancelled_handle, None).await.unwrap();
+			assert_eq!(faux.state.borrow().cancelled_deferred, vec![cancelled_handle.clone()]);
+			let cancelled = models.fetch_deferred(&model, &cancelled_handle, None).await.unwrap();
+			assert_eq!(cancelled.stop_reason, StopReason::Error);
+			assert!(
+				cancelled
+					.error_message
+					.as_deref()
+					.is_some_and(|message| message.contains("was cancelled"))
+			);
 		});
 	}
 }

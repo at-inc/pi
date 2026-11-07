@@ -48,7 +48,6 @@ mod radius_o_auth {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/radius_config.rs from w2-ai-core"]
 	fn uses_gateway_endpoints_directly_for_device_login() {
 		let urls = Rc::new(RefCell::new(Vec::<String>::new()));
 		let recorded = urls.clone();
@@ -124,7 +123,6 @@ mod radius_o_auth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/radius_config.rs from w2-ai-core"]
 	fn refreshes_directly_through_the_gateway_without_discovery() {
 		let calls = Rc::new(RefCell::new(0));
 		let count = calls.clone();
@@ -154,7 +152,6 @@ mod radius_o_auth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/radius_config.rs from w2-ai-core"]
 	fn discovers_only_the_interactive_browser_authorization_endpoint() {
 		let calls = Rc::new(RefCell::new(0));
 		let count = calls.clone();
@@ -179,7 +176,6 @@ mod radius_o_auth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/radius_config.rs from w2-ai-core"]
 	fn rejects_an_authorization_endpoint_that_is_not_an_http_s_url() {
 		let fetch = handler(|_| {
 			Ok(json_response(
@@ -204,7 +200,6 @@ mod radius_o_auth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/radius_config.rs from w2-ai-core"]
 	fn rejects_a_device_verification_uri_that_is_not_an_http_s_url() {
 		let fetch = handler(|_| {
 			Ok(json_response(
@@ -233,7 +228,6 @@ mod radius_o_auth {
 
 	#[cfg(feature = "native")]
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/radius_config.rs and utils/oauth_page.rs from w2-ai-core"]
 	fn exchanges_the_browser_callback_code_before_showing_the_sign_in_page() {
 		use std::cell::Cell;
 
@@ -336,5 +330,49 @@ mod radius_o_auth {
 			assert_eq!(status, 200);
 			assert!(page.contains("Signed in to Radius."), "{page}");
 		});
+	}
+}
+
+// Review regression: device authorization fields are passed to the poller as read, so a string `expires_in` is no
+// deadline (`typeof expiresInSeconds !== "number"`) and a string `interval` is coerced by `interval * 1000`.
+mod radius_o_auth_review {
+	use super::*;
+
+	#[test]
+	fn keeps_polling_past_a_string_expires_in_and_coerces_a_string_interval() {
+		let start = Rc::new(RefCell::new(None::<f64>));
+		let poll_times = Rc::new(RefCell::new(Vec::<f64>::new()));
+		let (started, recorded) = (start.clone(), poll_times.clone());
+		let fetch = handler(move |request| {
+			if request.url == format!("{GATEWAY}/v1/oauth/device") {
+				started.replace(Some(pi_host::now_ms()));
+				return Ok(json_response(
+					json!({
+						"device_code": "device-code",
+						"user_code": "ABCD-1234",
+						"verification_uri": "https://radius-ui.example/pair",
+						"expires_in": "1",
+						"interval": "0.5",
+					}),
+					200,
+				));
+			}
+			recorded
+				.borrow_mut()
+				.push(pi_host::now_ms() - started.borrow().unwrap());
+			if recorded.borrow().len() < 4 {
+				return Ok(json_response(json!({ "error": "authorization_pending" }), 400));
+			}
+			Ok(json_response(
+				json!({ "access_token": "access-token", "refresh_token": "refresh-token", "expires_in": 3600 }),
+				200,
+			))
+		});
+
+		let credential = common::run_with_fake_timers(fetch, || {
+			radius_oauth().login(interaction("device-code", Rc::default()), None)
+		});
+		assert_eq!(credential.unwrap().access, "access-token");
+		assert_eq!(*poll_times.borrow(), vec![0.0, 1000.0, 2000.0, 3000.0]);
 	}
 }

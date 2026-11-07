@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/error-body.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Shared normalization for provider HTTP error objects.
 //!

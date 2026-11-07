@@ -1,10 +1,7 @@
 //! Port of `packages/ai/test/openrouter-oauth.test.ts`.
 //!
 //! Needs the `native` feature: login starts the loopback callback server, and the tests reach it with the platform
-//! `fetch`. Every login reads `PI_OAUTH_CALLBACK_HOST` through `utils/provider_env.rs` (w2-ai-core) and waits for
-//! it; the success page also needs `utils/oauth_page.rs`. The first two TS cases (`openrouterProvider()` exposing
-//! the flow, and `createModels` resolving the stored key for chat and image models) exercise `models.ts` and
-//! `providers/openrouter.ts` of shard w2-ai-core and are not ported here.
+//! `fetch`.
 
 #![cfg(feature = "native")]
 
@@ -17,8 +14,14 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::{FetchHandler, json_body, json_response, native_fetch, sequential};
 use futures::channel::oneshot;
+use pi_ai::auth::credential_store::InMemoryCredentialStore;
 use pi_ai::auth::oauth::openrouter::open_router_oauth;
-use pi_ai::auth::types::{AuthEvent, AuthPrompt, AuthPromptKind, OAuthCredential, ProviderAuthInteraction};
+use pi_ai::auth::types::{
+	AuthEvent, AuthPrompt, AuthPromptKind, Credential, CredentialStore, OAuthCredential, ProviderAuthInteraction,
+};
+use pi_ai::models::{CreateModelsOptions, GetAuthTarget, create_models};
+use pi_ai::providers::openrouter::openrouter_provider;
+use pi_ai::types::{AnyModel, ModelType};
 use pi_host::{AbortController, AbortSignal, HttpRequest, HttpResponse, LocalBoxFuture, PiError, PiResult};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -101,7 +104,54 @@ mod open_router_oauth {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs and utils/oauth_page.rs from w2-ai-core"]
+	fn is_exposed_alongside_api_key_auth() {
+		let provider = openrouter_provider();
+		assert!(provider.auth.api_key.is_some());
+		let oauth = provider.auth.oauth.expect("OAuth auth");
+		assert_eq!(oauth.login_label.as_deref(), Some("Sign in with OpenRouter"));
+	}
+
+	#[test]
+	fn resolves_the_same_stored_oauth_key_for_chat_and_image_models() {
+		pi_host::testing::run(|_| async {
+			let credentials = Rc::new(InMemoryCredentialStore::new());
+			credentials
+				.modify(
+					"openrouter",
+					Box::new(|_| {
+						Box::pin(async {
+							Ok(Some(Credential::OAuth(OAuthCredential::new(
+								"",
+								"sk-or-stored",
+								9_007_199_254_740_991.0,
+							))))
+						})
+					}),
+					None,
+				)
+				.await
+				.unwrap();
+
+			let models = create_models(Some(CreateModelsOptions {
+				credentials: Some(credentials),
+				..CreateModelsOptions::default()
+			}));
+			models.set_provider(Rc::new(openrouter_provider()));
+			let chat_model = AnyModel::Chat(models.get_models(Some("openrouter")).remove(0));
+			let image_model = models
+				.get_models_of_type(ModelType::Image, Some("openrouter"))
+				.into_iter()
+				.next()
+				.expect("an OpenRouter image model");
+
+			for model in [&chat_model, &image_model] {
+				let auth = models.get_auth(GetAuthTarget::Model(model), None).await.unwrap();
+				assert_eq!(auth.unwrap().auth.api_key.as_deref(), Some("sk-or-stored"));
+			}
+		});
+	}
+
+	#[test]
 	fn runs_pkce_on_a_one_shot_loopback_callback_and_exchanges_the_code_for_a_permanent_api_key() {
 		let _sequential = sequential();
 		let exchange_body = Rc::new(RefCell::new(None));
@@ -172,7 +222,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs and utils/oauth_page.rs from w2-ai-core"]
 	fn reports_token_exchange_failures_through_both_the_callback_page_and_login() {
 		let _sequential = sequential();
 		let fetch = token_endpoint(
@@ -207,7 +256,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs and utils/oauth_page.rs from w2-ai-core"]
 	fn allows_only_one_token_exchange_for_a_callback() {
 		let _sequential = sequential();
 		let complete_exchange: Rc<RefCell<Option<oneshot::Sender<HttpResponse>>>> = Rc::new(RefCell::new(None));
@@ -270,7 +318,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs and utils/oauth_page.rs from w2-ai-core"]
 	fn rejects_a_successful_response_that_does_not_contain_a_key() {
 		let _sequential = sequential();
 		let fetch = token_endpoint(
@@ -302,7 +349,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn mints_a_key_from_a_pasted_redirect_url_when_the_loopback_callback_never_arrives() {
 		let _sequential = sequential();
 		let exchange_body = Rc::new(RefCell::new(None));
@@ -348,7 +394,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn accepts_a_bare_authorization_code_from_the_manual_prompt() {
 		let _sequential = sequential();
 		let exchange_body = Rc::new(RefCell::new(None));
@@ -371,7 +416,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn fails_login_when_the_manual_prompt_is_cancelled() {
 		let _sequential = sequential();
 		let calls = Rc::new(Cell::new(0));
@@ -398,7 +442,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn rejects_empty_manual_input_without_exchanging_a_code() {
 		let _sequential = sequential();
 		let calls = Rc::new(Cell::new(0));
@@ -421,7 +464,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn closes_the_pending_callback_when_login_is_cancelled() {
 		let _sequential = sequential();
 		let fetch: FetchHandler = Rc::new(native_fetch);
@@ -454,7 +496,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn rejects_before_opening_a_callback_server_when_login_is_already_cancelled() {
 		let fetch: FetchHandler = Rc::new(native_fetch);
 		common::run(fetch, || async {
@@ -476,7 +517,6 @@ mod open_router_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn uses_the_configured_oauth_callback_host() {
 		let _sequential = sequential();
 		let fetch: FetchHandler = Rc::new(native_fetch);

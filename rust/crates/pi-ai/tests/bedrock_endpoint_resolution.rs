@@ -27,6 +27,15 @@ use serde_json::{Value, json};
 
 const HOME: &str = "/home/pi-test";
 
+/// `~/.aws/<name>` under `HOME`, joined like the client's `path.join`, so the path matches on Windows too.
+fn aws_file(name: &str) -> String {
+	std::path::Path::new(HOME)
+		.join(".aws")
+		.join(name)
+		.to_string_lossy()
+		.into_owned()
+}
+
 fn context() -> Context {
 	serde_json::from_value(json!({ "messages": [{ "role": "user", "content": "hello", "timestamp": 1 }] })).unwrap()
 }
@@ -145,11 +154,11 @@ mod bedrock_endpoint_resolution {
 		run(|host| async move {
 			setup(&host);
 			host.write_file(
-				&format!("{HOME}/.aws/credentials"),
+				&aws_file("credentials"),
 				"[bedrock-profile]\naws_access_key_id = AKIAEXPLICIT\naws_secret_access_key = s1\n\n[scoped-bedrock-profile]\naws_access_key_id = AKIASCOPED\naws_secret_access_key = s2\n\n[ambient-bedrock-profile]\naws_access_key_id = AKIAAMBIENT\naws_secret_access_key = s3\n",
 			);
 			host.write_file(
-				&format!("{HOME}/.aws/config"),
+				&aws_file("config"),
 				"[profile ambient-bedrock-profile]\nregion = ap-northeast-1\n",
 			);
 			let model = get_model("amazon-bedrock", "eu.anthropic.claude-sonnet-4-5-20250929-v1:0").unwrap();
@@ -238,7 +247,7 @@ mod bedrock_endpoint_resolution {
 			setup(&host);
 			host.set_env("AWS_PROFILE", "bedrock-profile");
 			host.write_file(
-				&format!("{HOME}/.aws/credentials"),
+				&aws_file("credentials"),
 				"[bedrock-profile]\naws_access_key_id = AKIAPROFILE\naws_secret_access_key = s1\n",
 			);
 			let mut model = get_model("amazon-bedrock", "us.anthropic.claude-opus-4-8").unwrap();

@@ -1,13 +1,38 @@
 //! Port of `packages/ai/test/baseten-models.test.ts`.
 //!
-//! `getModel` (compat.ts) is `get_builtin_model`. Not ported: `sends Baseten chat_template_args with reasoning
-//! effort` and `disables Baseten opt-in reasoning when thinking is off`, which capture the request through
-//! `streamSimple` on the openai-completions API (wave-3, `w3-openai-completions`). `process.env` is the `TestHost`
-//! environment, so the `afterEach` restore is not needed.
+//! `getModel` (compat.ts) is `get_builtin_model`. `process.env` is the `TestHost` environment, so the `afterEach`
+//! restore is not needed.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use pi_ai::compat::stream_simple;
 use pi_ai::env_api_keys::{find_env_keys, get_env_api_key};
 use pi_ai::providers::all::get_builtin_model;
-use pi_ai::types::ModelInputModality;
+use pi_ai::types::{Context, ModelInputModality, SimpleStreamOptions, ThinkingLevel};
+use pi_host::PiError;
+use serde_json::{Value, json};
+
+/// `streamSimple(model, { messages: [test] }, { apiKey, reasoning, onPayload })`: the payload `onPayload` captured
+/// before it threw.
+async fn capture_payload(reasoning: Option<ThinkingLevel>) -> Value {
+	let model = get_builtin_model("baseten", "zai-org/GLM-5.2").unwrap();
+	let context: Context =
+		serde_json::from_value(json!({ "messages": [{ "role": "user", "content": "test", "timestamp": 0 }] })).unwrap();
+	let captured: Rc<RefCell<Option<Value>>> = Rc::default();
+	let recorder = captured.clone();
+	let mut options = SimpleStreamOptions {
+		reasoning,
+		..SimpleStreamOptions::default()
+	};
+	options.api_key = Some("test-baseten-key".into());
+	options.on_payload = Some(Rc::new(move |payload, _| {
+		*recorder.borrow_mut() = Some(payload);
+		Box::pin(async { Err(PiError::new("payload captured")) })
+	}));
+	stream_simple(&model, &context, Some(options)).unwrap().result().await;
+	captured.borrow_mut().take().expect("payload captured")
+}
 
 mod baseten_models {
 	use super::*;
@@ -21,6 +46,26 @@ mod baseten_models {
 				"{id}"
 			);
 		}
+	}
+
+	#[test]
+	fn sends_baseten_chat_template_args_with_reasoning_effort() {
+		pi_host::testing::run(|_| async {
+			let payload = capture_payload(Some(ThinkingLevel::High)).await;
+
+			assert_eq!(payload["chat_template_args"], json!({ "enable_thinking": true }));
+			assert_eq!(payload["reasoning_effort"], "high");
+		});
+	}
+
+	#[test]
+	fn disables_baseten_opt_in_reasoning_when_thinking_is_off() {
+		pi_host::testing::run(|_| async {
+			let payload = capture_payload(None).await;
+
+			assert_eq!(payload["chat_template_args"], json!({ "enable_thinking": false }));
+			assert_eq!(payload["reasoning_effort"], "none");
+		});
 	}
 
 	#[test]

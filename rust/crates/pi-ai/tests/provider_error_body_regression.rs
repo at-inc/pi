@@ -1,8 +1,8 @@
-//! Port of `packages/ai/test/provider-error-body-regression.test.ts`: the openai-responses and Bedrock cases.
+//! Port of `packages/ai/test/provider-error-body-regression.test.ts`.
 //!
 //! `vi.mock("openai")` threw an `APIError(403)` carrying the parsed body; here the test host answers the request with
-//! that 403 and body, and the real client builds the error. The openai-completions cases (w3-openai-completions) move
-//! with that adapter, which is still `PORT-STATUS: pending` here.
+//! that 403 and body, and the real client builds the error. The SDK's `APIError.error` is the body's `error` field, so
+//! the openai-completions cases answer with `{ "error": parsedBody }`.
 //!
 //! The Bedrock cases mock `BedrockRuntimeClient.send()` to reject with a hand-built error. The port answers at the
 //! HTTP level and lets `api::bedrock_client` build the error, so the assertions follow what the real SDK
@@ -21,6 +21,7 @@ mod openai_responses_support;
 
 use openai_responses_support::{context, json_response, model, responses_options};
 use pi_ai::api::bedrock_converse_stream::stream_simple as stream_simple_bedrock;
+use pi_ai::api::openai_completions::{OpenAICompletionsOptions, stream as stream_open_ai_completions};
 use pi_ai::api::openai_responses::stream as stream_open_ai_responses;
 use pi_ai::types::StopReason;
 use pi_host::testing::TestHost;
@@ -29,6 +30,95 @@ use serde_json::json;
 
 mod provider_error_body_passthrough_per_tier_regression {
 	use super::*;
+
+	/// `completionsModel`.
+	fn completions_model() -> pi_ai::types::Model {
+		model(json!({
+			"id": "test-model",
+			"name": "Test Model",
+			"api": "openai-completions",
+			"provider": "openrouter",
+			"baseUrl": "https://openrouter.ai/api/v1",
+			"reasoning": false,
+			"input": ["text"],
+			"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+			"contextWindow": 1000,
+			"maxTokens": 100,
+		}))
+	}
+
+	/// `drainResult(streamOpenAICompletions(completionsModel, context, { apiKey: "test" }))` against a 403 whose
+	/// `error` field is `parsed_body`.
+	async fn drain_completions(host: &TestHost, parsed_body: serde_json::Value) -> pi_ai::types::AssistantMessage {
+		let body = json!({ "error": parsed_body });
+		host.on_fetch(move |_| {
+			let response = json_response(403, &body);
+			Box::pin(async move { Ok(response) })
+		});
+		let options = OpenAICompletionsOptions {
+			base: pi_ai::types::StreamOptions {
+				base: pi_ai::types::ProviderRequestOptions {
+					api_key: Some("test".into()),
+					..Default::default()
+				},
+				..Default::default()
+			},
+			..OpenAICompletionsOptions::default()
+		};
+		let stream = stream_open_ai_completions(&completions_model(), &regression_context(), Some(options));
+		while stream.next().await.is_some() {}
+		stream.result().await.expect("stream has a result")
+	}
+
+	fn regression_context() -> pi_ai::types::TranscriptContext {
+		context(json!({
+			"systemPrompt": "",
+			"messages": [{ "role": "user", "content": [{ "type": "text", "text": "hi" }], "timestamp": 0 }],
+			"tools": [],
+		}))
+	}
+
+	#[test]
+	fn openai_completions_body_blind_text_surfaces_status_body() {
+		run(|host| async move {
+			let output = drain_completions(&host, json!({ "error": "blocked by gateway WAF" })).await;
+
+			assert_eq!(output.stop_reason, StopReason::Error);
+			let error_message = output.error_message.unwrap_or_default();
+			assert!(error_message.contains("403"), "{error_message}");
+			assert!(error_message.contains("blocked by gateway WAF"), "{error_message}");
+			assert_ne!(error_message, "403 status code (no body)");
+		});
+	}
+
+	#[test]
+	fn openai_completions_does_not_double_print_the_open_router_metadata_raw_extra() {
+		run(|host| async move {
+			// OpenRouter returns the extra reason under error.error.metadata.raw, which
+			// is part of the parsed body normalizeProviderError already surfaces. The
+			// manual append must not duplicate it.
+			let output = drain_completions(
+				&host,
+				json!({
+					"message": "Provider returned error",
+					"code": 403,
+					"metadata": { "raw": "upstream WAF blocked policy XYZ" },
+				}),
+			)
+			.await;
+
+			let error_message = output.error_message.unwrap_or_default();
+			assert!(
+				error_message.contains("upstream WAF blocked policy XYZ"),
+				"{error_message}"
+			);
+			assert_eq!(
+				error_message.matches("upstream WAF blocked policy XYZ").count(),
+				1,
+				"{error_message}"
+			);
+		});
+	}
 
 	#[test]
 	fn openai_responses_status_only_keeps_the_prefix_and_surfaces_the_body() {
