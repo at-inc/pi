@@ -1,9 +1,6 @@
 //! Port of `packages/ai/test/telemetry.test.ts`.
 //!
 //! Differences from the TS:
-//! - Every test that sends a request through `Models` with provider auth (each `setup()` test and "defaults to no-op
-//!   telemetry") is `#[ignore = "needs w2-ai-auth: resolve_provider_auth"]`: `Models` resolves auth through the stub
-//!   on this branch. They pass against the auth branch.
 //! - `it.each` cases are one test fn each.
 //! - Event identity (`toBe`) is `Rc::ptr_eq` on the shared message each event carries. Result identity is equality
 //!   without `duration_ms` (`unstamped`): `result()` returns a copy, and the event stream stamps `durationMs` on that
@@ -595,19 +592,16 @@ mod ai_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn observes_stream_without_changing_delivered_events_or_results() {
 		observes_without_changing_delivered_events_or_results(Method::Stream);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn observes_stream_simple_without_changing_delivered_events_or_results() {
 		observes_without_changing_delivered_events_or_results(Method::StreamSimple);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn observes_stream_deferred_without_changing_delivered_events_or_results() {
 		observes_without_changing_delivered_events_or_results(Method::StreamDeferred);
 	}
@@ -661,13 +655,11 @@ mod ai_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn reports_error_status_without_error_attributes_or_events() {
 		reports_status_without_error_attributes_or_events(StopReason::Error);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn reports_aborted_status_without_error_attributes_or_events() {
 		reports_status_without_error_attributes_or_events(StopReason::Aborted);
 	}
@@ -705,20 +697,17 @@ mod ai_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn bounds_poll_error_messages_including_missing_messages_missing_false() {
 		bounds_poll_error_messages(false);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn bounds_poll_error_messages_including_missing_messages_missing_true() {
 		bounds_poll_error_messages(true);
 	}
 
 	// #9265
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn keeps_a_bounded_error_message_that_does_not_hold_the_providers_whole_message_alive() {
 		run(|_| async {
 			let telemetry = InMemoryTelemetryContext::new();
@@ -838,7 +827,6 @@ mod ai_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn supports_a_tracing_only_span_without_metric_capabilities() {
 		run(|_| async {
 			let adapter = InMemoryTelemetryContext::new();
@@ -859,7 +847,6 @@ mod ai_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn defaults_to_no_op_telemetry() {
 		run(|_| async {
 			let Setup { models, .. } = setup(message(StopReason::Stop));
@@ -971,31 +958,26 @@ mod ai_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn records_usage_for_a_pending_poll_only_when_final() {
 		records_usage_for_a_poll_only_when_final(StopReason::Pending);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn records_usage_for_a_deferred_poll_only_when_final() {
 		records_usage_for_a_poll_only_when_final(StopReason::Deferred);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn records_usage_for_a_stop_poll_only_when_final() {
 		records_usage_for_a_poll_only_when_final(StopReason::Stop);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn records_usage_for_a_error_poll_only_when_final() {
 		records_usage_for_a_poll_only_when_final(StopReason::Error);
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn creates_instruments_once_per_metrics_object_across_root_and_child_requests() {
 		run(|_| async {
 			let telemetry = InMemoryTelemetryContext::new();

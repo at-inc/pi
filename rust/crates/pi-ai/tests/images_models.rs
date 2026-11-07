@@ -1,13 +1,6 @@
 //! Port of `packages/ai/test/images-models.test.ts`.
 //!
 //! Differences from the TS:
-//! - Every test that resolves provider auth (`getAuth`, `getAvailable*`, `refresh`, `generateImages` past the provider
-//!   lookup) is `#[ignore = "needs w2-ai-auth: ..."]`: `Models` resolves auth through the `resolve_provider_auth` stub
-//!   on this branch, and `getAvailable*` and `refresh` read the default `InMemoryCredentialStore` stub first. They
-//!   pass against the auth branch.
-//! - "keeps existing built-in and compat model reads chat-only" does not check `getModels` from `compat.ts`
-//!   (`expect(compat).toEqual(chat)`): `compat.rs` belongs to another shard and is still pending. The rest of the test
-//!   runs against `get_builtin_models`.
 //! - The `as unknown as ImageModel` and `as unknown as Model` casts are models of the other struct whose `type` is the
 //!   original model's: an `ImageModel` with `type: "chat"`, and a `Model` with `type: "image"`.
 //! - `hasApi` returns the chat model or `None` instead of a type-guard boolean.
@@ -21,6 +14,7 @@ use std::rc::Rc;
 use indexmap::{IndexMap, IndexSet};
 use pi_ai::auth::resolve::AuthResolutionOverrides;
 use pi_ai::auth::types::{ApiKeyAuth, AuthContext, AuthResult, ModelAuth, ProviderAuth};
+use pi_ai::compat::get_models as get_compat_models;
 use pi_ai::models::{
 	CreateModelsOptions, CreateProviderOptions, GetAuthTarget, Models, ModelsImagesOptions, ModelsRefreshOptions,
 	Provider, ProviderApi, create_models, create_provider, get_model_type, has_api, is_model_type,
@@ -345,7 +339,6 @@ mod models_with_image_models {
 	use super::*;
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn lists_models_without_a_type_as_chat_models_at_create_provider_boundaries() {
 		run(|_| async {
 			let api: Rc<dyn ProviderStreams> = Rc::new(EmptyStreams);
@@ -459,7 +452,6 @@ mod models_with_image_models {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn splits_available_models_by_type() {
 		run(|_| async {
 			let models = create_models(Some(CreateModelsOptions {
@@ -508,7 +500,6 @@ mod models_with_image_models {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn resolves_auth_through_the_provider_and_merges_it_into_image_requests_explicit_options_win() {
 		run(|_| async {
 			let calls: Calls = Rc::default();
@@ -575,7 +566,6 @@ mod models_with_image_models {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn merges_provider_resolved_env_and_applies_header_transforms() {
 		run(|_| async {
 			let calls: Calls = Rc::default();
@@ -660,7 +650,6 @@ mod models_with_image_models {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn returns_error_results_instead_of_rejecting() {
 		run(|_| async {
 			let models = create_models(Some(CreateModelsOptions {
@@ -759,7 +748,6 @@ mod models_with_image_models {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn builtin_models_registers_the_built_in_image_providers() {
 		run(|_| async {
 			let models = builtin_models(Some(CreateModelsOptions {
@@ -888,7 +876,6 @@ mod models_with_image_models {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: InMemoryCredentialStore, resolve_provider_auth"]
 	fn supports_dynamic_providers_listing_image_models_via_refresh() {
 		run(|_| async {
 			let fetches = Rc::new(Cell::new(0));
@@ -944,10 +931,12 @@ mod models_with_image_models {
 		let chat = get_builtin_models("openrouter");
 		let images = get_builtin_image_models("openrouter");
 		let all = get_all_builtin_models("openrouter");
+		let compat = get_compat_models("openrouter");
 
 		assert!(chat.iter().all(|model| is_model_type(model, ModelType::Chat)));
 		assert!(images.iter().all(|model| is_model_type(model, ModelType::Image)));
 		assert!(all.iter().any(|model| is_model_type(model, ModelType::Image)));
+		assert_eq!(compat, chat);
 		assert!(chat.iter().all(|model| model.context_window > 0.0));
 		assert_eq!(
 			chat.len() + images.len() + get_builtin_classifier_models("openrouter").len(),
@@ -960,7 +949,6 @@ mod models_with_image_models {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn builtin_models_exposes_openrouter_image_models_under_the_openrouter_provider() {
 		run(|_| async {
 			let models = builtin_models(Some(CreateModelsOptions {

@@ -1,8 +1,7 @@
 //! Port of `packages/ai/test/compat-env.test.ts`.
 //!
-//! Waits for the PORT-STUBs behind `compat/mod.rs`: the builtin API wrappers (`api/*_lazy.rs`, w3 shards), which
-//! `resetApiProviders()` registers, and `utils/transcript.rs` and `providers/all.rs` (w2-ai-core), which `complete()`
-//! calls.
+//! `afterEach(() => resetApiProviders())` is the `ResetApiProviders` drop guard, which re-registers the builtin lazy
+//! API wrappers.
 
 use std::cell::RefCell;
 use std::rc::Rc;

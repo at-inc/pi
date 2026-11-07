@@ -1,9 +1,6 @@
 //! Port of `packages/ai/test/telemetry-options.test.ts`.
 //!
 //! Differences from the TS:
-//! - "survives provider and Models stream/deferred dispatch" and "survives direct and Models image dispatch" are
-//!   `#[ignore = "needs w2-ai-auth: resolve_provider_auth"]`: their `Models` half resolves auth through the stub on
-//!   this branch. They pass against the auth branch.
 //! - The `@ts-expect-error` check that `telemetryContext` no longer exists is not ported: it is a compile-time check,
 //!   and `ProviderRequestOptions` has no such field by construction.
 //! - Span identity (`toBe`) is address equality of the `Rc<dyn TelemetrySpan>`.
@@ -292,7 +289,6 @@ mod provider_request_options_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn survives_provider_and_models_stream_deferred_dispatch() {
 		run(|_| async {
 			let observed: Observed = Rc::default();
@@ -371,7 +367,6 @@ mod provider_request_options_telemetry {
 	}
 
 	#[test]
-	#[ignore = "needs w2-ai-auth: resolve_provider_auth"]
 	fn survives_direct_and_models_image_dispatch() {
 		run(|_| async {
 			let observed: Observed = Rc::default();

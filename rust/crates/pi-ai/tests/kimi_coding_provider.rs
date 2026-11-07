@@ -1,17 +1,22 @@
 //! Port of `packages/ai/test/kimi-coding-provider.test.ts`.
 //!
-//! Not ported: the `completeSimple` request at the end of `persists the %s region with an API key`. It
-//! dispatches through the openai-completions API (wave-3, `w3-openai-completions`), so it moves with that API.
-//! `vi.stubEnv(name, "")` is the empty `TestHost` environment. `it.each` cases run in a loop.
+//! The `fetch` option of the `completeSimple` request records each request's URL and `authorization` header; the
+//! recorded list stands in for the in-handler `expect`s and `toHaveBeenCalledOnce`. `vi.stubEnv(name, "")` is the empty `TestHost` environment. `it.each` cases run in a loop.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use indexmap::IndexMap;
 use pi_ai::auth::resolve::AuthResolutionOverrides;
 use pi_ai::auth::types::{ApiKeyCredential, AuthInteraction, AuthPromptKind, AuthResult, AuthType, Credential};
-use pi_ai::models::{GetAuthTarget, MutableModels, create_models};
+use pi_ai::models::{GetAuthTarget, ModelsSimpleStreamOptions, MutableModels, create_models};
 use pi_ai::providers::kimi_coding::kimi_coding_provider;
-use pi_ai::types::ProviderEnv;
+use pi_ai::types::{Context, ProviderEnv, ProviderRequestOptions, SimpleStreamOptions, StopReason, StreamOptions};
+use pi_host::{FetchFunction, HttpResponse};
+use serde_json::json;
+
+/// The url and `authorization` header of each request the fetch received.
+type Requests = Rc<RefCell<Vec<(String, Option<String>)>>>;
 
 fn kimi_models() -> Rc<dyn MutableModels> {
 	let models = create_models(None);
@@ -39,7 +44,6 @@ mod kimi_code_api_key_regions {
 
 	// #10720
 	#[test]
-	#[ignore = "PORT-STUB: envApiKeyAuth login and InMemoryCredentialStore (auth/helpers.ts, auth/credential-store.ts, w2-ai-auth)"]
 	fn persists_the_region_with_an_api_key() {
 		for (region, domain) in [("global", "ai"), ("mainland-cn", "com")] {
 			pi_host::testing::run(|host| async move {
@@ -102,12 +106,55 @@ mod kimi_code_api_key_regions {
 				let auth = get_auth(models.as_ref(), None).await.unwrap().auth;
 				assert_eq!(auth.api_key.as_deref(), Some("test-key"));
 				assert_eq!(auth.base_url, Some(format!("https://api.kimi.{domain}/coding/v1")));
+				let requests: Requests = Rc::default();
+				let recorder = requests.clone();
+				let request: FetchFunction = Rc::new(move |request| {
+					recorder
+						.borrow_mut()
+						.push((request.url.clone(), request.header("authorization").map(str::to_string)));
+					Box::pin(async {
+						Ok(HttpResponse::from_bytes(
+							200,
+							IndexMap::from([("content-type".to_string(), "text/event-stream".to_string())]),
+							"data: {\"id\":\"chat_test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+						))
+					})
+				});
+				let context: Context = serde_json::from_value(json!({
+					"messages": [{ "role": "user", "content": "Hello", "timestamp": 0 }],
+				}))
+				.unwrap();
+				let result = models
+					.complete_simple(
+						&models.get_model("kimi-coding", "kimi-for-coding").unwrap(),
+						&context,
+						Some(ModelsSimpleStreamOptions::from(SimpleStreamOptions {
+							base: StreamOptions {
+								base: ProviderRequestOptions {
+									fetch: Some(request),
+									..ProviderRequestOptions::default()
+								},
+								..StreamOptions::default()
+							},
+							..SimpleStreamOptions::default()
+						})),
+					)
+					.await
+					.unwrap();
+				assert_eq!(result.stop_reason, StopReason::Stop);
+				assert_eq!(result.error_message, None);
+				assert_eq!(
+					*requests.borrow(),
+					[(
+						format!("https://api.kimi.{domain}/coding/v1/chat/completions"),
+						Some("Bearer test-key".to_string())
+					)]
+				);
 			});
 		}
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore and resolveAuth (auth/credential-store.ts, auth/resolve.ts, w2-ai-auth)"]
 	fn resolves_international_endpoints_from_scoped_configuration() {
 		for (name, value) in [
 			("KIMI_CODE_BASE_URL", "https://api.kimi.ai/coding"),
@@ -133,7 +180,6 @@ mod kimi_code_api_key_regions {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore and resolveAuth (auth/credential-store.ts, auth/resolve.ts, w2-ai-auth)"]
 	fn resolves_an_ambient_api_key_and_custom_endpoint() {
 		pi_host::testing::run(|host| async move {
 			host.set_env("KIMI_API_KEY", "env-key");
@@ -146,7 +192,6 @@ mod kimi_code_api_key_regions {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore and resolveAuth (auth/credential-store.ts, auth/resolve.ts, w2-ai-auth)"]
 	fn preserves_the_model_endpoint_when_no_regional_override_is_configured() {
 		pi_host::testing::run(|_| async move {
 			let models = kimi_models();

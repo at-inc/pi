@@ -118,7 +118,6 @@ mod radius_provider_catalogs {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore (auth/credential-store.ts, w2-ai-auth)"]
 	fn replaces_the_static_public_catalog_with_refreshed_models() {
 		pi_host::testing::run(|host| async move {
 			let body: &'static str = Box::leak(serde_json::to_string(&radius_config()).unwrap().into_boxed_str());
@@ -139,7 +138,6 @@ mod radius_provider_catalogs {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore, the default store of create_models (auth/credential-store.ts, w2-ai-auth)"]
 	fn replaces_the_static_public_catalog_with_a_cached_catalog_without_network_access() {
 		pi_host::testing::run(|host| async move {
 			let store = Rc::new(InMemoryModelsStore::new());
@@ -174,7 +172,6 @@ mod radius_provider_catalogs {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: InMemoryCredentialStore (auth/credential-store.ts, w2-ai-auth)"]
 	fn exposes_no_models_when_the_organization_disabled_all_of_them() {
 		pi_host::testing::run(|host| async move {
 			host.respond_with(

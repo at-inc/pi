@@ -1,18 +1,19 @@
 //! Port of `packages/ai/test/xai-responses.test.ts`.
 //!
-//! Not ported: "uses pi's User-Agent by default for Completions requests" and "lets explicit headers override the
-//! default Completions User-Agent", which stream through `api::openai_completions` (w3-openai-completions, still
-//! `PORT-STATUS: pending` on this branch). The `globalThis.fetch` spy is the test host's fetch.
+//! The `globalThis.fetch` spy is the test host's fetch.
 
+mod openai_completions_support;
 mod openai_responses_support;
 
+use openai_completions_support::{model as completions_model, serve_chunks};
 use openai_responses_support::{assert_match_object, context, response, responses_options, sse_body, with};
+use pi_ai::api::openai_completions::{OpenAICompletionsOptions, stream as stream_open_ai_completions};
 use pi_ai::api::openai_responses::stream as stream_open_ai_responses;
 use pi_ai::models::get_supported_thinking_levels;
 use pi_ai::providers::model_schema::ModelThinkingLevel;
 use pi_ai::providers::xai::xai_provider;
 use pi_ai::providers::xai_models::XAI_MODELS;
-use pi_ai::types::{Model, ProviderStreamOptions, StopReason};
+use pi_ai::types::{Model, ProviderRequestOptions, ProviderStreamOptions, StopReason, StreamOptions};
 use pi_ai::utils::identity::format_user_agent;
 use pi_host::testing::{RecordedRequest, TestHost, run};
 use serde_json::{Map, Value, json};
@@ -49,6 +50,56 @@ fn respond_completed(host: &TestHost) {
 			))
 		})
 	});
+}
+
+/// `customCompletionsModel`.
+fn custom_completions_model() -> Model {
+	let mut model = completions_model("grok-custom", "xai", "https://api.x.ai/v1");
+	model.name = "Grok Custom".into();
+	model.max_tokens = 16384.0;
+	model
+}
+
+/// `captureCompletionsUserAgent(headers)`: the `user-agent` of the Completions request.
+async fn capture_completions_user_agent(host: &TestHost, headers: Option<Value>) -> Option<String> {
+	serve_chunks(
+		host,
+		vec![
+			json!({ "id": "chatcmpl-ua", "choices": [{ "delta": { "content": "ok" }, "finish_reason": null, "index": 0 }] }),
+			json!({
+				"id": "chatcmpl-ua",
+				"choices": [{ "delta": {}, "finish_reason": "stop", "index": 0 }],
+				"usage": {
+					"prompt_tokens": 1,
+					"completion_tokens": 1,
+					"prompt_tokens_details": { "cached_tokens": 0 },
+					"completion_tokens_details": { "reasoning_tokens": 0 },
+				},
+			}),
+		],
+	);
+	let options = OpenAICompletionsOptions {
+		base: StreamOptions {
+			base: ProviderRequestOptions {
+				api_key: Some("xai-test-token".into()),
+				headers: headers.map(|headers| serde_json::from_value(headers).expect("headers")),
+				..ProviderRequestOptions::default()
+			},
+			..StreamOptions::default()
+		},
+		..OpenAICompletionsOptions::default()
+	};
+	let result = stream_open_ai_completions(
+		&custom_completions_model(),
+		&context(json!({ "messages": [{ "role": "user", "content": "hello", "timestamp": 1 }] })),
+		Some(options),
+	)
+	.result()
+	.await
+	.expect("stream has a result");
+
+	assert_eq!(result.stop_reason, StopReason::Stop, "{:?}", result.error_message);
+	host.requests()[0].header("user-agent").map(str::to_string)
 }
 
 fn xai_model(id: &str) -> Model {
@@ -301,6 +352,26 @@ mod x_ai_responses_provider {
 			.await;
 
 			assert_eq!(captured.header("user-agent"), Some("custom-agent"));
+		});
+	}
+
+	#[test]
+	fn uses_pi_s_user_agent_by_default_for_completions_requests() {
+		run(|host| async move {
+			assert_eq!(
+				capture_completions_user_agent(&host, None).await,
+				Some(format_user_agent(None))
+			);
+		});
+	}
+
+	#[test]
+	fn lets_explicit_headers_override_the_default_completions_user_agent() {
+		run(|host| async move {
+			assert_eq!(
+				capture_completions_user_agent(&host, Some(json!({ "User-Agent": "custom-agent" }))).await,
+				Some("custom-agent".to_string())
+			);
 		});
 	}
 }

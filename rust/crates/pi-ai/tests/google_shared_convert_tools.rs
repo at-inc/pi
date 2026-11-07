@@ -135,7 +135,7 @@ mod google_shared_convert_tools {
 	fn uses_validated_function_calling_for_strict_tools_on_gemini_3() {
 		let mut tool = make_tool(json!({ "type": "object", "properties": {} }));
 		tool.constrained_sampling = Some(ToolConstrainedSampling::Config(ConstrainedSamplingConfig::JsonSchema {
-			strict: ConstrainedSamplingStrictness::Require,
+			strict: Some(ConstrainedSamplingStrictness::Require),
 		}));
 
 		assert!(supports_google_strict_tool_sampling("gemini-3.1-pro-preview"));

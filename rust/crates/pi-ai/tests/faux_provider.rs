@@ -1,24 +1,20 @@
 //! Port of `packages/ai/test/faux-provider.test.ts`.
 //!
-//! The TS suite drives the faux core through compat's `registerFauxProvider`, `stream` and `complete`
-//! (`compat.ts`, still pending in w2-ai-auth). Those three are test doubles here with compat's behavior for a faux
-//! model: a registry keyed by api, `normalizeContext`, then the core's `stream`; an unregistered api throws
-//! `No API provider registered for api: ...`. Compat's env API key injection finds no key for the faux provider, so
-//! the doubles skip it. Each test thread has its own registry and every registration gets a random api, so the
-//! `afterEach` unregister loop is not needed.
+//! The suite drives the faux core through `compat::{register_faux_provider, stream, complete}`, like the TS. The local
+//! `complete` only unwraps compat's `Option` result. Every registration gets a random api, so the `afterEach`
+//! unregister loop is not needed.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
+use pi_ai::compat::{self, register_faux_provider, stream};
 use pi_ai::providers::faux::{
-	FauxAssistantMessageOptions, FauxCore, FauxModelDefinition, FauxProviderRegistration, FauxResponseStep,
-	FauxTokenSize, FauxToolCallOptions, RegisterFauxProviderOptions, create_faux_core, faux_assistant_message,
-	faux_text, faux_thinking, faux_tool_call,
+	FauxAssistantMessageOptions, FauxModelDefinition, FauxProviderRegistration, FauxResponseStep, FauxTokenSize,
+	FauxToolCallOptions, RegisterFauxProviderOptions, faux_assistant_message, faux_text, faux_thinking, faux_tool_call,
 };
 use pi_ai::types::{
 	AssistantContent, AssistantMessage, AssistantMessageEvent, CacheRetention, Context, ImageContent, JsonObject,
-	Message, Model, ProviderRequestOptions, SimpleStreamOptions, StopReason, StreamOptions, TextContent,
+	Message, Model, ProviderRequestOptions, ProviderStreamOptions, StopReason, StreamOptions, TextContent,
 	ThinkingContent, Tool, ToolCall, ToolResultMessage, UserContent, UserMessage, UserMessageContent,
 };
 use pi_ai::utils::event_stream::AssistantMessageEventStream;
@@ -27,56 +23,15 @@ use pi_host::js::utf16_len;
 use pi_host::{AbortController, PiError, PiResult};
 use serde_json::{Value, json};
 
-thread_local! {
-	static API_PROVIDERS: RefCell<IndexMap<String, (FauxCore, String)>> = RefCell::new(IndexMap::new());
-	static NEXT_SOURCE_ID: RefCell<u64> = const { RefCell::new(0) };
-}
-
-/// Compat's `registerFauxProvider(options)`.
-fn register_faux_provider(options: Option<RegisterFauxProviderOptions>) -> FauxProviderRegistration {
-	let core = create_faux_core(options.unwrap_or_default());
-	let source_id = NEXT_SOURCE_ID.with(|next| {
-		*next.borrow_mut() += 1;
-		format!("faux-provider-{}", next.borrow())
-	});
-	API_PROVIDERS.with(|providers| {
-		providers
-			.borrow_mut()
-			.insert(core.api.clone(), (core.clone(), source_id.clone()))
-	});
-	FauxProviderRegistration {
-		core,
-		unregister: Rc::new(move || {
-			API_PROVIDERS.with(|providers| providers.borrow_mut().retain(|_, (_, source)| *source != source_id));
-		}),
-	}
-}
-
-/// Compat's `stream(model, context, options)` for a faux model.
-fn stream(
-	model: &Model,
-	context: &Context,
-	options: Option<SimpleStreamOptions>,
-) -> PiResult<AssistantMessageEventStream> {
-	let transcript = normalize_context(context);
-	let provider = API_PROVIDERS.with(|providers| providers.borrow().get(&*model.api).map(|(core, _)| core.clone()));
-	let Some(provider) = provider else {
-		return Err(PiError::new(format!(
-			"No API provider registered for api: {}",
-			model.api
-		)));
-	};
-	Ok(provider.stream(model, &transcript, options))
-}
-
-/// Compat's `complete(model, context, options)`.
+/// Compat's `complete(model, context, options)`; a faux stream always ends with a message.
 async fn complete(
 	model: &Model,
 	context: &Context,
-	options: Option<SimpleStreamOptions>,
+	options: Option<ProviderStreamOptions>,
 ) -> PiResult<AssistantMessage> {
-	let stream = stream(model, context, options)?;
-	Ok(stream.result().await.expect("the faux stream ends with a message"))
+	Ok(compat::complete(model, context, options)
+		.await?
+		.expect("the faux stream ends with a message"))
 }
 
 async fn collect_events(stream: AssistantMessageEventStream) -> Vec<AssistantMessageEvent> {
@@ -127,14 +82,14 @@ fn text(text: &str) -> AssistantContent {
 	AssistantContent::Text(faux_text(text))
 }
 
-fn session(session_id: &str, cache_retention: CacheRetention) -> Option<SimpleStreamOptions> {
-	Some(SimpleStreamOptions {
+fn session(session_id: &str, cache_retention: CacheRetention) -> Option<ProviderStreamOptions> {
+	Some(ProviderStreamOptions {
 		base: StreamOptions {
 			session_id: Some(session_id.to_string()),
 			cache_retention: Some(cache_retention),
 			..StreamOptions::default()
 		},
-		..SimpleStreamOptions::default()
+		..ProviderStreamOptions::default()
 	})
 }
 
@@ -160,8 +115,8 @@ fn fixed_token_size(size: f64) -> FauxTokenSize {
 	}
 }
 
-fn with_signal(controller: &AbortController) -> Option<SimpleStreamOptions> {
-	Some(SimpleStreamOptions {
+fn with_signal(controller: &AbortController) -> Option<ProviderStreamOptions> {
+	Some(ProviderStreamOptions {
 		base: StreamOptions {
 			base: ProviderRequestOptions {
 				signal: Some(controller.signal()),
@@ -169,7 +124,7 @@ fn with_signal(controller: &AbortController) -> Option<SimpleStreamOptions> {
 			},
 			..StreamOptions::default()
 		},
-		..SimpleStreamOptions::default()
+		..ProviderStreamOptions::default()
 	})
 }
 

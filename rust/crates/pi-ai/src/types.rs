@@ -1247,7 +1247,11 @@ pub type GrammarVariants = IndexMap<GrammarFormat, String>;
 #[serde(tag = "type")]
 pub enum ConstrainedSamplingConfig {
 	#[serde(rename = "json_schema")]
-	JsonSchema { strict: ConstrainedSamplingStrictness },
+	/// `strict` is optional at runtime: a config without it is neither "prefer" nor "require".
+	JsonSchema {
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		strict: Option<ConstrainedSamplingStrictness>,
+	},
 	#[serde(rename = "grammar")]
 	Grammar { variants: GrammarVariants },
 }

@@ -1,14 +1,57 @@
 //! Port of `packages/ai/test/qwen-token-plan-models.test.ts`.
 //!
-//! `getModels` (compat.ts) is `get_builtin_models`. Not ported: `sends Qwen thinking fields for $provider/$modelId`,
-//! `sends Qwen reasoning_effort for $provider/$modelId` and `sends qwen3.8 xhigh reasoning_effort for
-//! $provider/$modelId`. They capture the request through `streamSimple` on the openai-completions API (wave-3,
-//! `w3-openai-completions`) with the `openai` SDK mocked. `it.each` cases run in a loop.
+//! `getModels` (compat.ts) is `get_builtin_models`. `it.each` cases run in a loop. `vi.mock("openai")`'s
+//! `create()` stream is the test host answering every request with the same chunk as an SSE stream.
 
+mod openai_completions_support;
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use openai_completions_support::serve_chunks;
+use pi_ai::compat::stream_simple;
 use pi_ai::env_api_keys::find_env_keys;
 use pi_ai::providers::all::get_builtin_models;
-use pi_ai::types::{Model, ProviderEnv};
+use pi_ai::types::{Context, Model, ProviderEnv, SimpleStreamOptions, ThinkingLevel};
 use serde_json::{Value, json};
+
+/// `streamSimple(model, { messages: [Hi] }, { apiKey: "test", reasoning, onPayload })` against the mocked SDK: the
+/// payload `onPayload` saw.
+fn capture_payload(model: &Model, reasoning: ThinkingLevel) -> Value {
+	pi_host::testing::run(|host| {
+		serve_chunks(
+			&host,
+			vec![json!({
+				"choices": [{ "delta": {}, "finish_reason": "stop" }],
+				"usage": {
+					"prompt_tokens": 1,
+					"completion_tokens": 1,
+					"prompt_tokens_details": { "cached_tokens": 0 },
+					"completion_tokens_details": { "reasoning_tokens": 0 },
+				},
+			})],
+		);
+		async move {
+			let context: Context = serde_json::from_value(json!({
+				"messages": [{ "role": "user", "content": "Hi", "timestamp": pi_host::now_ms() }],
+			}))
+			.unwrap();
+			let captured: Rc<RefCell<Option<Value>>> = Rc::default();
+			let recorder = captured.clone();
+			let mut options = SimpleStreamOptions {
+				reasoning: Some(reasoning),
+				..SimpleStreamOptions::default()
+			};
+			options.api_key = Some("test".into());
+			options.on_payload = Some(Rc::new(move |payload, _| {
+				*recorder.borrow_mut() = Some(payload);
+				Box::pin(async { Ok(None) })
+			}));
+			stream_simple(model, &context, Some(options)).unwrap().result().await;
+			captured.borrow_mut().take().expect("payload captured")
+		}
+	})
+}
 
 /// `expect(actual).toMatchObject(expected)` for JSON values; numbers compare as `f64`, like JS numbers.
 fn assert_match_object(actual: &Value, expected: &Value) {
@@ -66,6 +109,33 @@ const IMAGE_MODELS: [&str; 4] = [
 	"wan2.7-image",
 	"wan2.7-image-pro",
 ];
+
+const QWEN_THINKING_MODELS: [&str; 15] = [
+	"deepseek-v3.2",
+	"deepseek-v4-flash",
+	"deepseek-v4-pro",
+	"glm-5",
+	"glm-5.1",
+	"glm-5.2",
+	"kimi-k2.5",
+	"kimi-k2.6",
+	"kimi-k2.7-code",
+	"qwen3.6-flash",
+	"qwen3.6-plus",
+	"qwen3.7-max",
+	"qwen3.7-plus",
+	"qwen3.8-flash",
+	"qwen3.8-max",
+];
+
+fn qwen_thinking_model_cases() -> Vec<(&'static str, &'static str)> {
+	let mut cases: Vec<_> = ["qwen-token-plan", "qwen-token-plan-cn"]
+		.into_iter()
+		.flat_map(|provider| QWEN_THINKING_MODELS.map(|model_id| (provider, model_id)))
+		.collect();
+	cases.extend(INDIVIDUAL_TEXT_MODELS.map(|model_id| ("qwen-token-plan-individual", model_id)));
+	cases
+}
 
 const QWEN_REASONING_EFFORT_MODELS: [&str; 5] = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"];
 const QWEN38_MODELS: [&str; 2] = ["qwen3.8-flash", "qwen3.8-max"];
@@ -159,6 +229,21 @@ mod qwen_token_plan_models {
 		}
 	}
 
+	// docs: https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api&commonbuy=1#/api/?type=model&url=3016807
+	#[test]
+	fn sends_qwen_thinking_fields() {
+		for (provider, model_id) in qwen_thinking_model_cases() {
+			let payload = capture_payload(&find_model(provider, model_id), ThinkingLevel::High);
+
+			assert_eq!(
+				payload.get("enable_thinking"),
+				Some(&json!(true)),
+				"{provider}/{model_id}"
+			);
+			assert!(payload.get("thinking").is_none(), "{provider}/{model_id}");
+		}
+	}
+
 	#[test]
 	fn exposes_qwen_reasoning_effort_levels() {
 		for (provider, model_id) in qwen_reasoning_effort_model_cases() {
@@ -186,6 +271,38 @@ mod qwen_token_plan_models {
 				!model_ids(provider).iter().any(|id| id == "qwen3.8-max-preview"),
 				"{provider}"
 			);
+		}
+	}
+
+	#[test]
+	fn sends_qwen_reasoning_effort() {
+		for (provider, model_id) in qwen_reasoning_effort_model_cases() {
+			let payload = capture_payload(&find_model(provider, model_id), ThinkingLevel::High);
+
+			assert_eq!(
+				payload.get("reasoning_effort"),
+				Some(&json!("high")),
+				"{provider}/{model_id}"
+			);
+		}
+	}
+
+	#[test]
+	fn sends_qwen3_8_xhigh_reasoning_effort() {
+		for (provider, model_id) in qwen38_model_cases() {
+			let payload = capture_payload(&find_model(provider, model_id), ThinkingLevel::Xhigh);
+
+			assert_eq!(
+				payload.get("enable_thinking"),
+				Some(&json!(true)),
+				"{provider}/{model_id}"
+			);
+			assert_eq!(
+				payload.get("reasoning_effort"),
+				Some(&json!("xhigh")),
+				"{provider}/{model_id}"
+			);
+			assert!(payload.get("thinking").is_none(), "{provider}/{model_id}");
 		}
 	}
 }
