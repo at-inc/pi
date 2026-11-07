@@ -717,3 +717,40 @@ mod llama_cpp_classifier {
 		);
 	}
 }
+
+mod request_order {
+	use super::*;
+
+	/// Rust-only: the TS sends every label tokenize before the template request, as its async calls start in order.
+	#[test]
+	fn sends_label_tokenizes_before_the_template_request() {
+		run(|_| async {
+			let server = fake_server(FakeServerOptions::default());
+			let mut request_options = options(server.fetch.clone());
+			request_options.api_key = Some("local".into());
+
+			let result = classify(&model(), &questions_context(pick()), Some(request_options))
+				.await
+				.unwrap();
+
+			assert_eq!(result.error_message, None);
+			let paths: Vec<String> = server
+				.requests
+				.borrow()
+				.iter()
+				.map(|request| url::Url::parse(&request.url).unwrap().path().to_string())
+				.collect();
+			assert_eq!(
+				paths,
+				[
+					"/tokenize",
+					"/tokenize",
+					"/tokenize",
+					"/tokenize",
+					"/apply-template",
+					"/completion"
+				]
+			);
+		});
+	}
+}

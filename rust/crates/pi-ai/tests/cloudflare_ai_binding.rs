@@ -42,6 +42,9 @@ mod create_ai_binding_fetch {
 				HttpResponse::from_bytes(200, headers, "data: {}\n\n")
 			});
 			let fetch_fn = create_ai_binding_fetch(&binding).unwrap();
+			// `expect(response).toBe(bindingResponse)`: the returned fetch is the binding's own, so its response comes back
+			// unchanged.
+			assert!(Rc::ptr_eq(&fetch_fn, binding.fetch.as_ref().unwrap()));
 			let body = r#"{"model":"claude","messages":[{"role":"user","content":"hi"}]}"#;
 			let mut request = HttpRequest::new("POST", format!("{BINDING_PREFIX}/anthropic/v1/messages?beta=true"));
 			request.set_header("content-type", "application/json");
@@ -92,5 +95,10 @@ mod create_ai_binding_fetch {
 
 	#[test]
 	#[ignore = "PORT-STUB: needs api/openai_completions.rs (streamSimple) from its shard"]
-	fn keeps_sdk_placeholder_auth_off_the_wire_when_paired_with_null_auth_headers() {}
+	fn keeps_sdk_placeholder_auth_off_the_wire_when_paired_with_null_auth_headers() {
+		// Port once `openai_completions::stream_simple` lands: a 400 from the binding gives `stopReason: "error"`, exactly
+		// one request to `{BINDING_PREFIX}/openai/chat/completions`, and neither an `authorization` nor an `x-api-key`
+		// header on it.
+		todo!("PORT-STUB: needs api/openai_completions.rs")
+	}
 }

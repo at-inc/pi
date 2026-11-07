@@ -394,23 +394,83 @@ fn infer_grammar_input_property(tool: &Tool) -> PiResult<String> {
 		));
 	};
 
-	let properties = schema.get("properties").filter(|properties| !properties.is_null());
-	let property = properties.and_then(|properties| properties.get(input_property));
-	if !truthy(property) {
+	let property = schema.get("properties").map_or(JsProperty::Missing, |properties| {
+		js_property(properties, input_property)
+	});
+	let (present, string_type) = match property {
+		JsProperty::Missing => (false, false),
+		JsProperty::Value(property) => (
+			truthy(Some(property)),
+			property.get("type").and_then(Value::as_str) == Some("string"),
+		),
+		JsProperty::Opaque { truthy } => (truthy, false),
+	};
+	if !present {
 		return Err(PiError::new(format!(
 			"grammar constrained sampling requires a properties entry for {input_property}"
 		)));
 	}
-	if property
-		.and_then(|property| property.get("type"))
-		.and_then(Value::as_str)
-		!= Some("string")
-	{
+	if !string_type {
 		return Err(PiError::new(format!(
 			"grammar constrained sampling property {input_property} must have type string"
 		)));
 	}
 	Ok(input_property.to_string())
+}
+
+/// What `value[key]` reads in JS, as far as `inferGrammarInputProperty` looks at it.
+enum JsProperty<'a> {
+	Missing,
+	Value(&'a Value),
+	/// An inherited member, an array `length` or a string character: present when truthy, never with `type`.
+	Opaque {
+		truthy: bool,
+	},
+}
+
+/// The members `k in Object.prototype` is true for.
+const OBJECT_PROTOTYPE_MEMBERS: [&str; 12] = [
+	"constructor",
+	"__defineGetter__",
+	"__defineSetter__",
+	"hasOwnProperty",
+	"__lookupGetter__",
+	"__lookupSetter__",
+	"isPrototypeOf",
+	"propertyIsEnumerable",
+	"toString",
+	"valueOf",
+	"__proto__",
+	"toLocaleString",
+];
+
+/// `value?.[key]` for a JSON value, including inherited `Object.prototype` members and array and string indices.
+/// `Array.prototype` and `String.prototype` methods are not modeled.
+fn js_property<'a>(value: &'a Value, key: &str) -> JsProperty<'a> {
+	let index = || key.parse::<usize>().ok().filter(|index| index.to_string() == key);
+	match value {
+		Value::Object(object) => match object.get(key) {
+			Some(property) => JsProperty::Value(property),
+			None if OBJECT_PROTOTYPE_MEMBERS.contains(&key) => JsProperty::Opaque { truthy: true },
+			None => JsProperty::Missing,
+		},
+		Value::Array(array) if key == "length" => JsProperty::Opaque {
+			truthy: !array.is_empty(),
+		},
+		Value::Array(array) => match index().and_then(|index| array.get(index)) {
+			Some(property) => JsProperty::Value(property),
+			None if OBJECT_PROTOTYPE_MEMBERS.contains(&key) => JsProperty::Opaque { truthy: true },
+			None => JsProperty::Missing,
+		},
+		Value::String(text) if key == "length" => JsProperty::Opaque {
+			truthy: !text.is_empty(),
+		},
+		Value::String(text) => match index() {
+			Some(index) if index < pi_host::js::utf16_len(text) => JsProperty::Opaque { truthy: true },
+			_ => JsProperty::Missing,
+		},
+		_ => JsProperty::Missing,
+	}
 }
 
 /// Decide whether a JSON-schema tool is sent in strict mode. `is_unsupported_keyword` lets a provider

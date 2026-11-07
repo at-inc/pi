@@ -200,3 +200,41 @@ mod constrained_tool_sampling {
 		);
 	}
 }
+
+mod grammar_input_property {
+	use super::*;
+	use pi_ai::api::constrained_sampling::resolve_grammar_constrained_sampling;
+
+	fn grammar_tool(parameters: Value) -> Tool {
+		serde_json::from_value(json!({
+			"name": "grammar_tool",
+			"description": "",
+			"parameters": parameters,
+			"constrainedSampling": { "type": "grammar", "variants": { "openai_lark": "start: /x/" } },
+		}))
+		.unwrap()
+	}
+
+	fn error(parameters: Value) -> String {
+		resolve_grammar_constrained_sampling(&grammar_tool(parameters), true)
+			.unwrap_err()
+			.message
+	}
+
+	/// Rust-only: `schema.properties?.[name]` also finds inherited members and array indices, like JS.
+	#[test]
+	fn reads_properties_entries_like_a_js_property_lookup() {
+		assert_eq!(
+			error(json!({ "type": "object", "required": ["constructor"], "properties": {} })),
+			"Tool \"grammar_tool\" cannot use grammar constrained sampling: grammar constrained sampling property constructor must have type string."
+		);
+		assert_eq!(
+			error(json!({ "type": "object", "required": ["0"], "properties": ["x"] })),
+			"Tool \"grammar_tool\" cannot use grammar constrained sampling: grammar constrained sampling property 0 must have type string."
+		);
+		assert_eq!(
+			error(json!({ "type": "object", "required": ["missing"], "properties": {} })),
+			"Tool \"grammar_tool\" cannot use grammar constrained sampling: grammar constrained sampling requires a properties entry for missing."
+		);
+	}
+}

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use futures::FutureExt;
-use futures::future::{LocalBoxFuture, Shared, try_join, try_join_all};
+use futures::future::{LocalBoxFuture, Shared, join, try_join, try_join_all};
 use indexmap::IndexMap;
 use pi_host::js::{json_stringify, json_stringify_pretty, math_max, math_min, number_to_string};
 use pi_host::{AbortSignal, HttpRequest, PiError, PiResult};
@@ -459,7 +459,9 @@ thread_local! {
 /// one: tokenizers that add a leading-space marker at the start of a text would
 /// otherwise return a different token than the model emits there.
 async fn resolve_label_token(request: &RequestContext, label: &str) -> PiResult<Option<f64>> {
-	let (newline, with_label) = try_join(tokenize(request, "\n"), tokenize(request, &format!("\n{label}"))).await?;
+	// `Promise.all` leaves the other tokenize running when one fails.
+	let (newline, with_label) = join(tokenize(request, "\n"), tokenize(request, &format!("\n{label}"))).await;
+	let (newline, with_label) = (newline?, with_label?);
 	if with_label.len() == newline.len() + 1 && newline.iter().zip(&with_label).all(|(id, other)| id == other) {
 		return Ok(Some(with_label[newline.len()]));
 	}
@@ -485,8 +487,12 @@ fn label_token(request: &RequestContext, label: &str) -> LabelTokenLookup {
 	pending
 }
 
-async fn label_tokens(request: &RequestContext, labels: &[String]) -> PiResult<Vec<f64>> {
-	let lookups: Vec<LabelTokenLookup> = labels.iter().map(|label| label_token(request, label)).collect();
+/// The label token IDs from `lookups`, one per label, checked to be single and distinct tokens.
+async fn label_tokens(
+	request: &RequestContext,
+	labels: &[String],
+	lookups: Vec<LabelTokenLookup>,
+) -> PiResult<Vec<f64>> {
 	let ids = try_join_all(lookups).await?;
 	let mut tokens: Vec<f64> = Vec::new();
 	for (index, id) in ids.into_iter().enumerate() {
@@ -597,11 +603,17 @@ async fn classify_question(
 	temperature: f64,
 ) -> PiResult<ClassifierAnswer> {
 	let rendered = render_question(context, id)?;
-	let (tokens, prompt) = try_join(
-		label_tokens(request, &rendered.labels),
-		render_prompt(request, &rendered.content),
-	)
-	.await?;
+	// Both run from now on, in this order, as the TS async calls do: every label tokenize is sent before the
+	// template request, and a failure of one leaves the other running.
+	let lookups: Vec<LabelTokenLookup> = rendered
+		.labels
+		.iter()
+		.map(|label| label_token(request, label))
+		.collect();
+	let tokens = label_tokens(request, &rendered.labels, lookups);
+	let (owned, content) = (request.clone(), rendered.content.clone());
+	let prompt = start_now(async move { render_prompt(&owned, &content).await });
+	let (tokens, prompt) = try_join(tokens, prompt).await?;
 	let depths = [
 		math_max(MIN_READOUT_DEPTH, READOUT_DEPTH_PER_LABEL * tokens.len() as f64),
 		READOUT_ESCALATION[0],

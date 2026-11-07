@@ -1,8 +1,7 @@
 //! Port of `packages/ai/test/fetch-option.test.ts`.
 //!
 //! Every API adapter this file covers is `PORT-STATUS: pending` and owned by a w3 shard, so the file is mostly not
-//! ported yet. Only "uses fetch for image generation" is ported, against the existing `PORT-STUB: w3-bedrock-misc`
-//! `openrouter_images::generate_images`; it is `#[ignore = "needs w3-bedrock-misc: ..."]` until that adapter lands.
+//! ported yet. Only "uses fetch for image generation" is ported, against `openrouter_images::generate_images`.
 //!
 //! Not ported, because the adapter files are still empty and calling their predicted `stream_simple` would break the
 //! crate's compile. They belong with the owning w3 shards:
@@ -53,7 +52,6 @@ mod fetch_stream_option {
 	use super::*;
 
 	#[test]
-	#[ignore = "needs w3-bedrock-misc: openrouter_images::generate_images"]
 	fn uses_fetch_for_image_generation() {
 		run(|host| async move {
 			let (custom, calls) = custom_fetch();
