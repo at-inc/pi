@@ -1,8 +1,10 @@
 //! Port of `packages/ai/test/transcript-tool-changes.test.ts`.
 //!
-//! Ported: "resolves the top-level tool boundary per transport" (`resolveTranscriptTools` alone) and the Anthropic
-//! Messages cases. The other tests capture a request payload through `streamSimple` and check how the OpenAI
-//! Responses and OpenAI Completions (Kimi) APIs serialize tool changes; those move with those API shards.
+//! The single `transcript system messages` describe is split by transport: `transcript_system_messages` holds
+//! "resolves the top-level tool boundary per transport" (`resolveTranscriptTools` alone), and the
+//! `transcript_system_messages_*` modules hold the payload cases of the Anthropic Messages, OpenAI Responses and OpenAI
+//! Completions APIs in TS order. `toMatchObject` on a list with `expect.stringContaining` entries checks those entries
+//! with `contains` and the rest with `assert_match_object`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -442,5 +444,470 @@ mod transcript_system_messages_anthropic {
 		assert!(!betas(&payload).contains(&"inline-tools-2026-09-15".to_string()));
 		assert_eq!(names(&payload["tools"]), ["late_tool"]);
 		assert_eq!(roles(&payload), ["user"]);
+	}
+}
+
+/// `{ ...modelBase, ...fields }`.
+fn base_model(fields: Value) -> Model {
+	let mut model = json!({
+		"baseUrl": "http://127.0.0.1:9",
+		"reasoning": true,
+		"input": ["text"],
+		"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+		"contextWindow": 100000,
+		"maxTokens": 1000,
+	});
+	for (key, value) in fields.as_object().unwrap() {
+		model[key] = value.clone();
+	}
+	serde_json::from_value(model).unwrap()
+}
+
+fn additional_tools_model() -> Model {
+	base_model(json!({
+		"id": "gpt-5.4",
+		"name": "GPT-5.4",
+		"api": "openai-responses",
+		"provider": "openai",
+		"compat": { "supportsMidConvoSystemMessages": true, "supportsAdditionalTools": true },
+	}))
+}
+
+fn addition_context() -> Value {
+	json!({
+		"messages": [
+			{ "role": "system", "content": "base prompt", "toolsAdded": [base_tool()], "timestamp": 0 },
+			{ "role": "user", "content": "before", "timestamp": 1 },
+			{ "role": "system", "content": "updated guidance", "toolsAdded": [late_tool()], "timestamp": 2 },
+		],
+	})
+}
+
+fn drop_tool() -> Value {
+	tool_json(&tool("drop_tool"))
+}
+
+/// Capture one request after each step: initial tools, removal of drop_tool, then two loads.
+/// Returns the payloads after the removal and after each load, plus the one before the removal.
+fn capture_tool_history(model: &Model) -> Vec<Value> {
+	let steps = [
+		vec![json!({ "role": "user", "content": "first", "timestamp": 1 })],
+		vec![
+			json!({ "role": "system", "content": "", "toolsRemoved": [{ "name": "drop_tool" }], "timestamp": 2 }),
+			json!({ "role": "user", "content": "after removal", "timestamp": 3 }),
+		],
+		vec![
+			json!({ "role": "system", "content": "", "toolsAdded": [late_tool()], "timestamp": 4 }),
+			json!({ "role": "user", "content": "after first load", "timestamp": 5 }),
+		],
+		vec![
+			json!({ "role": "system", "content": "", "toolsAdded": [tool_json(&tool("later_tool"))], "timestamp": 6 }),
+			json!({ "role": "user", "content": "after second load", "timestamp": 7 }),
+		],
+	];
+	let mut messages = vec![
+		json!({ "role": "system", "content": "base prompt", "toolsAdded": [base_tool(), drop_tool()], "timestamp": 0 }),
+	];
+	let mut payloads = Vec::new();
+	for step in steps {
+		messages.extend(step);
+		payloads.push(capture_payload(model, json!({ "messages": messages.clone() })));
+	}
+	payloads
+}
+
+/// Every request's message list starts with the previous request's message list.
+fn expect_growing_prefix(inputs: &[&Value]) {
+	for index in 1..inputs.len() {
+		let previous = inputs[index - 1].as_array().unwrap();
+		let current = inputs[index].as_array().unwrap();
+		assert_eq!(&current[..previous.len()], previous.as_slice(), "request {index}");
+	}
+}
+
+fn items(payload: &Value) -> &Vec<Value> {
+	payload["input"].as_array().unwrap()
+}
+
+/// `input.filter((item) => item.type === kind)`.
+fn items_of_type<'a>(payload: &'a Value, kind: &str) -> Vec<&'a Value> {
+	items(payload).iter().filter(|item| item["type"] == kind).collect()
+}
+
+fn content(item: &Value) -> &str {
+	item["content"].as_str().unwrap_or_default()
+}
+
+/// `tools?.map((value) => value.function?.name)`.
+fn function_names(tools: &Value) -> Vec<String> {
+	tools
+		.as_array()
+		.unwrap()
+		.iter()
+		.map(|value| value["function"]["name"].as_str().unwrap().to_string())
+		.collect()
+}
+
+fn messages(payload: &Value) -> &Vec<Value> {
+	payload["messages"].as_array().unwrap()
+}
+
+fn builtin(provider: &str, id: &str) -> Model {
+	pi_ai::providers::all::get_builtin_model(provider, id).unwrap_or_else(|| panic!("{provider}/{id} is defined"))
+}
+
+mod transcript_system_messages_openai_responses {
+	use super::*;
+
+	#[test]
+	fn declares_every_openai_tool_in_additional_tools_at_its_developer_message() {
+		let payload = capture_payload(&additional_tools_model(), addition_context());
+
+		// A later additional_tools item cannot replace a top-level tool, so no tool is declared there.
+		assert!(payload.get("tools").is_none());
+		let declared: Vec<&str> = items_of_type(&payload, "additional_tools")
+			.iter()
+			.map(|item| item["tools"][0]["name"].as_str().unwrap())
+			.collect();
+		assert_eq!(declared, ["base_tool", "late_tool"]);
+		// The incremental notice keeps models from reading a later item as the complete tool set.
+		let input = items(&payload);
+		assert_eq!(input.len(), 6);
+		assert_eq!(input[0]["type"], "additional_tools");
+		assert_eq!(input[1]["content"], "base prompt");
+		assert!(input[2]["content"].is_array());
+		assert!(content(&input[3]).contains("incremental tools update"));
+		assert_eq!(input[4]["type"], "additional_tools");
+		assert_eq!(input[5]["content"], "updated guidance");
+	}
+
+	#[test]
+	fn maps_system_message_additions_into_synthetic_tool_search() {
+		let model = base_model(json!({
+			"id": "gpt-5.4",
+			"name": "GPT-5.4",
+			"api": "openai-responses",
+			"provider": "openai",
+			"compat": { "supportsMidConvoSystemMessages": true, "supportsToolSearch": true },
+		}));
+		let payload = capture_payload(&model, addition_context());
+
+		assert_eq!(names(&payload["tools"]), ["base_tool"]);
+		assert!(items(&payload).iter().any(|item| item["type"] == "tool_search_call"));
+		let output = items_of_type(&payload, "tool_search_output");
+		assert_eq!(names(&output[0]["tools"]), ["late_tool"]);
+	}
+
+	#[test]
+	fn folds_openai_updates_into_the_leading_developer_message_without_native_support() {
+		let model = base_model(json!({
+			"id": "gpt-4.1",
+			"name": "GPT-4.1",
+			"api": "openai-responses",
+			"provider": "openai",
+			"compat": { "supportsAdditionalTools": true },
+		}));
+		let payload = capture_payload(&model, tools_context());
+
+		assert_eq!(names(&payload["tools"]), ["late_tool"]);
+		let kinds: Vec<&str> = items(&payload)
+			.iter()
+			.map(|item| item.get("type").unwrap_or(&item["role"]).as_str().unwrap())
+			.collect();
+		assert_eq!(kinds, ["developer", "user"]);
+		assert_eq!(
+			items(&payload)[0]["content"],
+			"base prompt\n\nupdated guidance\n\n<rules>\nnew rules\n</rules>"
+		);
+	}
+
+	#[test]
+	fn announces_openai_removals_as_text() {
+		let payload = capture_payload(&additional_tools_model(), tools_context());
+
+		assert!(payload.get("tools").is_none());
+		let declared: Vec<&str> = items_of_type(&payload, "additional_tools")
+			.iter()
+			.map(|item| item["tools"][0]["name"].as_str().unwrap())
+			.collect();
+		assert_eq!(declared, ["base_tool", "late_tool"]);
+		let update = content(items(&payload).last().unwrap());
+		assert!(update.contains("updated guidance"), "{update}");
+		assert!(
+			update.contains("The following tools are no longer available. Do not call them:\n- base_tool"),
+			"{update}"
+		);
+	}
+
+	#[test]
+	fn redefines_an_openai_tool_with_additional_tools_instead_of_announcing_a_removal() {
+		let payload = capture_payload(
+			&additional_tools_model(),
+			json!({
+				"messages": [
+					{ "role": "system", "content": "base prompt", "toolsAdded": [base_tool()], "timestamp": 0 },
+					{ "role": "user", "content": "before", "timestamp": 1 },
+					{
+						"role": "system",
+						"content": "",
+						"toolsRemoved": [{ "name": "base_tool" }],
+						"toolsAdded": [tool_json(&described(tool("base_tool"), "changed"))],
+						"timestamp": 2,
+					},
+				],
+			}),
+		);
+
+		assert!(payload.get("tools").is_none());
+		let input = items(&payload);
+		assert_eq!(input.len(), 5);
+		assert_match_object(
+			&json!([&input[0], &input[1], &input[2], &input[4]]),
+			&json!([
+				{ "type": "additional_tools", "tools": [{ "name": "base_tool", "description": "base_tool tool" }] },
+				{ "role": "developer", "content": "base prompt" },
+				{ "role": "user" },
+				{ "type": "additional_tools", "tools": [{ "name": "base_tool", "description": "changed" }] },
+			]),
+		);
+		assert_eq!(input[3]["role"], "developer");
+		assert!(content(&input[3]).contains("latest definition replaces the earlier one"));
+	}
+
+	// #10940: deferred loads after a removal must not rewrite the cached prefix.
+	#[test]
+	fn keeps_the_openai_request_prefix_across_a_removal_and_later_loads() {
+		let payloads = capture_tool_history(&additional_tools_model());
+
+		for payload in &payloads {
+			assert!(payload.get("tools").is_none());
+		}
+		expect_growing_prefix(&payloads.iter().map(|payload| &payload["input"]).collect::<Vec<_>>());
+		let last = payloads.last().unwrap();
+		let declared: Vec<Vec<String>> = items_of_type(last, "additional_tools")
+			.iter()
+			.map(|item| names(&item["tools"]))
+			.collect();
+		assert_eq!(
+			declared,
+			[vec!["base_tool", "drop_tool"], vec!["late_tool"], vec!["later_tool"]]
+		);
+		assert!(
+			items(last)
+				.iter()
+				.any(|item| content(item).contains("no longer available. Do not call them:\n- drop_tool"))
+		);
+		// Each later load restates the tools that are still unavailable.
+		let notices: Vec<&str> = items(last)
+			.iter()
+			.map(content)
+			.filter(|content| content.contains("incremental tools update"))
+			.collect();
+		assert_eq!(notices.len(), 2);
+		for notice in notices {
+			assert!(notice.contains("\nStill unavailable: drop_tool."), "{notice}");
+		}
+	}
+
+	#[test]
+	fn stops_listing_a_tool_as_unavailable_once_it_is_declared_again() {
+		let payload = capture_payload(
+			&additional_tools_model(),
+			json!({
+				"messages": [
+					{ "role": "system", "content": "base prompt", "toolsAdded": [base_tool(), drop_tool()], "timestamp": 0 },
+					{ "role": "system", "content": "", "toolsRemoved": [{ "name": "drop_tool" }], "timestamp": 1 },
+					{ "role": "system", "content": "", "toolsAdded": [drop_tool()], "timestamp": 2 },
+					{ "role": "user", "content": "go", "timestamp": 3 },
+				],
+			}),
+		);
+
+		let notice = items(&payload)
+			.iter()
+			.map(content)
+			.find(|content| content.contains("incremental tools update"))
+			.expect("notice is defined");
+		assert!(!notice.contains("Still unavailable"), "{notice}");
+		let input = items(&payload);
+		assert_match_object(
+			&input[input.len() - 2],
+			&json!({ "type": "additional_tools", "tools": [{ "name": "drop_tool" }] }),
+		);
+	}
+
+	#[test]
+	fn does_not_list_a_tool_as_still_unavailable_before_its_removal_is_announced() {
+		let payload = capture_payload(
+			&additional_tools_model(),
+			json!({
+				"messages": [
+					{ "role": "system", "content": "base prompt", "toolsAdded": [base_tool(), drop_tool()], "timestamp": 0 },
+					{
+						"role": "system",
+						"content": "",
+						"toolsAdded": [late_tool()],
+						"toolsRemoved": [{ "name": "drop_tool" }],
+						"timestamp": 1,
+					},
+					{ "role": "user", "content": "go", "timestamp": 2 },
+				],
+			}),
+		);
+
+		// Like Codex: notice, then the tools, then the removal notice.
+		let input = items(&payload);
+		let tail = &input[input.len() - 4..];
+		assert!(content(&tail[0]).contains("incremental tools update"));
+		assert!(!content(&tail[0]).contains("Still unavailable"));
+		assert_match_object(
+			&json!([&tail[1], { "role": &tail[3]["role"] }]),
+			&json!([{ "type": "additional_tools", "tools": [{ "name": "late_tool" }] }, { "role": "user" }]),
+		);
+		assert!(content(&tail[2]).contains("no longer available. Do not call them:\n- drop_tool"));
+	}
+
+	// #10940: synthetic tool search cannot remove tools, so a removal rewrites the prefix once.
+	#[test]
+	fn keeps_the_openai_tool_search_prefix_across_loads_after_a_removal() {
+		let mut model = additional_tools_model();
+		model.compat = json!({ "supportsMidConvoSystemMessages": true, "supportsToolSearch": true })
+			.as_object()
+			.cloned();
+		let payloads = capture_tool_history(&model);
+		let (before_removal, after_removal) = payloads.split_first().unwrap();
+
+		assert_eq!(names(&before_removal["tools"]), ["base_tool", "drop_tool"]);
+		for payload in after_removal {
+			assert_eq!(names(&payload["tools"]), ["base_tool"]);
+		}
+		expect_growing_prefix(
+			&after_removal
+				.iter()
+				.map(|payload| &payload["input"])
+				.collect::<Vec<_>>(),
+		);
+		let outputs: Vec<&str> = items_of_type(after_removal.last().unwrap(), "tool_search_output")
+			.iter()
+			.map(|item| item["tools"][0]["name"].as_str().unwrap())
+			.collect();
+		assert_eq!(outputs, ["late_tool", "later_tool"]);
+	}
+}
+
+mod transcript_system_messages_openai_completions {
+	use super::*;
+
+	#[test]
+	fn anchors_kimi_additions_in_tool_bearing_system_messages() {
+		let model = base_model(json!({
+			"id": "kimi-k3",
+			"name": "Kimi K3",
+			"api": "openai-completions",
+			"provider": "moonshotai",
+			"compat": { "supportsMidConvoSystemMessages": true, "supportsMidConvoToolAdditions": true },
+		}));
+		let payload = capture_payload(&model, addition_context());
+
+		assert_eq!(function_names(&payload["tools"]), ["base_tool"]);
+		let tool_message = messages(&payload)
+			.iter()
+			.find(|message| message.get("tools").is_some())
+			.unwrap();
+		assert_eq!(function_names(&tool_message["tools"]), ["late_tool"]);
+		let system: Vec<Option<&str>> = messages(&payload)
+			.iter()
+			.filter(|message| message["role"] == "system")
+			.map(|message| message.get("content").and_then(Value::as_str))
+			.collect();
+		assert_eq!(system, [Some("base prompt"), None, Some("updated guidance")]);
+	}
+
+	// #10940: Kimi tool messages cannot remove tools, so a removal rewrites the prefix once.
+	#[test]
+	fn keeps_the_kimi_prefix_across_loads_after_a_removal() {
+		let payloads = capture_tool_history(&builtin("kimi-coding", "k3"));
+		let (before_removal, after_removal) = payloads.split_first().unwrap();
+
+		assert_eq!(function_names(&before_removal["tools"]), ["base_tool", "drop_tool"]);
+		for payload in after_removal {
+			assert_eq!(function_names(&payload["tools"]), ["base_tool"]);
+		}
+		expect_growing_prefix(
+			&after_removal
+				.iter()
+				.map(|payload| &payload["messages"])
+				.collect::<Vec<_>>(),
+		);
+		let loaded: Vec<&str> = messages(after_removal.last().unwrap())
+			.iter()
+			.filter(|message| message.get("tools").is_some())
+			.map(|message| message["tools"][0]["function"]["name"].as_str().unwrap())
+			.collect();
+		assert_eq!(loaded, ["late_tool", "later_tool"]);
+	}
+
+	// #10720: Kimi Coding uses Chat Completions so K3-style models keep added tools out of the top-level list.
+	#[test]
+	fn anchors_additions_for_kimi_coding() {
+		for model_id in ["k3", "k3-256k", "kimi-for-coding"] {
+			let payload = capture_payload(&builtin("kimi-coding", model_id), addition_context());
+
+			assert_eq!(function_names(&payload["tools"]), ["base_tool"], "{model_id}");
+			let tool_message = messages(&payload)
+				.iter()
+				.find(|message| message.get("tools").is_some())
+				.unwrap();
+			assert_eq!(function_names(&tool_message["tools"]), ["late_tool"], "{model_id}");
+		}
+	}
+
+	// #10720: Kimi Code Highspeed rejects tool-bearing system messages.
+	#[test]
+	fn keeps_kimi_coding_highspeed_additions_in_top_level_tools() {
+		let payload = capture_payload(&builtin("kimi-coding", "kimi-for-coding-highspeed"), addition_context());
+
+		assert_eq!(function_names(&payload["tools"]), ["base_tool", "late_tool"]);
+		assert!(!messages(&payload).iter().any(|message| message.get("tools").is_some()));
+	}
+
+	#[test]
+	fn keeps_kimi_k2_system_text_inline_without_dynamic_tool_messages() {
+		let model = base_model(json!({
+			"id": "kimi-k2.7-code",
+			"name": "Kimi K2.7 Code",
+			"api": "openai-completions",
+			"provider": "moonshotai",
+			"compat": { "supportsMidConvoSystemMessages": true },
+		}));
+		let payload = capture_payload(&model, addition_context());
+
+		assert_eq!(function_names(&payload["tools"]), ["base_tool", "late_tool"]);
+		assert!(!messages(&payload).iter().any(|message| message.get("tools").is_some()));
+		let system: Vec<&Value> = messages(&payload)
+			.iter()
+			.filter(|message| message["role"] == "system")
+			.map(|message| &message["content"])
+			.collect();
+		assert_eq!(system, [&json!("base prompt"), &json!("updated guidance")]);
+	}
+
+	#[test]
+	fn folds_openai_compatible_updates_into_the_system_prompt_without_native_support() {
+		let model = base_model(json!({
+			"id": "custom-model",
+			"name": "Custom model",
+			"api": "openai-completions",
+			"provider": "custom-provider",
+			"reasoning": false,
+		}));
+		let payload = capture_payload(&model, tools_context());
+
+		assert_eq!(function_names(&payload["tools"]), ["late_tool"]);
+		assert_eq!(roles(&payload), ["system", "user"]);
+		assert_eq!(
+			messages(&payload)[0]["content"],
+			"base prompt\n\nupdated guidance\n\n<rules>\nnew rules\n</rules>"
+		);
 	}
 }
