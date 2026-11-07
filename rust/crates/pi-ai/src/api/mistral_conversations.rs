@@ -386,6 +386,7 @@ async fn request_mistral_stream(
 		headers,
 		body: Some(body.into()),
 		signal: combined_signal.signal.clone(),
+		..Default::default()
 	};
 	let response = pi_host::fetch(request, options.fetch.as_ref()).await;
 	combined_signal.cleanup();

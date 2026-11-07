@@ -10,11 +10,12 @@ use futures::{StreamExt, TryStreamExt};
 use crate::LocalBoxFuture;
 use crate::error::{PiError, PiResult};
 use crate::host::{Host, set_host};
-use crate::http::{HttpRequest, HttpResponse};
+use crate::http::{HttpRequest, HttpResponse, RedirectMode};
 
 /// The native host.
 pub struct NativeHost {
 	client: reqwest::Client,
+	manual_client: reqwest::Client,
 	started: Instant,
 }
 
@@ -22,7 +23,14 @@ impl NativeHost {
 	/// A host with a default reqwest client.
 	pub fn new() -> Self {
 		Self {
-			client: reqwest::Client::new(),
+			client: reqwest::Client::builder()
+				.redirect(reqwest::redirect::Policy::limited(20))
+				.build()
+				.expect("reqwest client"),
+			manual_client: reqwest::Client::builder()
+				.redirect(reqwest::redirect::Policy::none())
+				.build()
+				.expect("reqwest client"),
 			started: Instant::now(),
 		}
 	}
@@ -36,7 +44,11 @@ impl Default for NativeHost {
 
 impl Host for NativeHost {
 	fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>> {
-		let client = self.client.clone();
+		let redirect = request.redirect;
+		let client = match redirect {
+			RedirectMode::Follow => self.client.clone(),
+			RedirectMode::Manual | RedirectMode::Error => self.manual_client.clone(),
+		};
 		Box::pin(async move {
 			let method = reqwest::Method::from_bytes(request.method.as_bytes())
 				.map_err(|_| PiError::type_error(format!("Invalid method: {}", request.method)))?;
@@ -63,6 +75,11 @@ impl Host for NativeHost {
 				PiError::type_error("fetch failed").with_data(serde_json::json!({ "cause": error.to_string() }))
 			})?;
 			let status = response.status();
+			if redirect == RedirectMode::Error && status.is_redirection() && response.headers().contains_key("location")
+			{
+				return Err(PiError::type_error("fetch failed")
+					.with_data(serde_json::json!({ "cause": "unexpected redirect" })));
+			}
 			let mut headers: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
 			for (name, value) in response.headers() {
 				let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
@@ -131,15 +148,22 @@ impl Host for NativeHost {
 		std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned())
 	}
 
-	fn read_file(&self, path: &str) -> PiResult<String> {
-		std::fs::read_to_string(path).map_err(|error| {
-			let message = match error.kind() {
-				std::io::ErrorKind::NotFound => format!("ENOENT: no such file or directory, open '{path}'"),
-				std::io::ErrorKind::PermissionDenied => format!("EACCES: permission denied, open '{path}'"),
-				std::io::ErrorKind::IsADirectory => "EISDIR: illegal operation on a directory, read".to_string(),
-				_ => format!("{error}, open '{path}'"),
-			};
-			PiError::new(message)
+	fn read_file(&self, path: &str) -> LocalBoxFuture<'static, PiResult<String>> {
+		let path = path.to_string();
+		Box::pin(async move {
+			match tokio::fs::read(&path).await {
+				Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
+				Err(error) => Err(match error.kind() {
+					std::io::ErrorKind::NotFound => crate::host::file_not_found(&path),
+					std::io::ErrorKind::PermissionDenied => PiError::new(format!(
+						"EACCES: permission denied, open '{path}'"
+					))
+					.with_data(serde_json::json!({ "errno": -13, "code": "EACCES", "syscall": "open", "path": path })),
+					std::io::ErrorKind::IsADirectory => PiError::new("EISDIR: illegal operation on a directory, read")
+						.with_data(serde_json::json!({ "errno": -21, "code": "EISDIR", "syscall": "read" })),
+					_ => PiError::new(error.to_string()),
+				}),
+			}
 		})
 	}
 }

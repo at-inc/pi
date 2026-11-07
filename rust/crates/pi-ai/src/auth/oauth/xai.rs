@@ -89,6 +89,7 @@ async fn post_form(url: &str, fields: &[(&str, &str)], signal: &AbortSignal) -> 
 		headers,
 		body: Some(Bytes::from(body)),
 		signal: Some(signal.clone()),
+		..Default::default()
 	};
 	let response = match pi_host::fetch(request, None).await {
 		Ok(response) => response,

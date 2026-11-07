@@ -137,10 +137,10 @@ impl TestHost {
 		self.files.borrow_mut().insert(path.into());
 	}
 
-	/// Makes `file_exists(path)` true and `read_file(path)` return `content`.
-	pub fn add_file_with_content(&self, path: &str, content: &str) {
-		self.add_file(path);
-		self.file_contents.borrow_mut().insert(path.into(), content.into());
+	/// Writes a file: `read_file(path)` returns `contents` and `file_exists(path)` is true.
+	pub fn write_file(&self, path: &str, contents: &str) {
+		self.files.borrow_mut().insert(path.into());
+		self.file_contents.borrow_mut().insert(path.into(), contents.into());
 	}
 
 	/// Sets `os.homedir()`. Without it the host has no file system, like a browser.
@@ -234,12 +234,10 @@ impl Host for TestHost {
 		self.home_dir.borrow().clone()
 	}
 
-	fn read_file(&self, path: &str) -> PiResult<String> {
-		self.file_contents
-			.borrow()
-			.get(path)
-			.cloned()
-			.ok_or_else(|| PiError::new(format!("ENOENT: no such file or directory, open '{path}'")))
+	fn read_file(&self, path: &str) -> LocalBoxFuture<'static, PiResult<String>> {
+		let contents = self.file_contents.borrow().get(path).cloned();
+		let error = crate::host::file_not_found(path);
+		Box::pin(async move { contents.ok_or(error) })
 	}
 }
 

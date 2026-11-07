@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::LocalBoxFuture;
 use crate::abort::AbortSignal;
-use crate::error::PiResult;
+use crate::error::{PiError, PiResult};
 use crate::http::{HttpRequest, HttpResponse};
 
 /// Platform services. One implementation per embedding: napi (Node), wasm (Workers/browsers), native tokio,
@@ -32,13 +32,18 @@ pub trait Host {
 	fn home_dir(&self) -> Option<String> {
 		None
 	}
-	/// `fs.readFileSync(path, "utf8")`. Rejects with Node's message (`ENOENT: no such file or directory, open '<path>'`).
-	/// Hosts without a file system (browsers, Workers) reject every path that way.
-	fn read_file(&self, path: &str) -> PiResult<String> {
-		Err(crate::error::PiError::new(format!(
-			"ENOENT: no such file or directory, open '{path}'"
-		)))
+	/// `fs.promises.readFile(path, "utf-8")`: invalid UTF-8 decodes to U+FFFD and a BOM is kept. Hosts without a file
+	/// system (browsers, Workers) fail as for a missing file.
+	fn read_file(&self, path: &str) -> LocalBoxFuture<'static, PiResult<String>> {
+		let error = file_not_found(path);
+		Box::pin(async move { Err(error) })
 	}
+}
+
+/// The error Node's `fs.promises.readFile` rejects with for a missing file.
+pub fn file_not_found(path: &str) -> PiError {
+	PiError::new(format!("ENOENT: no such file or directory, open '{path}'"))
+		.with_data(serde_json::json!({ "errno": -2, "code": "ENOENT", "syscall": "open", "path": path }))
 }
 
 thread_local! {
@@ -108,7 +113,7 @@ pub fn home_dir() -> Option<String> {
 	current().home_dir()
 }
 
-/// `fs.readFileSync(path, "utf8")`; rejects like `ENOENT` on hosts without a file system.
-pub fn read_file(path: &str) -> PiResult<String> {
-	current().read_file(path)
+/// `await fs.promises.readFile(path, "utf-8")`; fails as for a missing file on hosts without a file system.
+pub async fn read_file(path: &str) -> PiResult<String> {
+	current().read_file(path).await
 }

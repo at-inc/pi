@@ -235,6 +235,7 @@ async fn request_token(body: &[(&str, &str)], signal: &AbortSignal) -> PiResult<
 			headers,
 			body: Some(Bytes::from(body)),
 			signal: Some(signal.clone()),
+			..Default::default()
 		},
 		None,
 	)

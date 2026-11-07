@@ -413,6 +413,7 @@ impl McpTransport for StreamableHttpTransport {
 					headers: build_headers(&inner, &[], token.as_deref()),
 					body: None,
 					signal: Some(timeout.signal()),
+					..Default::default()
 				};
 				let response = (inner.fetch)(request);
 				let deadline = pi_host::sleep(1_000.0, None);
@@ -536,6 +537,7 @@ async fn authorized_fetch(
 			headers: build_headers(inner, extra, token.as_deref()),
 			body: body.clone().map(Into::into),
 			signal: Some(inner.controller.signal()),
+			..Default::default()
 		})
 		.await?;
 		let on_unauthorized = match &on_unauthorized {

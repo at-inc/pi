@@ -228,6 +228,7 @@ async fn fetch(url: &str, init: &RequestInit, signal: AbortSignal) -> PiResult<H
 			headers,
 			body: init.body.clone().map(Bytes::from),
 			signal: Some(signal),
+			..Default::default()
 		},
 		None,
 	)

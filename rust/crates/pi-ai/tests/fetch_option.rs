@@ -1,14 +1,13 @@
 //! Port of `packages/ai/test/fetch-option.test.ts`.
 //!
 //! Every API adapter this file covers is owned by a w3 shard, so the file is ported as those adapters land. Ported:
-//! "uses fetch for image generation", against the existing `PORT-STUB: w3-bedrock-misc`
-//! `openrouter_images::generate_images`, which is `#[ignore = "needs w3-bedrock-misc: ..."]` until that adapter lands;
-//! "rejects custom fetch for Google adapters instead of silently bypassing it" and "allows Google adapters to receive
-//! globalThis.fetch explicitly" (w3-google-mistral).
+//! "passes fetch through streamSimple to the Anthropic SDK" (w3-anthropic); "rejects custom fetch for Google adapters
+//! instead of silently bypassing it" and "allows Google adapters to receive globalThis.fetch explicitly"
+//! (w3-google-mistral); "uses fetch for image generation", against the existing `PORT-STUB: w3-bedrock-misc`
+//! `openrouter_images::generate_images`, which is `#[ignore = "needs w3-bedrock-misc: ..."]` until that adapter lands.
 //!
 //! Not ported, because some of their adapter files are still empty on this branch and calling their predicted
 //! `stream_simple` would break the crate's compile. They belong with the owning w3 shards:
-//! - "passes fetch through streamSimple to the Anthropic SDK" (`api::anthropic_messages`, w3-anthropic).
 //! - "passes fetch through streamSimple to OpenAI SDK adapters" (`api::openai_completions`, w3-openai-completions;
 //!   `api::openai_responses` and `api::azure_openai_responses`, w3-openai-responses).
 //! - "uses fetch for Mistral, Codex SSE, and pi-messages HTTP requests": `api::mistral_conversations` is ported, but the
@@ -23,6 +22,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use pi_ai::api::anthropic_messages;
 use pi_ai::api::openrouter_images::generate_images;
 use pi_ai::api::{google_generative_ai, google_vertex};
 use pi_ai::types::{
@@ -45,6 +45,7 @@ fn context() -> TranscriptContext {
 	})
 }
 
+/// `createModel(api)`.
 fn create_model(api: &str) -> Model {
 	Model {
 		base: BaseModel {
@@ -131,6 +132,37 @@ mod fetch_stream_option {
 					.contains("Custom fetch is not supported by the Google Vertex adapter")
 			);
 			assert_eq!(calls.get(), 0);
+			assert!(host.requests().is_empty());
+		});
+	}
+
+	#[test]
+	fn passes_fetch_through_stream_simple_to_the_anthropic_sdk() {
+		run(|host| async move {
+			let (custom, calls) = custom_fetch();
+			let context = normalize_context(
+				&serde_json::from_value(serde_json::json!({
+					"messages": [{ "role": "user", "content": "hello", "timestamp": 1 }],
+				}))
+				.unwrap(),
+			);
+			let options = SimpleStreamOptions {
+				base: StreamOptions {
+					base: ProviderRequestOptions {
+						api_key: Some("test-key".into()),
+						fetch: Some(custom),
+						max_retries: Some(0.0),
+						..ProviderRequestOptions::default()
+					},
+					..StreamOptions::default()
+				},
+				..SimpleStreamOptions::default()
+			};
+			anthropic_messages::stream_simple(&create_model("anthropic-messages"), &context, Some(options))
+				.unwrap()
+				.result()
+				.await;
+			assert!(calls.get() > 0);
 			assert!(host.requests().is_empty());
 		});
 	}

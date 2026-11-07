@@ -97,7 +97,7 @@ impl GoogleAuth {
 	async fn determine_client(&self) -> PiResult<AuthClient> {
 		let scopes = self.options.scopes.clone().unwrap_or_default();
 		if let Some(key_filename) = &self.options.key_filename {
-			let content = pi_host::read_file(key_filename)?;
+			let content = pi_host::read_file(key_filename).await?;
 			// `fromStreamAsync`: any parse or `_cacheClientFromJSON` failure falls back to `new JWT({ keyFile })`.
 			return match serde_json::from_str::<Value>(&content).map(|json| from_json(&json, scopes)) {
 				Ok(Ok(client)) => Ok(client),
@@ -114,11 +114,11 @@ impl GoogleAuth {
 			.filter(|path| !path.is_empty())
 			.or_else(|| pi_host::env("google_application_credentials"));
 		if let Some(path) = credentials_path.filter(|path| !path.is_empty()) {
-			let client = credentials_from_file_path(&path, scopes)?;
+			let client = credentials_from_file_path(&path, scopes).await?;
 			return Ok(with_quota_project_override(client));
 		}
 		if let Some(location) = well_known_file_location() {
-			let client = credentials_from_file_path(&location, scopes)?;
+			let client = credentials_from_file_path(&location, scopes).await?;
 			return Ok(with_quota_project_override(client));
 		}
 		if check_is_gce().await? {
@@ -164,13 +164,13 @@ fn well_known_file_location() -> Option<String> {
 }
 
 /// `_getApplicationCredentialsFromFilePath(filePath)`.
-fn credentials_from_file_path(file_path: &str, scopes: Vec<String>) -> PiResult<AuthClient> {
+async fn credentials_from_file_path(file_path: &str, scopes: Vec<String>) -> PiResult<AuthClient> {
 	if !pi_host::file_exists(file_path) {
 		return Err(PiError::new(format!(
 			"The file at {file_path} does not exist, or it is not a file. ENOENT: no such file or directory, lstat '{file_path}'"
 		)));
 	}
-	let content = pi_host::read_file(file_path)?;
+	let content = pi_host::read_file(file_path).await?;
 	let json = serde_json::from_str::<Value>(&content)?;
 	from_json(&json, scopes)
 }
@@ -592,14 +592,14 @@ thread_local! {
 
 /// `_checkIsGCE()`: `getGCPResidency() || await isAvailable()`.
 async fn check_is_gce() -> PiResult<bool> {
-	if gcp_residency() {
+	if gcp_residency().await {
 		return Ok(true);
 	}
 	is_available().await
 }
 
 /// `getGCPResidency()`: serverless env vars, or a Google BIOS vendor on Linux.
-fn gcp_residency() -> bool {
+async fn gcp_residency() -> bool {
 	if let Some(residency) = GCP_RESIDENCY.with(|cache| *cache.borrow()) {
 		return residency;
 	}
@@ -608,7 +608,9 @@ fn gcp_residency() -> bool {
 		.any(|name| pi_host::env(name).is_some_and(|value| !value.is_empty()));
 	let compute_engine = cfg!(target_os = "linux")
 		&& pi_host::file_exists("/sys/class/dmi/id/bios_date")
-		&& pi_host::read_file("/sys/class/dmi/id/bios_vendor").is_ok_and(|vendor| vendor.contains("Google"));
+		&& pi_host::read_file("/sys/class/dmi/id/bios_vendor")
+			.await
+			.is_ok_and(|vendor| vendor.contains("Google"));
 	let residency = serverless || compute_engine;
 	GCP_RESIDENCY.with(|cache| *cache.borrow_mut() = Some(residency));
 	residency
@@ -634,7 +636,7 @@ async fn is_available() -> PiResult<bool> {
 		match value.as_str() {
 			"assume-present" => return Ok(true),
 			"none" => return Ok(false),
-			"bios-only" => return Ok(gcp_residency()),
+			"bios-only" => return Ok(gcp_residency().await),
 			"ping-only" => {}
 			_ => {
 				return Err(PiError::named(
@@ -694,6 +696,7 @@ struct MetadataError {
 
 /// `metadataAccessor(type, options, noResponseRetries, fastFail)`: a metadata GET that requires `Metadata-Flavor: Google`.
 async fn metadata_accessor(url: String, no_response_retries: u32, fast_fail: bool) -> Result<Value, MetadataError> {
+	let timeout_ms = if gcp_residency().await { 0.0 } else { 3000.0 };
 	let options = |url: String| GaxiosOptions {
 		method: "GET",
 		url,
@@ -704,7 +707,7 @@ async fn metadata_accessor(url: String, no_response_retries: u32, fast_fail: boo
 			http_methods_to_retry: &["GET", "HEAD", "PUT", "OPTIONS", "DELETE"],
 			no_response_retries,
 		}),
-		timeout_ms: if gcp_residency() { 0.0 } else { 3000.0 },
+		timeout_ms,
 	};
 	let result = if fast_fail {
 		let secondary = url.replace(

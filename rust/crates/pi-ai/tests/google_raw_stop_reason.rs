@@ -66,7 +66,7 @@ fn default_chunk(finish_reason: &str, include_function_call: bool) -> Value {
 /// Serves `chunks` as the Gemini SSE stream, and ADC for Vertex.
 fn serve(host: &TestHost, chunks: Vec<Value>) {
 	host.set_env("GOOGLE_APPLICATION_CREDENTIALS", ADC_PATH);
-	host.add_file_with_content(
+	host.write_file(
 		ADC_PATH,
 		&json_stringify(&json!({
 			"type": "authorized_user",

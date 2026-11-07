@@ -44,7 +44,7 @@ fn context() -> TranscriptContext {
 /// Serves ADC and the mocked stream chunk.
 fn serve(host: &TestHost) {
 	host.set_env("GOOGLE_APPLICATION_CREDENTIALS", ADC_PATH);
-	host.add_file_with_content(
+	host.write_file(
 		ADC_PATH,
 		&json_stringify(&json!({
 			"type": "authorized_user",
