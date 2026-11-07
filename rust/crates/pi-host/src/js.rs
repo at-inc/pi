@@ -66,6 +66,16 @@ fn array_index(key: &str) -> Option<u32> {
 	key.parse::<u32>().ok().filter(|index| *index != u32::MAX)
 }
 
+/// JS `Math.max(a, b)`: NaN when either is NaN.
+pub fn math_max(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
+}
+
+/// JS `Math.min(a, b)`: NaN when either is NaN.
+pub fn math_min(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
+}
+
 /// `String(n)` / template-literal interpolation of a number.
 pub fn number_to_string(value: f64) -> String {
 	if value.is_nan() {
