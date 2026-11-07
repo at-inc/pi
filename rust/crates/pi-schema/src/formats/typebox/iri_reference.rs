@@ -41,7 +41,11 @@ use ::regex::Regex;
 
 // Rejects unencoded spaces (0x20), backslashes, control characters (0x00-0x1F, 0x7F), or malformed percent-encodings
 static INVALID_IRI_CHARS: LazyLock<fancy_regex::Regex> = LazyLock::new(|| {
-	fancy_regex::Regex::new(r"[\x00-\x20\x7F\\]|%(?![0-9a-fA-F]{2})").expect("INVALID_IRI_CHARS is a valid pattern")
+	// V8 never gives up on a match; each `%` costs backtracking steps, so long values pass fancy_regex's default limit.
+	fancy_regex::RegexBuilder::new(r"[\x00-\x20\x7F\\]|%(?![0-9a-fA-F]{2})")
+		.backtrack_limit(usize::MAX)
+		.build()
+		.expect("INVALID_IRI_CHARS is a valid pattern")
 });
 // Detects malformed scheme/authority patterns lacking a colon (e.g. "httpx//example.com")
 static MALFORMED_SCHEME: LazyLock<Regex> =

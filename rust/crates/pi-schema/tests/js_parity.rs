@@ -282,6 +282,26 @@ fn a_subschema_that_failed_to_compile_stays_cached() {
 // JSON.parse rounds every decimal correctly; serde_json does only with its float_roundtrip feature (without it,
 // "9.727837981879871e+26" parses one unit in the last place off).
 #[test]
+fn an_obj_property_named_proto_sets_the_prototype_and_stays_required() {
+	let schema = obj(
+		[("__proto__", str(json!({})).into()), ("a", opt(str(json!({}))).into())],
+		json!({}),
+	);
+	assert_eq!(
+		schema,
+		json!({"type": "object", "properties": {"a": {"type": "string"}}, "required": ["__proto__"], "additionalProperties": false})
+	);
+	assert_eq!(paths(schema.clone(), json!({"a": "x"})), ["/__proto__"]);
+	assert_eq!(paths(schema, json!({"__proto__": "x"})), ["/__proto__"]);
+	let schema = obj([("__proto__", opt(str(json!({}))).into())], json!({}));
+	assert_eq!(
+		schema,
+		json!({"type": "object", "properties": {}, "additionalProperties": false})
+	);
+	assert_eq!(paths(schema, json!({"__proto__": "x"})), ["/__proto__"]);
+}
+
+#[test]
 fn long_decimals_parse_like_json_parse() {
 	let schema: Value = serde_json::from_str(r#"{"exclusiveMaximum": 972783798187987123879878123.18878137}"#).unwrap();
 	let value: Value = serde_json::from_str("972783798187987123879878123.18878137").unwrap();
@@ -313,4 +333,19 @@ fn formats_follow_javascript() {
 	assert!(!format("iri-reference", "///"));
 	assert!(format("idn-email", &format!("\"{}\"@b", "a".repeat(500_000))));
 	assert!(!format("idn-email", "a@b-"));
+	assert!(!format("iri", &format!("http://a/{}%zz", "%41".repeat(600_000))));
+	assert!(!format("iri-reference", &format!("{} ", "%41".repeat(600_000))));
+}
+
+#[test]
+fn deeply_nested_patterns_fail_instead_of_overflowing_the_stack() {
+	let deep = |n: usize| format!("{}a{}", "(".repeat(n), ")".repeat(n));
+	assert_eq!(test(&deep(63), "u", "a"), Ok(true));
+	assert_eq!(
+		test(&deep(10_000), "u", "a"),
+		Err(format!(
+			"Invalid regular expression: /{}/u: Pattern too deeply nested",
+			deep(10_000)
+		))
+	);
 }

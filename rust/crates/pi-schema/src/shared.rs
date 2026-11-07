@@ -18,10 +18,15 @@
 //!   (Unicode 16); `Changes_When_NFKC_Casefolded` is not in them, so a pattern using it does not compile.
 //! - With `i`, `\P{...}` is the complement of the case-closed property, where JavaScript case-closes the complement:
 //!   `/^\P{Lu}$/ui` does not match `"A"`.
-//! - Case-insensitive matching uses Unicode simple case folding in both modes.
+//! - The Rust engines have limits V8 does not: a pattern nested more than 64 groups deep (fewer with quantified
+//!   groups, which the translation wraps once more) and a counted repetition whose expansion passes
+//!   `DELEGATE_SIZE_LIMIT` (`a{1,50000000}`) do not compile.
+//! - Case-insensitive matching uses Unicode simple case folding in both modes; without `u` JavaScript compares by
+//!   `toUpperCase` instead, so `/k/i` and `/\w/i` match "\u{212a}" and `/ß/i` matches "ẞ" here but not there.
 //! - Where V8 departs from the specification, the port follows the specification: V8 accepts a group name repeated
 //!   inside the first alternative of a group of that name (`(?<n>(?<n>x)|y)`), and with `u` an earlier
-//!   `(?i:...)` group makes a later `\w` case-insensitive (`/(?i:)\w/u` matches "\u{212a}").
+//!   `(?i:...)` group makes a later `\w` case-insensitive (`/(?i:)\w/u` matches "\u{212a}"); with `iu` an earlier
+//!   `(?-i:...)` group makes a later `\W` match "k", "K", "s" and "S" (`/(?-i:)\W/iu` matches "k").
 //!
 //! Error messages follow V8's `Invalid regular expression: /source/flags: reason` form; a pattern the Rust engine
 //! cannot build reports the engine's reason.
@@ -273,10 +278,15 @@ struct Translator {
 	opened: usize,
 	open: Vec<usize>,
 	lookbehinds: usize,
+	/// The number of groups around the position.
+	depth: usize,
 	/// A `\k<name>` without a group of that name: V8 reports it only once the whole pattern parsed.
 	unknown_reference: bool,
 	out: String,
 }
+
+// fancy_regex's `MAX_RECURSION`.
+const MAX_GROUP_DEPTH: usize = 64;
 
 /// What a term was: an assertion that may not be quantified, a lookbehind (an assertion V8 reports differently), a
 /// lookahead (quantifiable without `u`), an atom that never consumes a character (a group of assertions, an empty
@@ -306,6 +316,7 @@ impl Translator {
 			opened: 0,
 			open: Vec::new(),
 			lookbehinds: 0,
+			depth: 0,
 			unknown_reference: false,
 			out: String::new(),
 		};
@@ -387,7 +398,17 @@ impl Translator {
 				}
 				Ok(Term::Assertion)
 			}
-			'(' => self.group(),
+			'(' => {
+				// The translated pattern nests at least as deep, and fancy_regex rejects it past MAX_GROUP_DEPTH; stopping
+				// here keeps this recursive parser from overflowing the stack on deeper patterns.
+				if self.depth == MAX_GROUP_DEPTH {
+					return Err("Pattern too deeply nested".into());
+				}
+				self.depth += 1;
+				let term = self.group();
+				self.depth -= 1;
+				term
+			}
 			'.' => {
 				self.pos += 1;
 				if *self.dot_all.last().expect("the dotAll stack is never empty") {
