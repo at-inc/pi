@@ -598,3 +598,61 @@ mod openai_codex_oauth_suite {
 		assert_eq!(exchange_body["redirect_uri"], "http://localhost:1455/auth/callback");
 	}
 }
+
+mod openai_codex_oauth_review {
+	use super::*;
+
+	// Review finding: TS sends the device-auth fields back as the server returned them and lets URLSearchParams
+	// stringify the device authorization code, so an array joins with commas. TS oracle:
+	// poll body {"device_auth_id":123,"user_code":4567}, exchange code=a%2Cb&code_verifier=v%2C%2C1.
+	#[test]
+	fn sends_non_string_device_fields_as_typescript_does() {
+		let access_token = create_access_token("acct");
+		let device_infos = Rc::new(RefCell::new(Vec::new()));
+		let poll_body = Rc::new(RefCell::new(None));
+		let exchange_body = Rc::new(RefCell::new(None));
+		let credential = pi_host::testing::run(|host| {
+			let poll_body = poll_body.clone();
+			let exchange_body = exchange_body.clone();
+			serve(
+				&host,
+				Rc::new(move |request| {
+					if request.url == USER_CODE_URL {
+						return Ok(json_response(
+							json!({ "device_auth_id": 123, "user_code": 4567, "interval": "0" }),
+							200,
+						));
+					}
+					if request.url == DEVICE_TOKEN_URL {
+						*poll_body.borrow_mut() = Some(json_body(request));
+						return Ok(json_response(
+							json!({ "authorization_code": ["a", "b"], "code_verifier": ["v", null, 1] }),
+							200,
+						));
+					}
+					if request.url == TOKEN_URL {
+						*exchange_body.borrow_mut() = Some(form_body(request));
+						return Ok(json_response(
+							json!({ "access_token": access_token, "refresh_token": "r", "expires_in": 1 }),
+							200,
+						));
+					}
+					Err(PiError::new(format!("Unexpected fetch URL: {}", request.url)))
+				}),
+			);
+			login_device_code(device_infos.clone(), None)
+		})
+		.unwrap();
+
+		assert_eq!(credential.field("accountId"), Some(&json!("acct")));
+		assert_eq!(
+			poll_body.borrow().clone(),
+			Some(json!({ "device_auth_id": 123, "user_code": 4567 }))
+		);
+		let exchange_body = exchange_body.borrow();
+		let exchange_body = exchange_body.as_ref().unwrap();
+		assert_eq!(exchange_body["code"], "a,b");
+		assert_eq!(exchange_body["code_verifier"], "v,,1");
+		assert_eq!(device_infos.borrow()[0].user_code, "4567");
+	}
+}
