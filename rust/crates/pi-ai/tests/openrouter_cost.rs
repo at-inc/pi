@@ -1,9 +1,8 @@
 //! Port of `packages/ai/test/openrouter-cost.test.ts`.
 
 use pi_ai::types::{BaseModel, Usage, UsageCost};
-use pi_ai::utils::openrouter_cost::{
-	OpenRouterCostDetails, OpenRouterUsageAccounting, apply_open_router_reported_cost, is_open_router_model,
-};
+use pi_ai::utils::openrouter_cost::{apply_open_router_reported_cost, is_open_router_model};
+use serde_json::json;
 
 fn usage(total: f64) -> Usage {
 	Usage {
@@ -32,15 +31,6 @@ fn model(provider: &str, base_url: &str) -> BaseModel {
 	}
 }
 
-fn details(upstream: Option<f64>, prompt: f64, completions: f64) -> OpenRouterCostDetails {
-	OpenRouterCostDetails {
-		upstream_inference_cost: Some(upstream),
-		upstream_inference_prompt_cost: Some(prompt),
-		upstream_inference_completions_cost: Some(completions),
-		server_tool_cost: None,
-	}
-}
-
 mod is_open_router_model {
 	use super::*;
 
@@ -63,11 +53,15 @@ mod apply_open_router_reported_cost {
 		let mut value = usage(1.0);
 		apply_open_router_reported_cost(
 			&mut value,
-			&OpenRouterUsageAccounting {
-				cost: Some(0.0),
-				is_byok: Some(false),
-				cost_details: Some(details(Some(0.0), 0.0, 0.0)),
-			},
+			&json!({
+				"cost": 0,
+				"is_byok": false,
+				"cost_details": {
+					"upstream_inference_cost": 0,
+					"upstream_inference_prompt_cost": 0,
+					"upstream_inference_completions_cost": 0,
+				},
+			}),
 		);
 		assert_eq!(value.cost.total, 0.0);
 		assert_eq!(value.cost.total_from_provider, Some(true));
@@ -78,11 +72,15 @@ mod apply_open_router_reported_cost {
 		let mut value = usage(1.0);
 		apply_open_router_reported_cost(
 			&mut value,
-			&OpenRouterUsageAccounting {
-				cost: Some(0.1),
-				is_byok: Some(true),
-				cost_details: Some(details(Some(0.9), 0.6, 0.3)),
-			},
+			&json!({
+				"cost": 0.1,
+				"is_byok": true,
+				"cost_details": {
+					"upstream_inference_cost": 0.9,
+					"upstream_inference_prompt_cost": 0.6,
+					"upstream_inference_completions_cost": 0.3,
+				},
+			}),
 		);
 		assert_eq!(value.cost.total, 1.0);
 		assert_eq!(value.cost.total_from_provider, Some(true));
@@ -93,11 +91,15 @@ mod apply_open_router_reported_cost {
 		let mut value = usage(1.0);
 		apply_open_router_reported_cost(
 			&mut value,
-			&OpenRouterUsageAccounting {
-				cost: Some(0.1),
-				is_byok: Some(true),
-				cost_details: Some(details(None, 0.6, 0.3)),
-			},
+			&json!({
+				"cost": 0.1,
+				"is_byok": true,
+				"cost_details": {
+					"upstream_inference_cost": null,
+					"upstream_inference_prompt_cost": 0.6,
+					"upstream_inference_completions_cost": 0.3,
+				},
+			}),
 		);
 		assert!((value.cost.total - 1.0).abs() < 0.005);
 		assert_eq!(value.cost.total_from_provider, Some(true));
@@ -109,36 +111,33 @@ mod apply_open_router_reported_cost {
 		value.cost.total_from_provider = Some(false);
 		apply_open_router_reported_cost(
 			&mut value,
-			&OpenRouterUsageAccounting {
-				cost: None,
-				is_byok: Some(false),
-				cost_details: None,
-			},
+			&json!({ "cost": null, "is_byok": false, "cost_details": null }),
 		);
 		apply_open_router_reported_cost(
 			&mut value,
-			&OpenRouterUsageAccounting {
-				cost: Some(0.1),
-				is_byok: Some(true),
-				cost_details: None,
-			},
+			&json!({ "cost": 0.1, "is_byok": true, "cost_details": null }),
 		);
 		assert_eq!(value.cost.total, 1.0);
 		assert_eq!(value.cost.total_from_provider, Some(false));
 	}
 
 	#[test]
-	fn reads_the_accounting_of_an_open_router_usage_object() {
-		let reported: OpenRouterUsageAccounting = serde_json::from_value(serde_json::json!({
-			"cost": 0.1,
-			"is_byok": true,
-			"cost_details": {
-				"upstream_inference_cost": null,
-				"upstream_inference_prompt_cost": 0.6,
-				"upstream_inference_completions_cost": 0.3,
-			},
-		}))
-		.unwrap();
-		assert_eq!(reported.cost_details.unwrap().upstream_inference_cost, Some(None));
+	fn skips_fields_of_another_type_like_the_ts_runtime_checks() {
+		let mut value = usage(1.0);
+		apply_open_router_reported_cost(
+			&mut value,
+			&json!({ "cost": 0.002, "is_byok": true, "cost_details": "n/a" }),
+		);
+		apply_open_router_reported_cost(
+			&mut value,
+			&json!({ "cost": 0.002, "is_byok": true, "cost_details": { "upstream_inference_cost": "0" } }),
+		);
+		apply_open_router_reported_cost(&mut value, &json!({ "cost": "0.002", "is_byok": false }));
+		assert_eq!(value.cost.total, 1.0);
+		apply_open_router_reported_cost(
+			&mut value,
+			&json!({ "cost": 0.002, "is_byok": false, "cost_details": "n/a" }),
+		);
+		assert_eq!(value.cost.total, 0.002);
 	}
 }

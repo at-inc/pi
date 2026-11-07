@@ -6,7 +6,9 @@
 //! `retryDelayMs` takes the whole `RetryPolicy` where TS takes `Pick<RetryPolicy, "baseDelayMs" | "maxAgentDelayMs">`.
 //! The `RetryCallbacks` callbacks are async (`void | Promise<void>` is always awaited in TS) and may fail, like a
 //! callback that throws; `produce` may fail like a rejected promise. The backoff sleep is `pi_host::sleep`, which
-//! clamps like `setTimeout`; its abort is the TS `RetrySleepAbortError`.
+//! clamps like `setTimeout`; its abort is the TS `RetrySleepAbortError`. `RetryPolicy` deserializes settings JSON the
+//! way TS reads it: `enabled` by truthiness and a missing number as NaN (TS `undefined`); a number field holding
+//! another JSON type still fails to deserialize.
 
 use std::future::Future;
 use std::rc::Rc;
@@ -142,14 +144,33 @@ static RETRYABLE_PROVIDER_ERROR_PATTERN: LazyLock<JsRegex> = LazyLock::new(|| {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RetryPolicy {
+	#[serde(default, deserialize_with = "js_truthy")]
 	pub enabled: bool,
 	/// Max retry attempts (0 = no retries). The initial call never counts as a retry.
+	#[serde(default = "undefined_number")]
 	pub max_retries: f64,
 	/// Base delay in ms. Per-attempt delay is `baseDelayMs * 2^(attempt-1)` before jitter.
+	#[serde(default = "undefined_number")]
 	pub base_delay_ms: f64,
 	/// Optional cap for agent-level retry delays in ms. Defaults to 60 seconds.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub max_agent_delay_ms: Option<f64>,
+}
+
+/// `policy?.enabled` is read for truthiness, so settings may hold any JSON value there.
+fn js_truthy<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+	Ok(match serde_json::Value::deserialize(deserializer)? {
+		serde_json::Value::Null | serde_json::Value::Bool(false) => false,
+		serde_json::Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+		serde_json::Value::String(text) => !text.is_empty(),
+		_ => true,
+	})
+}
+
+/// A missing number reads as NaN, which behaves like TS `undefined` in the comparisons and arithmetic below: no
+/// attempt reaches `attempt >= undefined`, and `undefined * 2 ** n` is NaN.
+fn undefined_number() -> f64 {
+	f64::NAN
 }
 
 pub const DEFAULT_MAX_AGENT_RETRY_DELAY_MS: f64 = 60_000.0;
@@ -313,4 +334,21 @@ pub fn is_retryable_assistant_error(message: &AssistantMessage) -> bool {
 		return false;
 	}
 	RETRYABLE_PROVIDER_ERROR_PATTERN.test(error_message)
+}
+
+#[cfg(test)]
+mod policy_tests {
+	use super::*;
+
+	#[test]
+	fn reads_a_settings_policy_like_the_ts_runtime() {
+		let policy: RetryPolicy =
+			serde_json::from_value(serde_json::json!({ "enabled": 1, "baseDelayMs": 1000 })).unwrap();
+		assert!(policy.enabled);
+		assert!(policy.max_retries.is_nan());
+		let policy: RetryPolicy =
+			serde_json::from_value(serde_json::json!({ "enabled": "", "maxRetries": 2, "baseDelayMs": 1 })).unwrap();
+		assert!(!policy.enabled);
+		assert_eq!(policy.max_retries, 2.0);
+	}
 }

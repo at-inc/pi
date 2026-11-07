@@ -4,14 +4,20 @@
 //! A TS `ProviderError` is an `Error` with own `status` and `headers` properties (the OpenAI and Anthropic SDK
 //! `APIError` shape). The Rust port reads `status` from `PiError.status` and the headers from `PiError.data.headers`:
 //! a `PiError` is a provider error when `data.headers` is present and is an object of header values or `null` (TS
-//! `headers: undefined`). Header names are matched case-insensitively, like `Headers.get`. `Number.parseFloat` and
-//! `Date.parse` are ported locally: `Date.parse` understands the IMF-fixdate form HTTP uses for `retry-after` (and the
-//! RFC 2822 variants with a numeric zone), plus the ECMAScript date-time format with an explicit offset or a date only;
-//! for other strings, which V8's lenient parser may still read, it returns NaN, so the delay falls back to exponential
-//! backoff. The backoff sleep is `pi_host::sleep`; the request is any async closure.
+//! `headers: undefined`). `PiError.status` cannot tell a missing `status` property from `status: undefined`, so
+//! wave-3 clients must set `data.headers` (`null` when there are none, as for SDK connection errors) on every error
+//! TS would see as a provider error, or Rust does not retry it. Header names are matched case-insensitively, like
+//! `Headers.get`, and only string header values are read (clients store the comma-joined `Headers.get` value).
+//! `Date.parse` is ported locally: it understands the IMF-fixdate form HTTP uses for `retry-after` (and the RFC 2822
+//! variants with a numeric zone, with V8's legacy mapping of years 0-49 to 20xx and 50-99 to 19xx), plus the
+//! ECMAScript date-time format with an explicit offset or a date only. For other strings, which V8's lenient parser
+//! may still read (RFC 850 and asctime dates, and ISO date-times without an offset, which V8 reads as local time),
+//! it returns NaN, so the delay falls back to exponential backoff. The backoff sleep is `pi_host::sleep`; the request
+//! is any async closure.
 
 use std::future::Future;
 
+use pi_host::js::parse_float;
 use pi_host::{AbortSignal, PiError, PiResult};
 use serde_json::Value;
 
@@ -99,7 +105,8 @@ fn get_retry_delay_ms(error: &PiError, retry_index: f64, max_retry_delay_ms: Opt
 		}
 	}
 
-	let exponential_delay = (0.5 * 2f64.powf(retry_index)).min(8.0) * 1000.0;
+	let backoff = 0.5 * 2f64.powf(retry_index);
+	let exponential_delay = if backoff.is_nan() { backoff } else { backoff.min(8.0) } * 1000.0;
 	Ok(exponential_delay * (1.0 - rand::random::<f64>() * 0.25))
 }
 
@@ -161,51 +168,6 @@ where
 /// `StrWhiteSpaceChar`: JavaScript white space and line terminators.
 fn is_js_space(ch: char) -> bool {
 	(ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}'
-}
-
-/// `Number.parseFloat(text)`: the longest decimal literal at the start of `text` after white space, else NaN.
-fn parse_float(text: &str) -> f64 {
-	let text = text.trim_start_matches(is_js_space);
-	let bytes = text.as_bytes();
-	let mut end = 0;
-	if matches!(bytes.first(), Some(b'+' | b'-')) {
-		end = 1;
-	}
-	if text[end..].starts_with("Infinity") {
-		return if text.starts_with('-') {
-			f64::NEG_INFINITY
-		} else {
-			f64::INFINITY
-		};
-	}
-	let digits = |from: usize| from + bytes[from..].iter().take_while(|byte| byte.is_ascii_digit()).count();
-	let integer_end = digits(end);
-	let mut mantissa_end = integer_end;
-	if bytes.get(integer_end) == Some(&b'.') {
-		mantissa_end = digits(integer_end + 1);
-		if mantissa_end == integer_end + 1 {
-			mantissa_end = if integer_end > end {
-				integer_end + 1
-			} else {
-				integer_end
-			};
-		}
-	}
-	if mantissa_end == end || (mantissa_end == end + 1 && bytes[end] == b'.') {
-		return f64::NAN;
-	}
-	let mut literal_end = mantissa_end;
-	if matches!(bytes.get(mantissa_end), Some(b'e' | b'E')) {
-		let mut exponent_start = mantissa_end + 1;
-		if matches!(bytes.get(exponent_start), Some(b'+' | b'-')) {
-			exponent_start += 1;
-		}
-		let exponent_end = digits(exponent_start);
-		if exponent_end > exponent_start {
-			literal_end = exponent_end;
-		}
-	}
-	text[..literal_end].trim_end_matches('.').parse().unwrap_or(f64::NAN)
 }
 
 const MONTHS: [&str; 12] = [
@@ -279,9 +241,13 @@ fn parse_http_date(text: &str) -> Option<f64> {
 	let day = digits_number(day)?;
 	let month = MONTHS
 		.iter()
-		.position(|name| month.len() >= 3 && month[..3].eq_ignore_ascii_case(name))? as f64
+		.position(|name| month.get(..3).is_some_and(|prefix| prefix.eq_ignore_ascii_case(name)))? as f64
 		+ 1.0;
-	let year = digits_number(year)?;
+	let year = match digits_number(year)? {
+		year if year < 50.0 => year + 2000.0,
+		year if year < 100.0 => year + 1900.0,
+		year => year,
+	};
 	let mut fields = clock.split(':');
 	let hour = digits_number(fields.next()?)?;
 	let minute = digits_number(fields.next()?)?;
@@ -291,7 +257,7 @@ fn parse_http_date(text: &str) -> Option<f64> {
 	}
 	let offset_ms = match zone.to_ascii_uppercase().as_str() {
 		"GMT" | "UTC" | "UT" | "Z" => 0.0,
-		zone if zone.len() == 5 && (zone.starts_with('+') || zone.starts_with('-')) => {
+		zone if zone.len() == 5 && zone.is_ascii() && (zone.starts_with('+') || zone.starts_with('-')) => {
 			let minutes = fixed_number(&zone[1..3], 2)? * 60.0 + fixed_number(&zone[3..], 2)?;
 			if zone.starts_with('-') {
 				-minutes * 60_000.0
@@ -372,5 +338,24 @@ mod tests {
 		assert_eq!(date_parse("2015-10-21"), 1_445_385_600_000.0);
 		assert_eq!(date_parse("2000-03-01"), 951_868_800_000.0);
 		assert!(date_parse("soon").is_nan());
+	}
+
+	#[test]
+	fn date_parse_maps_two_digit_years_like_v8() {
+		assert_eq!(
+			date_parse("Thu, 21 Oct 49 07:28:00 GMT"),
+			date_parse("Thu, 21 Oct 2049 07:28:00 GMT")
+		);
+		assert_eq!(date_parse("Wed, 21 Oct 15 07:28:00 GMT"), 1_445_412_480_000.0);
+		assert_eq!(
+			date_parse("Thu, 21 Oct 99 07:28:00 GMT"),
+			date_parse("Thu, 21 Oct 1999 07:28:00 GMT")
+		);
+	}
+
+	#[test]
+	fn date_parse_returns_nan_for_non_ascii_month_and_zone_words() {
+		assert!(date_parse("Wed, 21 aa\u{e9} 2015 07:28:00 GMT").is_nan());
+		assert!(date_parse("Wed, 21 Oct 2015 07:28:00 +a\u{e9}b").is_nan());
 	}
 }
