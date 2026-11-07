@@ -40,14 +40,16 @@ the `.wasm` file). The `workerd` export condition selects the Workers entry.
 In `rust/npm`:
 
 - `npm run check`: biome and `tsc` over both packages, their tests and the bench.
-- `npm run test:vitest`: the TS package's own `openai-completions-*` tests (`packages/ai/test`) against the facade.
+- `npm run test:vitest`: the TS package's own `openai-completions-*` and utils tests (`packages/ai/test`) against the
+  facade.
   `pi-ai/vitest.config.ts` resolves the tests' `../src/<module>` imports to `pi-ai/test/facade/<module>.ts`, which
   re-exports the facade module. A test that imports a module the facade does not provide fails to resolve, so it
-  goes into `skipped` in that config with its reason.
+  goes into `skipped` in that config with its reason; a single test that cannot pass goes into `skippedTests`.
 - `npm run test:workers --workspace=@at-inc/pi-ai-rs`: bundles a Worker with the `workerd` condition, runs it in
   Miniflare and streams one response from a local server through it.
 - `npm run bench`: facade against the TS package on one local stream (2,000 text deltas, then one tool call with
   100 KB of arguments). On a 4-core cloud machine, both take about 14 ms per stream (median 13.9 ms TS, 13.9 ms Rust).
+- `node --conditions=source bench/utils.ts` in `pi-ai`: boundary cost of the bridged utils; see below.
 
 The TS tests mock the `openai` SDK (`vi.mock("openai")`) and assert on what the TS passed to it. The core speaks HTTP,
 so `pi-ai/test/facade/openai-bridge.ts` replaces the host's `fetch` while the SDK is mocked. The bridge turns each
@@ -134,3 +136,25 @@ Notes for the follow-up slices:
 
 Each new package goes into `workspaces` in `rust/npm/package.json` and gets a `test:vitest` script. Add a CI step
 for it to the `wasm` job in `.github/workflows/rust.yml`.
+
+## Boundary cost of the utils
+
+A util that takes messages, tools or a model reads them as JSON text (`JSON.stringify`, then `serde_json`), and
+pays for the size of what crosses, where the TS function may read only a few fields. `pi-ai/bench/utils.ts` on a
+200-message context (113 KB of JSON), median of 300 calls, on a 4-core cloud machine:
+
+| Function | TS | Rust | Slower |
+| --- | --- | --- | --- |
+| `estimateContextTokens(context)` | 0.0028 ms | 0.449 ms | 160x |
+| `normalizeContext(context)` | 0.0025 ms | 0.0137 ms | 5x |
+| `getCurrentTools(messages)` | 0.0014 ms | 0.0916 ms | 66x |
+| `estimateMessageTokens(message)` | 0.0004 ms | 0.0060 ms | 17x |
+| `contentText(content)` | 0.0002 ms | 0.0026 ms | 15x |
+| `isContextOverflow(message)` | 0.0001 ms | 0.0016 ms | 18x |
+| `parseStreamingJson` (1 KB) | 0.0226 ms | 0.0277 ms | 1x |
+| `validateToolArguments` | 0.0054 ms | 0.0142 ms | 3x |
+
+`estimateContextTokens` crosses every message while the TS reads only the messages after the last usage.
+`normalizeContext` and the other transcript helpers read only the system messages in Rust and keep the caller's other
+message objects. The calls stay well under a millisecond, but code that calls them per event or per message should
+cache the result. The core's own request path does not cross: it runs these in Rust on Rust values.

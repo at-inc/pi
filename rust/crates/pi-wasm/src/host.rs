@@ -8,6 +8,7 @@ use indexmap::IndexMap;
 use js_sys::{Function, Object, Promise, Reflect};
 use pi_host::websocket::WebSocket;
 use pi_host::{Host, HttpRequest, HttpResponse, LocalBoxFuture, PiResult};
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -23,8 +24,9 @@ export interface PiHost {
 	monotonic(): number;
 	/** `process.env[name]`; `undefined` without an environment. */
 	env(name: string): string | undefined;
-	/** Resolves after `ms` milliseconds (`setTimeout`). */
-	sleep(ms: number): Promise<void>;
+	/** Resolves after `ms` milliseconds (`setTimeout`), or at once with the timer cleared when `signal` aborts: the core
+	 * aborts it when it stops waiting. */
+	sleep(ms: number, signal?: AbortSignal): Promise<void>;
 	/** `fs.existsSync(path)`; `false` without a file system. */
 	fileExists(path: string): boolean;
 	/** `os.homedir()`; `undefined` without a file system. */
@@ -33,6 +35,8 @@ export interface PiHost {
 	readFile(path: string): Promise<string>;
 	/** `new WebSocket(url, { headers })`; `undefined` without a WebSocket client. */
 	webSocket(url: string, headers: Record<string, string>): WebSocket | undefined;
+	/** `"<platform>; <runtime>/<version>; <arch>"` for the detailed `User-Agent`; `undefined` outside Node.js and Bun. */
+	runtimeDescription?(): string | undefined;
 }
 "#;
 
@@ -50,7 +54,7 @@ extern "C" {
 	#[wasm_bindgen(method)]
 	fn env(this: &JsHostObject, name: &str) -> Option<String>;
 	#[wasm_bindgen(method)]
-	fn sleep(this: &JsHostObject, ms: f64) -> Promise;
+	fn sleep(this: &JsHostObject, ms: f64, signal: &JsValue) -> Promise;
 	#[wasm_bindgen(method, js_name = fileExists)]
 	fn file_exists(this: &JsHostObject, path: &str) -> bool;
 	#[wasm_bindgen(method, js_name = homeDir)]
@@ -99,9 +103,16 @@ impl Host for JsHost {
 		} else {
 			1.0
 		};
-		let timer = JsFuture::from(self.object.sleep(ms));
+		// The host's timer is cleared when the core drops the wait (an abort won the race), as the TS clears its
+		// `setTimeout`, so no timer outlives the wait.
+		let cancel = CancelOnDrop(Some(pi_host::AbortController::new()));
+		let signal = crate::abort::to_js(&cancel.0.as_ref().expect("set above").signal());
+		let timer = JsFuture::from(self.object.sleep(ms, &signal.js));
 		Box::pin(async move {
+			let mut cancel = cancel;
 			let _ = timer.await;
+			cancel.0 = None;
+			drop(signal);
 		})
 	}
 
@@ -135,6 +146,23 @@ impl Host for JsHost {
 			Err(error) => Some(Err(crate::error::from_js(error))),
 			Ok(socket) if socket.is_undefined() || socket.is_null() => None,
 			Ok(socket) => Some(Ok(crate::websocket::JsWebSocket::open(socket))),
+		}
+	}
+
+	fn runtime_description(&self) -> Option<String> {
+		let method = Reflect::get(&self.object, &"runtimeDescription".into()).ok()?;
+		let method = method.dyn_ref::<Function>()?;
+		method.call0(&self.object).ok()?.as_string()
+	}
+}
+
+/// Aborts its controller when dropped while still set.
+struct CancelOnDrop(Option<pi_host::AbortController>);
+
+impl Drop for CancelOnDrop {
+	fn drop(&mut self) {
+		if let Some(controller) = self.0.take() {
+			controller.abort();
 		}
 	}
 }

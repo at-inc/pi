@@ -7,6 +7,10 @@ import { initCore, type PiHost } from "./core.ts";
 
 interface ProcessLike {
 	env?: Record<string, string | undefined>;
+	versions?: { node?: string; bun?: string };
+	version?: string;
+	platform?: string;
+	arch?: string;
 }
 
 /** The host the Workers entry installs. */
@@ -15,7 +19,18 @@ export const host: PiHost = {
 	now: () => Date.now(),
 	monotonic: () => performance.now(),
 	env: (name) => (globalThis as { process?: ProcessLike }).process?.env?.[name],
-	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+	sleep: (ms, signal) =>
+		new Promise((resolve) => {
+			const timer = setTimeout(resolve, ms);
+			signal?.addEventListener(
+				"abort",
+				() => {
+					clearTimeout(timer);
+					resolve();
+				},
+				{ once: true },
+			);
+		}),
 	fileExists: () => false,
 	homeDir: () => undefined,
 	readFile: (path) =>
@@ -31,6 +46,12 @@ export const host: PiHost = {
 		typeof globalThis.WebSocket === "function"
 			? new globalThis.WebSocket(url, { headers } as unknown as string[])
 			: undefined,
+	runtimeDescription: () => {
+		const process = (globalThis as { process?: ProcessLike }).process;
+		const versions = process?.versions;
+		const runtime = versions?.bun ? `bun/${versions.bun}` : versions?.node ? `node/${process?.version}` : undefined;
+		return runtime && `${process?.platform}; ${runtime}; ${process?.arch}`;
+	},
 };
 
 /** The initialized wasm exports. */

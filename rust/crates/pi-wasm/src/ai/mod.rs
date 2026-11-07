@@ -2,9 +2,33 @@
 //! the TS function name; handles are classes named after the TS object they stand for.
 
 mod compat;
+mod diagnostics;
+mod error_body;
+mod estimate;
+mod faux;
+mod hash;
+mod headers;
+mod identity;
+mod json_parse;
+mod kimi_coding;
 mod models;
+mod node_http_proxy;
+mod oauth_page;
 mod openai_completions;
+mod openrouter_cost;
+mod overflow;
+mod provider_env;
+mod provider_retry;
+mod retry;
+mod sanitize_unicode;
+mod simple_options;
+mod streaming_json;
+mod string_enum;
+mod text;
 mod transcript;
+mod uuid;
+mod validation;
+mod version;
 
 use pi_ai::{Context, Model, TranscriptContext};
 use wasm_bindgen::JsValue;

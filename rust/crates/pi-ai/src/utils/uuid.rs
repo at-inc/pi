@@ -2,7 +2,8 @@
 //! PORT-STATUS: reviewed
 //!
 //! The generator state is per thread, like the per-isolate module state in TS. Random bytes come from `rand`, where
-//! TS calls `crypto.getRandomValues`.
+//! TS calls `crypto.getRandomValues`; `uuidv7_with_random_bytes` takes them from the caller (the wasm facade reads the
+//! JS `crypto` at each call, as TS does).
 
 use std::cell::Cell;
 
@@ -19,6 +20,13 @@ thread_local! {
 
 /// Generate a time-ordered UUIDv7. A supplied timestamp is preserved for follower ids.
 pub fn uuidv7(timestamp_ms: Option<f64>) -> PiResult<String> {
+	let mut bytes = [0u8; 16];
+	rand::rng().fill_bytes(&mut bytes);
+	uuidv7_with_random_bytes(timestamp_ms, bytes)
+}
+
+/// `uuidv7` with the 16 random bytes `crypto.getRandomValues` would fill.
+pub fn uuidv7_with_random_bytes(timestamp_ms: Option<f64>, mut bytes: [u8; 16]) -> PiResult<String> {
 	let requested_timestamp = timestamp_ms.unwrap_or_else(pi_host::now_ms);
 	if requested_timestamp.fract() != 0.0
 		|| !requested_timestamp.is_finite()
@@ -40,8 +48,6 @@ pub fn uuidv7(timestamp_ms: Option<f64>) -> PiResult<String> {
 		Some(timestamp) => timestamp,
 	};
 
-	let mut bytes = [0u8; 16];
-	rand::rng().fill_bytes(&mut bytes);
 	let sequence = match SEQUENCE.get() {
 		None => {
 			(u64::from(bytes[1]) << 32)

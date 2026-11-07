@@ -48,6 +48,12 @@ pub trait Host {
 		let error = file_not_found(path);
 		Box::pin(async move { Err(error) })
 	}
+	/// The JS runtime as pi-ai's detailed `User-Agent` describes it, `"<platform>; <runtime>/<version>; <arch>"` (for
+	/// example `"linux; node/v24.0.0; x64"`). Hosts that are not a JS runtime with `process` (browsers, native) return
+	/// `None`.
+	fn runtime_description(&self) -> Option<String> {
+		None
+	}
 }
 
 /// The error Node's `fs.promises.readFile` rejects with for a missing file.
@@ -126,4 +132,9 @@ pub fn home_dir() -> Option<String> {
 /// `await fs.promises.readFile(path, "utf-8")`; fails as for a missing file on hosts without a file system.
 pub async fn read_file(path: &str) -> PiResult<String> {
 	current().read_file(path).await
+}
+
+/// The installed host's `runtime_description`; `None` when no host is installed.
+pub fn runtime_description() -> Option<String> {
+	HOST.with(|slot| slot.borrow().as_ref().and_then(|host| host.runtime_description()))
 }

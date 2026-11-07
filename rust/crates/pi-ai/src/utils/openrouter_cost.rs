@@ -18,7 +18,12 @@ fn valid_cost(value: Option<&Value>) -> Option<f64> {
 }
 
 pub fn is_open_router_model<A>(model: &BaseModel<A>) -> bool {
-	model.provider == "openrouter" || model.base_url.contains("openrouter.ai")
+	is_open_router_target(&model.provider, &model.base_url)
+}
+
+/// `isOpenRouterModel` of a model's `provider` and `baseUrl`.
+pub fn is_open_router_target(provider: &str, base_url: &str) -> bool {
+	provider == "openrouter" || base_url.contains("openrouter.ai")
 }
 
 /// Replace the catalog total with OpenRouter's billed cost when the response contains complete, valid accounting.

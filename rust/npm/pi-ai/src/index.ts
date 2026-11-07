@@ -2,5 +2,61 @@
 
 export type * from "@at-inc/pi-ai";
 export { createModels, createProvider } from "./models.ts";
+export {
+	createFauxCore,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxThinking,
+	fauxToolCall,
+} from "./providers/faux.ts";
+export {
+	appendAssistantMessageDiagnostic,
+	createAssistantMessageDiagnostic,
+	createProviderErrorDiagnostic,
+	extractDiagnosticError,
+	formatThrownValue,
+} from "./utils/diagnostics.ts";
 export { AssistantMessageEventStream, createAssistantMessageEventStream, EventStream } from "./utils/event-stream.ts";
-export { normalizeContext } from "./utils/transcript.ts";
+export {
+	formatUserAgent,
+	getAttributionHeaders,
+	getClientVersion,
+	getIdentityHeaders,
+	getOpenCodeSessionHeaders,
+	mergeClientIdentity,
+	PI_ATTRIBUTION,
+	withClientIdentity,
+} from "./utils/identity.ts";
+export { parseJsonWithRepair, parseStreamingJson, parseToolCallArguments, repairJson } from "./utils/json-parse.ts";
+export { getOverflowPatterns, isContextOverflow, isRecoverableLength } from "./utils/overflow.ts";
+export {
+	DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+	isRetryableAssistantError,
+	retryAssistantCall,
+	retryDelayMs,
+} from "./utils/retry.ts";
+export { StreamingJsonParser, ToolCallArgumentsStream } from "./utils/streaming-json.ts";
+export { StringEnum } from "./utils/string-enum.ts";
+export { contentText, getSystemMessageText, renderSystemMessageUpdate } from "./utils/text.ts";
+export {
+	collapseSystemMessages,
+	createInitialSystemMessage,
+	declarationsEqual,
+	getCurrentSystemMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	getDeclaredTools,
+	getInitialSystemMessage,
+	getToolStateChanges,
+	hasNonAdditiveToolChanges,
+	hasToolRedefinitions,
+	normalizeContext,
+	resolveTranscript,
+	resolveTranscriptTools,
+	toToolDeclaration,
+	withoutInitialSystemMessage,
+} from "./utils/transcript.ts";
+export { uuidv7 } from "./utils/uuid.ts";
+export { validateToolArguments, validateToolCall } from "./utils/validation.ts";
+export { PI_AI_VERSION } from "./utils/version.ts";
