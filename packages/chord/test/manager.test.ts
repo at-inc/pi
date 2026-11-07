@@ -44,7 +44,9 @@ describe("processLock", () => {
 	});
 });
 
-describe("host manager (real child processes)", () => {
+// Each test forks Node children that load chord from source; on a loaded CI runner one spawn took up to 2s, so the
+// lock test (five spawns) overran vitest's 5s default.
+describe("host manager (real child processes)", { timeout: 30_000 }, () => {
 	// A child host that forks its own children used to pass its CHORD2_LOCK on, so they failed with "locked".
 	it("a child without a lock does not inherit the parent's lock", async () => {
 		const name = `chord2-test-${process.pid}-inherited`;
