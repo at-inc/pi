@@ -56,6 +56,19 @@ export const skipped: Record<string, string> = {
 		"asserts onProviderStreamEvent gets the SDK's own item objects (toBe) and a plain Error as an exception item; the core decodes items from the wire, where an exception member is always the modeled exception; the other 2 of 4 tests pass",
 	"test/bedrock-redacted-reasoning.test.ts":
 		"asserts onPayload sees redactedContent as a Uint8Array; the Rust command input is JSON with blobs as base64 text (bedrock_converse_stream.rs); the other 4 of 6 tests pass",
+	"test/openai-responses-foreign-toolcall-id.test.ts":
+		"imports ../src/utils/hash.ts (shortHash), which is not bridged yet; passes against the TS utils/hash",
+	"test/openai-responses-tool-result-images.test.ts":
+		"e2e (skips without credentials); test/oauth.ts imports ../src/providers/all.ts; needs provider factories, bridged by the models slice",
+	"test/azure-openai-base-url.test.ts":
+		"imports ../src/utils/identity.ts (formatUserAgent), which is not bridged yet, and the wasm core's User-Agent is 'pi/<version> (browser)'; 'forwards parsed events in order' expects the SDK's own event objects in onProviderStreamEvent, which the wire cannot reproduce",
+	"test/openai-codex-stream.test.ts":
+		"imports ../src/utils/identity.ts (formatUserAgent), which is not bridged yet, and the wasm core's User-Agent is 'pi/<version> (browser)'; three tests read init.headers only when it is a Headers instance, and the host's fetch passes a plain object; 'zstd-compresses SSE request bodies' needs zstd, which the wasm build does not have (the body goes uncompressed)",
+	"test/github-copilot-request-size-overflow.test.ts":
+		"imports ../src/utils/overflow.ts (isContextOverflow), which is not bridged yet; passes against the TS utils/overflow",
+	"test/constrained-sampling.test.ts":
+		"'replays grammar calls as custom Responses items' changes a tool call after normalizeContext and expects the conversion to see it; the facade's normalizeContext (utils/transcript) returns copies of the messages, the TS returns the caller's objects",
+	"test/supports-xhigh.test.ts": "needs compat getModels, bridged by the models slice",
 };
 
 function facadeModules(): Plugin {
@@ -113,6 +126,16 @@ export default defineConfig({
 			"test/google-*.test.ts",
 			"test/mistral-*.test.ts",
 			"test/bedrock-*.test.ts",
+			"test/openai-responses-*.test.ts",
+			"test/azure-openai-base-url.test.ts",
+			"test/azure-openai-responses-reasoning-replay.test.ts",
+			"test/azure-openai-tool-choice.test.ts",
+			"test/openai-codex-stream.test.ts",
+			"test/max-thinking.test.ts",
+			"test/github-copilot-request-size-overflow.test.ts",
+			"test/constrained-sampling.test.ts",
+			"test/supports-xhigh.test.ts",
+			"test/xhigh.test.ts",
 		],
 		exclude: Object.keys(skipped),
 		testTimeout: 30000,

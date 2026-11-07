@@ -178,16 +178,20 @@ type Block = TextContent | ThinkingContent | ToolCall;
 /**
  * Receives a Rust stream's events and pushes TS events into `stream`. It keeps one live `partial` and applies each
  * event's change to it, so every event's `partial` is the same object, as in the TS. A tool call's `arguments` are read
- * from the core when JS reads them, not on every delta.
+ * from the core when JS reads them, not on every delta. With `output`, that object is the partial: a core function
+ * that fills a message the caller owns (`processResponsesStream`) changes the caller's object.
  */
 export class AssistantMessageEventSink implements WasmEventSink {
-	readonly #stream: CoreAssistantMessageEventStream;
+	readonly #stream: Pick<AssistantMessageEventStream, "push" | "end">;
+	readonly #output: AssistantMessage | undefined;
 	#partial: AssistantMessage | undefined;
 	#handle: AssistantMessageHandle | undefined;
 	readonly #staleArguments = new Map<ToolCall, number>();
 
-	constructor(stream: CoreAssistantMessageEventStream) {
+	constructor(stream: Pick<AssistantMessageEventStream, "push" | "end">, output?: AssistantMessage) {
 		this.#stream = stream;
+		this.#output = output;
+		this.#partial = output;
 	}
 
 	attach(partial: AssistantMessageHandle): void {
@@ -222,7 +226,7 @@ export class AssistantMessageEventSink implements WasmEventSink {
 		}
 		if (message !== undefined) {
 			this.#staleArguments.clear();
-			this.#partial = JSON.parse(message);
+			this.#partial = this.#output ? syncMessage(this.#output, JSON.parse(message)) : JSON.parse(message);
 		}
 		const partial = this.#partial!;
 		if (head !== undefined) syncHead(partial, JSON.parse(head));
@@ -278,6 +282,14 @@ export class AssistantMessageEventSink implements WasmEventSink {
 				});
 				return;
 		}
+	}
+
+	/** Makes the partial equal `message` (JSON) and releases the core's partial; the last call of a sink. */
+	sync(message: string): void {
+		const final: AssistantMessage = JSON.parse(message);
+		if (this.#partial) syncMessage(this.#partial, final);
+		else this.#partial = final;
+		this.#release();
 	}
 
 	/** Makes `block.arguments` read the core's current arguments the next time JS reads it. */

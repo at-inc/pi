@@ -258,7 +258,7 @@ fn on_response<M: 'static>(function: Function, this: JsValue, model: JsValue) ->
 }
 
 /// `options.onProviderStreamEvent(event, model)`.
-fn on_provider_stream_event(function: Function, this: JsValue, model: JsValue) -> OnProviderStreamEvent {
+pub fn on_provider_stream_event(function: Function, this: JsValue, model: JsValue) -> OnProviderStreamEvent {
 	Rc::new(move |event, _| {
 		let (function, this, model) = (function.clone(), this.clone(), model.clone());
 		let event = crate::json::to_js(event);

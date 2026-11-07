@@ -55,6 +55,7 @@ export interface AssistantMessageEventSink {
 		message: string | undefined,
 	): void;
 	attach(partial: AssistantMessageHandle): void;
+	sync(message: string): void;
 }
 "#;
 
@@ -80,6 +81,9 @@ extern "C" {
 	/// Gives the sink the handle of the live partial, before the first event.
 	#[wasm_bindgen(method, catch)]
 	fn attach(this: &EventSink, partial: AssistantMessageHandle) -> Result<(), JsValue>;
+	/// Makes the sink's partial equal `message` (JSON), after the last event of a `Forwarder`.
+	#[wasm_bindgen(method, catch)]
+	fn sync(this: &EventSink, message: String) -> Result<(), JsValue>;
 
 	#[wasm_bindgen(js_namespace = console, js_name = error)]
 	fn console_error(value: &JsValue);
@@ -122,6 +126,39 @@ pub fn send(stream: AssistantMessageEventStream, sink: EventSink) {
 		};
 		report(sink.event(END, 0, None, None, None, result));
 	});
+}
+
+/// Sends the events a Rust function pushes into `stream` to `sink` when asked, for a function that fills a message and a
+/// stream the caller owns (`processResponsesStream`): `flush` sends the queued events at once, so each JS event sees
+/// the message as it was when the function took its next input; `finish` flushes and then syncs the whole message.
+pub struct Forwarder {
+	stream: AssistantMessageEventStream,
+	sink: EventSink,
+	mirror: Mirror,
+}
+
+impl Forwarder {
+	/// Forwards the events of `stream` to `sink`.
+	pub fn new(stream: AssistantMessageEventStream, sink: EventSink) -> Self {
+		Self {
+			stream,
+			sink,
+			mirror: Mirror::default(),
+		}
+	}
+
+	/// Sends the queued events.
+	pub fn flush(&mut self) {
+		while let Some(Some(event)) = self.stream.next().now_or_never() {
+			self.mirror.send(&self.sink, &event);
+		}
+	}
+
+	/// Sends the queued events, then makes the sink's partial equal `message`.
+	pub fn finish(&mut self, message: &SharedAssistantMessage) {
+		self.flush();
+		report(self.sink.sync(whole(message)));
+	}
 }
 
 /// What the JS side holds of the partial, so each event sends only what changed.

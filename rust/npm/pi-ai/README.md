@@ -35,6 +35,13 @@
   `mapStopReason`, `retryGoogleRequest`, ...).
 - `./api/google-generative-ai`, `./api/google-vertex`, `./api/mistral-conversations`: `stream`, `streamSimple`; their
   `.lazy` modules: `googleGenerativeAIApi`, `googleVertexApi`, `mistralConversationsApi`.
+- `./api/openai-responses`, `./api/azure-openai-responses`: `stream`, `streamSimple`; `./api/openai-codex-responses`:
+  `stream`, `streamSimple`, `getOpenAICodexWebSocketDebugStats`, `resetOpenAICodexWebSocketDebugStats`,
+  `closeOpenAICodexWebSocketSessions`; their `.lazy` modules: `openAIResponsesApi`, `azureOpenAIResponsesApi`,
+  `openAICodexResponsesApi`.
+- `./api/openai-responses-shared`: `getResponsesToolSupport`, `convertResponsesMessages`, `convertResponsesTools`,
+  `processResponsesStream`.
+- `./api/openai-prompt-cache`, `./api/azure-openai-config`, `./api/constrained-sampling`: every runtime export.
 
 ## Not bridged yet
 
@@ -62,6 +69,13 @@ package. `getModel` reads the Rust catalog, which is built from the same catalog
   caller's own objects, as in the TS.
 - `transformMessages` returns new message objects, also for messages it leaves unchanged, and calls
   `normalizeToolCallId` with a copy of the source message.
+- `processResponsesStream` fills the caller's `output` and pushes into the caller's stream, but the core reads the
+  events as JSON copies: `onProviderStreamEvent` gets a copy of each event, the events pushed for one input event see
+  the message as it is after that event, a callback option that throws (`onImageGenerationCall`,
+  `resolveServiceTier`, ...) is ignored, and an early rejection does not call the iterator's `return()`.
+- `appendGrammarToolInputJsonDelta` and `closeGrammarToolInputJson` copy `buffer.input` across the boundary on each
+  call, so a caller that streams a long input through them pays time linear in the input per call.
+- The Codex request body is not zstd-compressed on wasm (the build has no zstd); the backend accepts it uncompressed.
 - The Anthropic Messages `User-Agent` on wasm is `pi/<version> (browser)`; the TS on Node reports its platform and
   runtime. The host does not expose them to the core yet.
 - Bedrock: the command input `onPayload` sees and the items `onProviderStreamEvent` sees are JSON, with blobs

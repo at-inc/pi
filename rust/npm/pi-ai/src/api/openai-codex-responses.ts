@@ -12,3 +12,12 @@ export const stream: typeof ts.stream = (model, context, options) =>
 
 export const streamSimple: typeof ts.streamSimple = (model, context, options) =>
 	streamFrom((sink) => streams.streamSimple(model, context, options, sink));
+
+export const getOpenAICodexWebSocketDebugStats: typeof ts.getOpenAICodexWebSocketDebugStats = (sessionId) =>
+	wasm.aiGetOpenAICodexWebSocketDebugStats(sessionId);
+
+export const resetOpenAICodexWebSocketDebugStats: typeof ts.resetOpenAICodexWebSocketDebugStats = (sessionId) =>
+	wasm.aiResetOpenAICodexWebSocketDebugStats(sessionId);
+
+export const closeOpenAICodexWebSocketSessions: typeof ts.closeOpenAICodexWebSocketSessions = (sessionId) =>
+	wasm.aiCloseOpenAICodexWebSocketSessions(sessionId);

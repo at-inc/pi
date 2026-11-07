@@ -4,13 +4,15 @@
 // options from the URL and headers, params from the body, request options `{ signal, maxRetries: 0 }`) and the mock's
 // chunks (or, for a non-streaming request, its response object) or thrown error back into an HTTP response; a thrown
 // `APIError`'s `error` is the body's `error`, as the SDK parses it. Imported by the shims, so it sees the test file's mocks.
+// A request with an `api-version` query is an Azure request: it goes to the mock's `AzureOpenAI` class with
+// `apiVersion` and the `api-key` header as `apiKey`, as the TS constructs that client.
 //
 // The wire cannot tell `apiKey` from an `Authorization` the caller passed in `headers`, and the core sends header
 // names in lower case, so a request's authorization becomes both `apiKey` and `defaultHeaders.Authorization`; an
 // absent one becomes `defaultHeaders.Authorization: null`, which is how the TS drops it.
 
 import { host } from "@at-inc/pi-core";
-import OpenAI from "openai";
+import * as sdk from "openai";
 
 interface FakeEndpoint {
 	create(params: unknown, options: unknown): PromiseLike<unknown> & { withResponse?(): Promise<unknown> };
@@ -23,8 +25,16 @@ interface FakeClient {
 
 type FakeOpenAI = new (options: unknown) => FakeClient;
 
+/** A class the SDK module exports; a mock that does not define it has none (accessing it would throw). */
+function sdkClass(name: "default" | "AzureOpenAI"): FakeOpenAI | undefined {
+	return name in sdk ? (sdk as unknown as Record<string, FakeOpenAI>)[name] : undefined;
+}
+
+const OpenAI = sdkClass("default");
+const AzureOpenAI = sdkClass("AzureOpenAI");
+
 // The real SDK class carries its error classes as statics; a test's fake class does not.
-const mocked = typeof (OpenAI as unknown as { APIError?: unknown }).APIError !== "function";
+const mocked = typeof (OpenAI as unknown as { APIError?: unknown } | undefined)?.APIError !== "function";
 
 /** The SDK endpoints the core's OpenAI adapters call, by URL path suffix. */
 const ENDPOINTS: Array<[string, (client: FakeClient) => FakeEndpoint]> = [
@@ -38,26 +48,48 @@ const SDK_HEADERS = /^(content-type|accept|x-stainless-.*)$/i;
 if (mocked) {
 	const realFetch = host.fetch;
 	host.fetch = async (url, init) => {
-		const endpoint = ENDPOINTS.find(([path]) => url.endsWith(path));
+		const parsed = new URL(url);
+		const apiVersion = parsed.searchParams.get("api-version");
+		parsed.searchParams.delete("api-version");
+		// Like the SDK, the core appends the path to the base URL string, so a base URL with a query gets the path inside
+		// that query (`/v1?custom=true%2Fresponses`).
+		const target = apiVersion === null ? url : decodeURIComponent(parsed.href);
+		const endpoint = ENDPOINTS.find(([path]) => target.endsWith(path));
 		if (!endpoint) return realFetch(url, init);
 		const [path, select] = endpoint;
 		const headers = (init.headers ?? {}) as Record<string, string>;
-		const authorization = Object.entries(headers).find(([name]) => name.toLowerCase() === "authorization")?.[1];
+		const header = (wanted: string) => Object.entries(headers).find(([name]) => name.toLowerCase() === wanted)?.[1];
+		const authorization = header("authorization");
 		const defaultHeaders: Record<string, string | null> = Object.fromEntries(
 			Object.entries(headers).filter(
 				([name, value]) =>
 					!SDK_HEADERS.test(name) &&
-					name.toLowerCase() !== "authorization" &&
-					!(name.toLowerCase() === "user-agent" && value.startsWith("OpenAI/JS")),
+					!["authorization", "api-key"].includes(name.toLowerCase()) &&
+					!(name.toLowerCase() === "user-agent" && /^(Azure)?OpenAI\/JS/.test(value)),
 			),
 		);
-		defaultHeaders.Authorization = authorization ?? null;
-		const client = new (OpenAI as unknown as FakeOpenAI)({
-			apiKey: authorization?.replace(/^Bearer /, ""),
-			baseURL: url.slice(0, -path.length),
-			dangerouslyAllowBrowser: true,
-			defaultHeaders,
-		});
+		const baseURL = target.slice(0, -path.length);
+		let client: FakeClient;
+		if (apiVersion !== null && AzureOpenAI) {
+			// The TS sets the Azure client's User-Agent as `defaultHeaders["User-Agent"]`; the core sends names in lower case.
+			const { "user-agent": userAgent, ...rest } = defaultHeaders;
+			const azureHeaders = userAgent === undefined ? rest : { "User-Agent": userAgent, ...rest };
+			client = new AzureOpenAI({
+				apiKey: header("api-key"),
+				apiVersion,
+				dangerouslyAllowBrowser: true,
+				defaultHeaders: azureHeaders,
+				baseURL,
+			});
+		} else {
+			defaultHeaders.Authorization = authorization ?? null;
+			client = new (OpenAI as FakeOpenAI)({
+				apiKey: authorization?.replace(/^Bearer /, ""),
+				baseURL,
+				dangerouslyAllowBrowser: true,
+				defaultHeaders,
+			});
+		}
 		const params = JSON.parse(init.body as string);
 		try {
 			const request = select(client).create(params, { signal: init.signal, maxRetries: 0 });

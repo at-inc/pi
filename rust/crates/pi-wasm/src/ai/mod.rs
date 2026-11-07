@@ -2,10 +2,12 @@
 //! the TS function name; handles are classes named after the TS object they stand for.
 
 mod anthropic_messages;
+mod azure_openai_config;
 mod azure_openai_responses;
 mod bedrock_converse_stream;
 mod compat;
 mod faux;
+mod constrained_sampling;
 mod github_copilot_headers;
 mod google_generative_ai;
 mod google_shared;
@@ -17,7 +19,9 @@ mod models;
 mod models_store;
 mod openai_codex_responses;
 mod openai_completions;
+mod openai_prompt_cache;
 mod openai_responses;
+mod openai_responses_shared;
 mod pi_messages;
 mod provider_bridge;
 mod providers;
