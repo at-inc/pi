@@ -13,10 +13,22 @@
 			"@earendil-works/pi-schema": ["../../packages/schema/src/index.ts"],
 			"@earendil-works/pi-schema/formats": ["../../packages/schema/src/formats/index.ts"],
 			"@earendil-works/pi-telemetry": ["../../packages/telemetry/src/index.ts"],
+			"@earendil-works/pi-mcp": ["../../packages/mcp/src/index.ts"],
+			"@earendil-works/pi-mcp/oauth": ["../../packages/mcp/src/oauth/index.ts"],
+			"@earendil-works/pi-mcp/testing": ["../../packages/mcp/src/testing/index.ts"],
 			"typebox": ["../../node_modules/typebox"],
 			"openai": ["../../packages/ai/node_modules/openai/index.d.mts"]
 		}
 	},
-	"include": ["pi-core/src/**/*", "pi-ai/src/**/*", "pi-ai/test/**/*", "pi-ai/bench/**/*", "pi-ai/vitest.config.ts"],
+	"include": [
+		"pi-core/src/**/*",
+		"pi-ai/src/**/*",
+		"pi-ai/test/**/*",
+		"pi-ai/bench/**/*",
+		"pi-ai/vitest.config.ts",
+		"pi-mcp/src/**/*",
+		"pi-mcp/test/**/*",
+		"pi-mcp/vitest.config.ts"
+	],
 	"exclude": ["**/dist/**"]
 }
