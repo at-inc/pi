@@ -11,14 +11,14 @@ use pi_ai::auth::types::{
 	ApiKeyAuth, ApiKeyAuthInput, AuthContext, AuthOperationOptions, Credential, OAuthAuth, OAuthCredential,
 	ProviderAuth,
 };
+use pi_ai::utils::diagnostics::Thrown;
+use pi_ai::utils::models_error::{ModelsError, ModelsErrorCode};
 use pi_ai::{
 	AnyModel, BaseModel, ClassifierModel, CreateModelsOptions, CreateProviderOptions, DeferredHandle, ImageModel,
 	Model, ModelThinkingLevel, ModelType, ModelsApiStreamOptions, ModelsClassifierOptions, ModelsDeferredCancelOptions,
 	ModelsDeferredFetchOptions, ModelsImagesOptions, ModelsRefreshOptions, ModelsSimpleStreamOptions, MutableModels,
 	Provider, ProviderApi, ProviderClassifier, ProviderImages, ProviderModel, ProviderStreams, Usage,
 };
-use pi_ai::utils::diagnostics::Thrown;
-use pi_ai::utils::models_error::{ModelsError, ModelsErrorCode};
 use pi_host::{AbortController, AbortSignal, PiError, PiResult};
 use serde::Serialize;
 use serde_json::Value;
@@ -462,22 +462,22 @@ fn api_key_auth(api_key: &JsValue) -> Option<ApiKeyAuth> {
 	let check = method("check");
 	let this = api_key.clone();
 	Some(ApiKeyAuth {
-			name,
-			login: None,
-			check: check.map(|check| {
-				let this = this.clone();
-				Rc::new(move |input: ApiKeyAuthInput| {
-					let (check, this) = (check.clone(), this.clone());
-					Box::pin(async move { optional_result(&check, &this, input).await }) as pi_host::LocalBoxFuture<_>
-				}) as pi_ai::auth::types::ApiKeyCheckFunction
+		name,
+		login: None,
+		check: check.map(|check| {
+			let this = this.clone();
+			Rc::new(move |input: ApiKeyAuthInput| {
+				let (check, this) = (check.clone(), this.clone());
+				Box::pin(async move { optional_result(&check, &this, input).await }) as pi_host::LocalBoxFuture<_>
+			}) as pi_ai::auth::types::ApiKeyCheckFunction
+		}),
+		resolve: match resolve {
+			Some(resolve) => Rc::new(move |input: ApiKeyAuthInput| {
+				let (resolve, this) = (resolve.clone(), this.clone());
+				Box::pin(async move { optional_result(&resolve, &this, input).await })
 			}),
-			resolve: match resolve {
-				Some(resolve) => Rc::new(move |input: ApiKeyAuthInput| {
-					let (resolve, this) = (resolve.clone(), this.clone());
-					Box::pin(async move { optional_result(&resolve, &this, input).await })
-				}),
-				None => Rc::new(|_| Box::pin(async { Ok(None) })),
-			},
+			None => Rc::new(|_| Box::pin(async { Ok(None) })),
+		},
 	})
 }
 
@@ -847,8 +847,9 @@ pub fn models_options(options: &JsValue) -> Result<CreateModelsOptions, JsValue>
 	let field = |name: &str| Reflect::get(options, &name.into()).unwrap_or(JsValue::UNDEFINED);
 	let object = |name: &str| Some(field(name)).filter(JsValue::is_object);
 	Ok(CreateModelsOptions {
-		credentials: object("credentials")
-			.map(|object| Rc::new(super::stores::JsCredentialStore { object }) as Rc<dyn pi_ai::auth::types::CredentialStore>),
+		credentials: object("credentials").map(|object| {
+			Rc::new(super::stores::JsCredentialStore { object }) as Rc<dyn pi_ai::auth::types::CredentialStore>
+		}),
 		models_store: object("modelsStore")
 			.map(|object| Rc::new(super::stores::JsModelsStore { object }) as Rc<dyn pi_ai::ModelsStore>),
 		auth_context: object("authContext").map(|object| Rc::new(JsAuthContext { object }) as Rc<dyn AuthContext>),
@@ -1136,7 +1137,12 @@ impl ModelsHandle {
 
 	/// `models.classify(model, context, options)`. Never rejects for a readable model, as in the TS.
 	pub fn classify(&self, model: JsValue, context: JsValue, options: JsValue) -> Promise {
-		let args = (|| Ok::<_, JsValue>((super::entry_model::<ClassifierModel>(&model, CLASSIFIER_FILL)?, arg(context)?)))();
+		let args = (|| {
+			Ok::<_, JsValue>((
+				super::entry_model::<ClassifierModel>(&model, CLASSIFIER_FILL)?,
+				arg(context)?,
+			))
+		})();
 		let options = models_request(options, |options| ModelsClassifierOptions {
 			transform_headers: options.transform_headers(),
 			base: options.classifier_options(&model),
@@ -1153,8 +1159,12 @@ const CHAT_FILL: &[(&str, fn() -> Value)] = &[
 	("contextWindow", || Value::from(0)),
 	("maxTokens", || Value::from(0)),
 ];
-const IMAGE_FILL: &[(&str, fn() -> Value)] = &[("type", || Value::from("chat")), ("output", || Value::Array(Vec::new()))];
-const CLASSIFIER_FILL: &[(&str, fn() -> Value)] = &[("type", || Value::from("chat")), ("contextWindow", || Value::from(0))];
+const IMAGE_FILL: &[(&str, fn() -> Value)] = &[
+	("type", || Value::from("chat")),
+	("output", || Value::Array(Vec::new())),
+];
+const CLASSIFIER_FILL: &[(&str, fn() -> Value)] =
+	&[("type", || Value::from("chat")), ("contextWindow", || Value::from(0))];
 
 /// The options of a `Models` request: the provider options plus `transformHeaders`; `None` when the caller passed none.
 fn models_request<T>(options: JsValue, read: impl FnOnce(JsOptions) -> T) -> Option<T> {

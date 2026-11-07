@@ -141,4 +141,3 @@ pub fn get_env_api_key(provider: &str, env: JsValue) -> Result<Option<String>, J
 	let env: Option<pi_ai::ProviderEnv> = if env.is_undefined() { None } else { Some(arg(env)?) };
 	Ok(pi_ai::env_api_keys::get_env_api_key(provider, env.as_ref()))
 }
-

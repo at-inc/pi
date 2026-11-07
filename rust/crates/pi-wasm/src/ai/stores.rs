@@ -24,7 +24,12 @@ impl CredentialStore for JsCredentialStore {
 		provider_id: &str,
 		options: Option<AuthOperationOptions>,
 	) -> LocalBoxFuture<'static, PiResult<Option<Credential>>> {
-		let call = call(&self.object, "read", provider_id, options.and_then(|options| options.signal));
+		let call = call(
+			&self.object,
+			"read",
+			provider_id,
+			options.and_then(|options| options.signal),
+		);
 		Box::pin(async move { optional(call.await?) })
 	}
 
@@ -63,8 +68,17 @@ impl CredentialStore for JsCredentialStore {
 		})
 	}
 
-	fn delete(&self, provider_id: &str, options: Option<AuthOperationOptions>) -> LocalBoxFuture<'static, PiResult<()>> {
-		let call = call(&self.object, "delete", provider_id, options.and_then(|options| options.signal));
+	fn delete(
+		&self,
+		provider_id: &str,
+		options: Option<AuthOperationOptions>,
+	) -> LocalBoxFuture<'static, PiResult<()>> {
+		let call = call(
+			&self.object,
+			"delete",
+			provider_id,
+			options.and_then(|options| options.signal),
+		);
 		Box::pin(async move {
 			call.await?;
 			Ok(())
@@ -83,7 +97,12 @@ impl ModelsStore for JsModelsStore {
 		provider_id: &str,
 		options: Option<ModelsStoreOperationOptions>,
 	) -> LocalBoxFuture<'static, PiResult<Option<ModelsStoreEntry>>> {
-		let call = call(&self.object, "read", provider_id, options.and_then(|options| options.signal));
+		let call = call(
+			&self.object,
+			"read",
+			provider_id,
+			options.and_then(|options| options.signal),
+		);
 		Box::pin(async move { optional(call.await?) })
 	}
 
@@ -107,7 +126,12 @@ impl ModelsStore for JsModelsStore {
 		provider_id: &str,
 		options: Option<ModelsStoreOperationOptions>,
 	) -> LocalBoxFuture<'static, PiResult<()>> {
-		let call = call(&self.object, "delete", provider_id, options.and_then(|options| options.signal));
+		let call = call(
+			&self.object,
+			"delete",
+			provider_id,
+			options.and_then(|options| options.signal),
+		);
 		Box::pin(async move {
 			call.await?;
 			Ok(())

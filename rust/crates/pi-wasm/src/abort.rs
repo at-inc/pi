@@ -100,7 +100,9 @@ pub fn to_js(signal: &AbortSignal) -> JsSignal {
 	let js = controller.signal();
 	match signal.reason() {
 		Some(reason) => controller.abort(&crate::error::to_js(&reason)),
-		None => remember(signal, js.clone(), move |reason| controller.abort(&crate::error::to_js(reason))),
+		None => remember(signal, js.clone(), move |reason| {
+			controller.abort(&crate::error::to_js(reason))
+		}),
 	}
 	JsSignal { js }
 }

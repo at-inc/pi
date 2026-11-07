@@ -64,25 +64,37 @@ pub fn provider(module: &str) -> Result<ProviderHandle, JsValue> {
 /// `radiusProvider(options)`.
 #[wasm_bindgen(js_name = aiRadiusProvider)]
 pub fn radius_provider(id: Option<String>, name: Option<String>, gateway: Option<String>) -> ProviderHandle {
-	provider_handle(providers::radius::radius_provider(Some(RadiusProviderOptions { id, name, gateway })))
+	provider_handle(providers::radius::radius_provider(Some(RadiusProviderOptions {
+		id,
+		name,
+		gateway,
+	})))
 }
 
 /// `builtinProviders()`: every built-in provider, freshly constructed.
 #[wasm_bindgen(js_name = aiBuiltinProviders)]
 pub fn builtin_providers() -> Vec<ProviderHandle> {
-	providers::all::builtin_providers().into_iter().map(provider_handle).collect()
+	providers::all::builtin_providers()
+		.into_iter()
+		.map(provider_handle)
+		.collect()
 }
 
 /// `builtinImagesProviders()`: the built-in providers with image models.
 #[wasm_bindgen(js_name = aiBuiltinImagesProviders)]
 pub fn builtin_images_providers() -> Vec<ProviderHandle> {
-	providers::all::builtin_images_providers().into_iter().map(provider_handle).collect()
+	providers::all::builtin_images_providers()
+		.into_iter()
+		.map(provider_handle)
+		.collect()
 }
 
 /// `builtinModels(options)`: a `Models` collection with every built-in provider.
 #[wasm_bindgen(js_name = aiBuiltinModels)]
 pub fn builtin_models(options: JsValue) -> Result<ModelsHandle, JsValue> {
-	Ok(ModelsHandle::new(providers::all::builtin_models(Some(super::models::models_options(&options)?))))
+	Ok(ModelsHandle::new(providers::all::builtin_models(Some(
+		super::models::models_options(&options)?,
+	))))
 }
 
 /// `getBuiltinModel`, `getBuiltinImageModel` or `getBuiltinClassifierModel` by model type; `undefined` when unknown.
@@ -104,7 +116,9 @@ pub fn get_builtin_models_of_type(model_type: JsValue, provider: &str) -> Result
 	match arg::<ModelType>(model_type)? {
 		ModelType::Chat => throw(crate::json::to_js(&providers::all::get_builtin_models(provider))),
 		ModelType::Image => throw(crate::json::to_js(&providers::all::get_builtin_image_models(provider))),
-		ModelType::Classifier => throw(crate::json::to_js(&providers::all::get_builtin_classifier_models(provider))),
+		ModelType::Classifier => throw(crate::json::to_js(&providers::all::get_builtin_classifier_models(
+			provider,
+		))),
 	}
 }
 
@@ -117,7 +131,10 @@ pub fn get_all_builtin_models(provider: &str) -> Result<JsValue, JsValue> {
 /// `getBuiltinProviders()`.
 #[wasm_bindgen(js_name = aiGetBuiltinProviders)]
 pub fn get_builtin_providers() -> Vec<String> {
-	providers::all::get_builtin_providers().into_iter().map(String::from).collect()
+	providers::all::get_builtin_providers()
+		.into_iter()
+		.map(String::from)
+		.collect()
 }
 
 /// `getBuiltinModelDataGeneratedAt()`.
@@ -134,7 +151,9 @@ pub fn builtin_catalog(model_type: JsValue, provider: &str) -> Result<JsValue, J
 	let catalog = match arg::<ModelType>(model_type)? {
 		ModelType::Chat => MODELS.get(provider).map(|catalog| crate::json::to_js(*catalog)),
 		ModelType::Image => IMAGE_MODELS.get(provider).map(|catalog| crate::json::to_js(*catalog)),
-		ModelType::Classifier => CLASSIFIER_MODELS.get(provider).map(|catalog| crate::json::to_js(*catalog)),
+		ModelType::Classifier => CLASSIFIER_MODELS
+			.get(provider)
+			.map(|catalog| crate::json::to_js(*catalog)),
 	};
 	catalog.map_or_else(|| Ok(js_sys::Object::new().into()), throw)
 }
@@ -142,9 +161,14 @@ pub fn builtin_catalog(model_type: JsValue, provider: &str) -> Result<JsValue, J
 /// `openRouterCost(pricing)` (`providers/openrouter-api`).
 #[wasm_bindgen(js_name = aiOpenRouterCost)]
 pub fn open_router_cost(pricing: JsValue) -> Result<JsValue, JsValue> {
-	let pricing: Option<providers::openrouter_api::OpenRouterPricing> =
-		if pricing.is_undefined() { None } else { Some(arg(pricing)?) };
-	throw(crate::json::to_js(&providers::openrouter_api::open_router_cost(pricing.as_ref())))
+	let pricing: Option<providers::openrouter_api::OpenRouterPricing> = if pricing.is_undefined() {
+		None
+	} else {
+		Some(arg(pricing)?)
+	};
+	throw(crate::json::to_js(&providers::openrouter_api::open_router_cost(
+		pricing.as_ref(),
+	)))
 }
 
 /// `cloudflareWorkersAIAuth()` (`providers/cloudflare-auth`).
@@ -177,14 +201,19 @@ pub fn get_radius_credential_config(credential: JsValue) -> Result<JsValue, JsVa
 #[wasm_bindgen(js_name = aiGetRadiusModelsFromConfig)]
 pub fn get_radius_models_from_config(provider_id: &str, config: JsValue) -> Result<JsValue, JsValue> {
 	let config: RadiusGatewayConfig = arg(config)?;
-	throw(crate::json::to_js(&providers::radius_config::get_radius_models_from_config(provider_id, &config)))
+	throw(crate::json::to_js(
+		&providers::radius_config::get_radius_models_from_config(provider_id, &config),
+	))
 }
 
 /// `getRadiusModels(providerId, credential)` (`providers/radius-config`).
 #[wasm_bindgen(js_name = aiGetRadiusModels)]
 pub fn get_radius_models(provider_id: &str, credential: JsValue) -> Result<JsValue, JsValue> {
 	let credential = optional_credential(credential)?;
-	throw(crate::json::to_js(&providers::radius_config::get_radius_models(provider_id, credential.as_ref())))
+	throw(crate::json::to_js(&providers::radius_config::get_radius_models(
+		provider_id,
+		credential.as_ref(),
+	)))
 }
 
 fn optional_credential(credential: JsValue) -> Result<Option<pi_ai::auth::types::OAuthCredential>, JsValue> {
