@@ -53,6 +53,12 @@ impl AbortSignal {
 		Rc::ptr_eq(&a.state, &b.state)
 	}
 
+	/// An identity of the signal, unique among the signals alive at the same time: what a host keys a cache of its
+	/// own signal objects by.
+	pub fn id(&self) -> usize {
+		Rc::as_ptr(&self.state) as *const () as usize
+	}
+
 	/// `signal.reason`.
 	pub fn reason(&self) -> Option<PiError> {
 		self.state.borrow().reason.clone()

@@ -1,10 +1,11 @@
 // models: createProvider and createModels over Rust providers, plus the module's helper functions. Providers written in
-// JS (any `Provider` object) and the facade's Rust providers both go into a Rust `Models`; `createModels` bridges
-// `identity` only, and `login`/`logout`, `credentials`, `modelsStore` and `authContext` belong to the auth facade.
+// JS (any `Provider` object) and the facade's Rust providers both go into a Rust `Models`, which calls the JS stores
+// and auth context it is given; `login`/`logout` belong to the auth facade.
 
 import type {
 	AnyModel,
 	Api,
+	ApiKeyAuth,
 	AssistantMessage,
 	AssistantMessageEventStream,
 	AuthCheck,
@@ -21,7 +22,7 @@ import type {
 } from "@at-inc/pi-ai";
 import type * as ts from "@at-inc/pi-ai/models";
 import { streamFrom, wasm } from "@at-inc/pi-core";
-import type { ModelsHandle, ProviderHandle } from "@at-inc/pi-core/wasm";
+import type { ApiKeyAuthHandle, ModelsHandle, ProviderHandle } from "@at-inc/pi-core/wasm";
 import { rethrow, revived } from "./internal/errors.ts";
 import { nativeClassifierOf, nativeImagesOf, nativeOf } from "./internal/native-api.ts";
 import { notBridged } from "./internal/not-bridged.ts";
@@ -70,14 +71,7 @@ export function providerFromHandle(handle: ProviderHandle, auth: ProviderAuth = 
 function authOf(handle: ProviderHandle): ProviderAuth {
 	const auth: ProviderAuth = {};
 	const apiKey = handle.apiKeyAuth();
-	if (apiKey) {
-		auth.apiKey = {
-			name: apiKey.name,
-			resolve: (input) => apiKey.resolve(input).catch(rethrow),
-			...(apiKey.hasCheck() && { check: (input) => apiKey.check(input).catch(rethrow) }),
-			...(apiKey.hasLogin() && { login: () => notBridged("apiKey.login") }),
-		};
-	}
+	if (apiKey) auth.apiKey = apiKeyAuthOf(apiKey);
 	const oauth = handle.oauthAuth();
 	if (oauth) {
 		auth.oauth = {
@@ -90,6 +84,16 @@ function authOf(handle: ProviderHandle): ProviderAuth {
 		};
 	}
 	return auth;
+}
+
+/** The JS `ApiKeyAuth` of a Rust one. `login` belongs to the auth facade. */
+export function apiKeyAuthOf(apiKey: ApiKeyAuthHandle): ApiKeyAuth {
+	return {
+		name: apiKey.name,
+		resolve: (input) => apiKey.resolve(input).catch(rethrow),
+		...(apiKey.hasCheck() && { check: (input) => apiKey.check(input).catch(rethrow) }),
+		...(apiKey.hasLogin() && { login: () => notBridged("apiKey.login") }),
+	};
 }
 
 /** The entries of an implementation map, without the `undefined` ones. */
@@ -271,12 +275,7 @@ export class RustModels implements ts.MutableModels {
 	}
 }
 
-export const createModels: typeof ts.createModels = (options) => {
-	if (options?.credentials || options?.modelsStore || options?.authContext) {
-		notBridged("createModels({ credentials, modelsStore, authContext })");
-	}
-	return new RustModels(wasm.aiCreateModels(options ?? {}));
-};
+export const createModels: typeof ts.createModels = (options) => new RustModels(wasm.aiCreateModels(options ?? {}));
 
 export const hasApi: typeof ts.hasApi = ((model: AnyModel, api: string) =>
 	wasm.aiHasApi(model, api)) as typeof ts.hasApi;

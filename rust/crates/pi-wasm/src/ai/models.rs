@@ -400,12 +400,58 @@ fn optional<T: serde::de::DeserializeOwned>(value: JsValue) -> Result<Option<T>,
 	}
 }
 
-/// `ProviderAuth` of a JS `auth` object. `apiKey.resolve` and `apiKey.check` are bridged; `login` and `oauth` belong
-/// to the auth facade and are not bridged yet.
+/// `ProviderAuth` of a JS `auth` object: `apiKey.resolve`/`check` and `oauth.refresh`/`toAuth` call the JS methods.
+/// The `login` flows belong to the auth facade and are not bridged yet.
 pub fn provider_auth(auth: &JsValue) -> ProviderAuth {
-	let api_key = Reflect::get(auth, &"apiKey".into()).unwrap_or(JsValue::UNDEFINED);
+	ProviderAuth {
+		api_key: api_key_auth(&Reflect::get(auth, &"apiKey".into()).unwrap_or(JsValue::UNDEFINED)),
+		oauth: oauth_auth(&Reflect::get(auth, &"oauth".into()).unwrap_or(JsValue::UNDEFINED)),
+	}
+}
+
+/// `OAuthAuth` of a JS `oauth` object.
+fn oauth_auth(oauth: &JsValue) -> Option<OAuthAuth> {
+	if !oauth.is_object() {
+		return None;
+	}
+	let field = |name: &str| Reflect::get(oauth, &name.into()).unwrap_or(JsValue::UNDEFINED);
+	let (refresh_this, to_auth_this) = (oauth.clone(), oauth.clone());
+	Some(OAuthAuth {
+		name: field("name").as_string().unwrap_or_default(),
+		is_subscription: field("isSubscription").as_bool(),
+		login_label: field("loginLabel").as_string(),
+		login: Rc::new(|_, _| Box::pin(async { Err(PiError::new("oauth.login is not bridged to the Rust core yet")) })),
+		refresh: Rc::new(move |credential: OAuthCredential, signal: AbortSignal| {
+			let this = refresh_this.clone();
+			Box::pin(async move {
+				let signal = crate::abort::to_js(&signal);
+				let credential = crate::json::to_js(&credential)?;
+				crate::json::from_js(call_method(&this, "refresh", &[credential, signal.js.clone()]).await?)
+			})
+		}),
+		to_auth: Rc::new(move |credential: OAuthCredential| {
+			let this = to_auth_this.clone();
+			Box::pin(async move {
+				let credential = crate::json::to_js(&credential)?;
+				crate::json::from_js(call_method(&this, "toAuth", &[credential]).await?)
+			})
+		}),
+	})
+}
+
+/// `await object[key](...args)`.
+async fn call_method(object: &JsValue, key: &str, args: &[JsValue]) -> PiResult<JsValue> {
+	let function: Function = Reflect::get(object, &key.into())
+		.map_err(crate::error::from_js)?
+		.dyn_into()
+		.map_err(|_| PiError::type_error(format!("{key} is not a function")))?;
+	crate::callback::call(&function, object, args).await
+}
+
+/// `ApiKeyAuth` of a JS `apiKey` object.
+fn api_key_auth(api_key: &JsValue) -> Option<ApiKeyAuth> {
 	if !api_key.is_object() {
-		return ProviderAuth::default();
+		return None;
 	}
 	let method = |name: &str| Reflect::get(&api_key, &name.into()).ok()?.dyn_into::<Function>().ok();
 	let name = Reflect::get(&api_key, &"name".into())
@@ -415,8 +461,7 @@ pub fn provider_auth(auth: &JsValue) -> ProviderAuth {
 	let resolve = method("resolve");
 	let check = method("check");
 	let this = api_key.clone();
-	ProviderAuth {
-		api_key: Some(ApiKeyAuth {
+	Some(ApiKeyAuth {
 			name,
 			login: None,
 			check: check.map(|check| {
@@ -433,9 +478,7 @@ pub fn provider_auth(auth: &JsValue) -> ProviderAuth {
 				}),
 				None => Rc::new(|_| Box::pin(async { Ok(None) })),
 			},
-		}),
-		oauth: None,
-	}
+	})
 }
 
 /// Calls an api-key auth method with `{ ctx, credential, signal }`; `undefined` is `None`.
@@ -689,6 +732,12 @@ pub struct ApiKeyAuthHandle {
 	inner: ApiKeyAuth,
 }
 
+impl ApiKeyAuthHandle {
+	pub fn new(inner: ApiKeyAuth) -> Self {
+		Self { inner }
+	}
+}
+
 #[wasm_bindgen]
 impl ApiKeyAuthHandle {
 	/// `apiKey.name`.
@@ -785,8 +834,7 @@ impl OAuthAuthHandle {
 	}
 }
 
-/// `createModels(options)`. Only `identity` is bridged; `credentials`, `modelsStore` and `authContext` belong to the
-/// auth facade.
+/// `createModels(options)`.
 #[wasm_bindgen(js_name = aiCreateModels)]
 pub fn create_models(options: JsValue) -> Result<ModelsHandle, JsValue> {
 	Ok(ModelsHandle {
@@ -794,20 +842,17 @@ pub fn create_models(options: JsValue) -> Result<ModelsHandle, JsValue> {
 	})
 }
 
-/// `CreateModelsOptions` of the JS options; only `identity` is bridged.
-fn models_options(options: &JsValue) -> Result<CreateModelsOptions, JsValue> {
-	let identity = Reflect::get(options, &"identity".into()).unwrap_or(JsValue::UNDEFINED);
+/// `CreateModelsOptions` of the JS options: the stores and the auth context are JS objects the Rust `Models` calls.
+pub fn models_options(options: &JsValue) -> Result<CreateModelsOptions, JsValue> {
+	let field = |name: &str| Reflect::get(options, &name.into()).unwrap_or(JsValue::UNDEFINED);
+	let object = |name: &str| Some(field(name)).filter(JsValue::is_object);
 	Ok(CreateModelsOptions {
-		identity: optional(identity)?,
-		..CreateModelsOptions::default()
-	})
-}
-
-/// `builtinModels(options)` (`providers/all`): a `Models` collection with every built-in provider.
-#[wasm_bindgen(js_name = aiBuiltinModels)]
-pub fn builtin_models(options: JsValue) -> Result<ModelsHandle, JsValue> {
-	Ok(ModelsHandle {
-		inner: pi_ai::providers::all::builtin_models(Some(models_options(&options)?)),
+		credentials: object("credentials")
+			.map(|object| Rc::new(super::stores::JsCredentialStore { object }) as Rc<dyn pi_ai::auth::types::CredentialStore>),
+		models_store: object("modelsStore")
+			.map(|object| Rc::new(super::stores::JsModelsStore { object }) as Rc<dyn pi_ai::ModelsStore>),
+		auth_context: object("authContext").map(|object| Rc::new(JsAuthContext { object }) as Rc<dyn AuthContext>),
+		identity: optional(field("identity"))?,
 	})
 }
 
@@ -842,6 +887,12 @@ pub fn models_error_message(message: &str, cause: JsValue) -> String {
 #[wasm_bindgen]
 pub struct ModelsHandle {
 	inner: Rc<dyn MutableModels>,
+}
+
+impl ModelsHandle {
+	pub fn new(inner: Rc<dyn MutableModels>) -> Self {
+		Self { inner }
+	}
 }
 
 #[wasm_bindgen]
@@ -1009,7 +1060,7 @@ impl ModelsHandle {
 
 	/// `models.stream(model, context, options)`.
 	pub fn stream(&self, model: JsValue, context: JsValue, options: JsValue, sink: EventSink) -> Result<(), JsValue> {
-		let parsed = super::model(&model)?;
+		let parsed = super::entry_model(&model, CHAT_FILL)?;
 		let context: pi_ai::Context = arg(context)?;
 		let options = models_request(options, |options| ModelsApiStreamOptions {
 			transform_headers: options.transform_headers(),
@@ -1028,7 +1079,7 @@ impl ModelsHandle {
 		options: JsValue,
 		sink: EventSink,
 	) -> Result<(), JsValue> {
-		let parsed = super::model(&model)?;
+		let parsed = super::entry_model(&model, CHAT_FILL)?;
 		let context: pi_ai::Context = arg(context)?;
 		let options = models_request(options, |options| ModelsSimpleStreamOptions {
 			transform_headers: options.transform_headers(),
@@ -1047,7 +1098,7 @@ impl ModelsHandle {
 		options: JsValue,
 		sink: EventSink,
 	) -> Result<(), JsValue> {
-		let (parsed, handle) = (super::model(&model)?, arg::<DeferredHandle>(handle)?);
+		let (parsed, handle) = (super::entry_model(&model, CHAT_FILL)?, arg::<DeferredHandle>(handle)?);
 		let options = models_request(options, |options| ModelsDeferredFetchOptions {
 			transform_headers: options.transform_headers(),
 			base: options.deferred_fetch_options(&model),
@@ -1059,7 +1110,7 @@ impl ModelsHandle {
 	/// `models.cancelDeferred(model, handle, options)`.
 	#[wasm_bindgen(js_name = cancelDeferred)]
 	pub fn cancel_deferred(&self, model: JsValue, handle: JsValue, options: JsValue) -> Promise {
-		let args = (|| Ok::<_, JsValue>((super::model(&model)?, arg::<DeferredHandle>(handle)?)))();
+		let args = (|| Ok::<_, JsValue>((super::entry_model(&model, CHAT_FILL)?, arg::<DeferredHandle>(handle)?)))();
 		let options = models_request(options, |options| ModelsDeferredCancelOptions {
 			transform_headers: options.transform_headers(),
 			base: options.deferred_cancel_options(&model),
@@ -1074,7 +1125,7 @@ impl ModelsHandle {
 	/// `models.generateImages(model, context, options)`. Never rejects for a readable model, as in the TS.
 	#[wasm_bindgen(js_name = generateImages)]
 	pub fn generate_images(&self, model: JsValue, context: JsValue, options: JsValue) -> Promise {
-		let args = (|| Ok::<_, JsValue>((arg::<ImageModel>(model.clone())?, arg(context)?)))();
+		let args = (|| Ok::<_, JsValue>((super::entry_model::<ImageModel>(&model, IMAGE_FILL)?, arg(context)?)))();
 		let options = models_request(options, |options| ModelsImagesOptions {
 			transform_headers: options.transform_headers(),
 			base: options.images_options(&model).base,
@@ -1085,7 +1136,7 @@ impl ModelsHandle {
 
 	/// `models.classify(model, context, options)`. Never rejects for a readable model, as in the TS.
 	pub fn classify(&self, model: JsValue, context: JsValue, options: JsValue) -> Promise {
-		let args = (|| Ok::<_, JsValue>((arg::<ClassifierModel>(model.clone())?, arg(context)?)))();
+		let args = (|| Ok::<_, JsValue>((super::entry_model::<ClassifierModel>(&model, CLASSIFIER_FILL)?, arg(context)?)))();
 		let options = models_request(options, |options| ModelsClassifierOptions {
 			transform_headers: options.transform_headers(),
 			base: options.classifier_options(&model),
@@ -1094,6 +1145,16 @@ impl ModelsHandle {
 		promise(async move { crate::json::to_js(&pending.map_err(crate::error::from_js)?.await) })
 	}
 }
+
+/// The fields a model of another type lacks for each `Models` entry point (see `entry_model`); a model without `type`
+/// is a chat model.
+const CHAT_FILL: &[(&str, fn() -> Value)] = &[
+	("reasoning", || Value::Bool(false)),
+	("contextWindow", || Value::from(0)),
+	("maxTokens", || Value::from(0)),
+];
+const IMAGE_FILL: &[(&str, fn() -> Value)] = &[("type", || Value::from("chat")), ("output", || Value::Array(Vec::new()))];
+const CLASSIFIER_FILL: &[(&str, fn() -> Value)] = &[("type", || Value::from("chat")), ("contextWindow", || Value::from(0))];
 
 /// The options of a `Models` request: the provider options plus `transformHeaders`; `None` when the caller passed none.
 fn models_request<T>(options: JsValue, read: impl FnOnce(JsOptions) -> T) -> Option<T> {
