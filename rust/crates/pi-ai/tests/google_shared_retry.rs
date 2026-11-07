@@ -1,7 +1,8 @@
 //! Port of `packages/ai/test/google-shared-retry.test.ts`.
 //!
 //! The SDK `ApiError` is a `PiError` with `status` and no `data`. Fake timers are the test host's virtual clock, which
-//! fires the backoff timer as soon as the request waits on it, so `advanceTimersByTimeAsync(500)` needs no step.
+//! fires the backoff timer as soon as the request waits on it, so `advanceTimersByTimeAsync(500)` is the check that
+//! the virtual clock moved at most 500 ms.
 //! `rejects.toBe(error)` compares the message and status of the error.
 
 use std::cell::Cell;
@@ -23,6 +24,7 @@ mod google_request_retries {
 	fn retries_a_headers_less_sdk_error_with_a_retryable_status() {
 		run(|_| async {
 			let calls = Rc::new(Cell::new(0));
+			let started_at = pi_host::now_ms();
 			let result = retry_google_request(
 				|| {
 					let calls = calls.clone();
@@ -42,6 +44,7 @@ mod google_request_retries {
 			)
 			.await;
 
+			assert!(pi_host::now_ms() - started_at <= 500.0);
 			assert_eq!(result, Ok("ok"));
 			assert_eq!(calls.get(), 2);
 		});

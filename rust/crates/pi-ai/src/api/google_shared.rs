@@ -7,7 +7,9 @@
 //! raw `finishReason` string, because the SDK passes the response value through untyped: a value outside the SDK enum
 //! reaches the exhaustive switch's `default` and throws `Unhandled stop reason`, as in TS. `resolveGoogleThinkingLevel`
 //! takes a `ModelThinkingLevel` (the TS `ThinkingLevel` plus `off`), because its callers pass clamped levels.
-//! `sanitizeSurrogates` is the identity in Rust (see `utils/sanitize_unicode.rs`).
+//! `sanitizeSurrogates` is the identity in Rust (see `utils/sanitize_unicode.rs`). `retryGoogleRequest` adds the
+//! missing `headers` to the error's `data` object (or creates one); an error whose `data` is not an object has no
+//! property bag to hold it and is rethrown as is.
 
 use std::future::Future;
 use std::sync::LazyLock;
