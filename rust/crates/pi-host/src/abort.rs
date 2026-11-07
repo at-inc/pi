@@ -48,6 +48,11 @@ impl AbortSignal {
 		self.state.borrow().reason.is_some()
 	}
 
+	/// `a === b`: whether both handles are the same signal.
+	pub fn ptr_eq(a: &AbortSignal, b: &AbortSignal) -> bool {
+		Rc::ptr_eq(&a.state, &b.state)
+	}
+
 	/// `signal.reason`.
 	pub fn reason(&self) -> Option<PiError> {
 		self.state.borrow().reason.clone()
