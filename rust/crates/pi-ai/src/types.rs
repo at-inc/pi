@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Dropped type-level helpers with no runtime effect: `IsAny`, `IsExactlyJsonValue`, `IsJsonProperty`,
 //! `InvalidJsonKeys`, `IsJsonCompatible`, `JsonRepresentation`, `ApiOptionsMap`, `ApiStreamOptions`,

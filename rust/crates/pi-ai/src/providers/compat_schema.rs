@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/compat-schema.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The schemas are JSON values (see `schema_builders.rs`). Each `Static<typeof XSchema>` type becomes a Rust
 //! struct or enum of the values the schema accepts. `OpenRouterRouting` and `VercelGatewayRouting` stay raw JSON

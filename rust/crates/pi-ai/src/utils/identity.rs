@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/identity.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The runtime in the detailed `User-Agent` comes from the Rust build: `rust/<rust-version>` with Node-style platform
 //! and architecture names, and `(browser)` on wasm32, where TS reads `process` (`node/v24.x` or `bun/1.x`).

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/sanitize-unicode.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! A Rust `str` is valid UTF-8 and cannot hold an unpaired surrogate, so there is nothing to remove: text decoded
 //! from UTF-16 or JSON in this crate already has U+FFFD in place of an unpaired surrogate.

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/model-schema.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The schemas are JSON values (see `schema_builders.rs`). Each `Static<typeof XSchema>` type alias becomes the
 //! Rust type of the values the schema accepts.

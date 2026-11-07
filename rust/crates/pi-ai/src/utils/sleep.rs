@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/sleep.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The delay is clamped the way `setTimeout` clamps it, which `pi_host::sleep` does not do.
 

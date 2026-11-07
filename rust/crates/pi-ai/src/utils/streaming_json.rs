@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/streaming-json.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Incremental, tolerant parsing of JSON text that arrives in pieces, such as streamed tool-call arguments.
 //!

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/json-parse.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TS calls `JSON.parse`, whose error messages end up in `ToolCall.argumentsError`, and the `partial-json` package.
 //! Both are ported here: [`json_parse`] follows V8's JSON parser, including its error messages, positions in UTF-16

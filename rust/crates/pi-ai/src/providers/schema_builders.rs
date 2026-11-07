@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/schema-builders.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! pi-schema's builders return plain JSON Schema objects, and these schemas are only used as data, so the Rust port
 //! builds them as `serde_json::Value`s. `Property`, `Properties` and `opt` stand in for pi-schema's `Optional`,

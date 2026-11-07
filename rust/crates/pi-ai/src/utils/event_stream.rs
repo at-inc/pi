@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/event-stream.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `result()` resolves with a copy of the final message taken when the stream completed (PORTING.md, "Decisions
