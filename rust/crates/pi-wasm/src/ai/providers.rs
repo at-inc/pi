@@ -217,6 +217,16 @@ pub fn get_radius_models(provider_id: &str, credential: JsValue) -> Result<JsVal
 	)))
 }
 
+/// `loadRadiusGatewayConfig(gateway, apiKey, signal)` (`providers/radius-config`).
+#[wasm_bindgen(js_name = aiLoadRadiusGatewayConfig)]
+pub fn load_radius_gateway_config(gateway: String, api_key: Option<String>, signal: JsValue) -> js_sys::Promise {
+	let signal = crate::abort::from_js(&signal);
+	super::auth::promise(async move {
+		let config = providers::radius_config::load_radius_gateway_config(&gateway, api_key.as_deref(), signal).await?;
+		crate::json::to_js(&config)
+	})
+}
+
 fn optional_credential(credential: JsValue) -> Result<Option<pi_ai::auth::types::OAuthCredential>, JsValue> {
 	if credential.is_undefined() || credential.is_null() {
 		return Ok(None);

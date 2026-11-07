@@ -1,8 +1,10 @@
 # @at-inc/pi-ai-rs
 
-`@at-inc/pi-ai` backed by the pi Rust core. It has the same exports map and module layout, the types of
-`@at-inc/pi-ai` (a peer dependency) and a runtime in wasm (`@at-inc/pi-core`). Switch to it with a package alias:
-`"@at-inc/pi-ai": "npm:@at-inc/pi-ai-rs@<version>"`.
+`@at-inc/pi-ai` backed by the pi Rust core. It has the same exports map and module layout and a runtime in wasm
+(`@at-inc/pi-core`). Its declaration files re-export those of `@at-inc/pi-ai` (a peer dependency), so its types are
+the TS package's. Switch to it with a package alias under another name than the peer, as bro-components imports pi-ai:
+`"@earendil-works/pi-ai": "npm:@at-inc/pi-ai-rs@<version>"`. An alias named `@at-inc/pi-ai` would make the peer
+resolve to the facade itself.
 
 ## Bridged
 
@@ -79,8 +81,9 @@ These throw `<name> is not bridged to the Rust core yet`:
 
 `options.telemetry` is not passed to the core yet: a JS `TelemetrySpan` does not reach implementations.
 
-The other modules of `@at-inc/pi-ai` are not in this package yet: `session-resources` (whose values the root index
-also exports) and `utils/model-operations`. No runtime value comes from the TS package. `getModel` reads the Rust
+`utils/model-operations` is not in this package yet. `session-resources` shares the core's registry, so
+`cleanupSessionResources` also closes the core's Codex WebSocket sessions; the `errors` of its `AggregateError` are
+copies (`{ name, message }`) of what the cleanups threw. No runtime value comes from the TS package. `getModel` reads the Rust
 catalog, which is built from the same catalog data.
 
 ## Differences from the TS

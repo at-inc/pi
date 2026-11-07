@@ -32,8 +32,10 @@ Then, in `rust/npm`:
 
 - `npm run build:wasm` runs `cargo build --release` of pi-wasm for wasm32, then `wasm-bindgen --target web --weak-refs`
   into `pi-core/wasm`. The script fails if the CLI version differs from the crate version.
-- `npm run build` builds the wasm and then `dist/` of both packages. `dist/` takes its types from `@at-inc/pi-ai`'s
-  `dist`, so build the TS packages first (`npm run build` at the root, or telemetry, schema and ai).
+- `npm run build` builds the wasm and then `dist/` of each package. A facade's `dist/` has its JavaScript and, for
+  every module of its exports map, a declaration file that re-exports the TS package's module
+  (`scripts/build-facade.mjs`), so its public types are the TS package's. The script reads the TS package's
+  `dist/`, so build the TS packages first (`npm run build` at the root, or telemetry, schema, mcp, ai and agent).
 
 `--target web` gives ES module glue with an explicit `initSync({ module })`. `pi-core/src/core.ts` calls it with the
 wasm bytes (Node reads `pi_wasm_bg.wasm` next to the package) or with a compiled `WebAssembly.Module` (Workers import

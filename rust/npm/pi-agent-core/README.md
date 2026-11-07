@@ -1,9 +1,10 @@
 # @at-inc/pi-agent-core-rs
 
 `@at-inc/pi-agent-core` backed by the pi Rust core (`rust/crates/pi-agent`). It has the same exports map and module
-layout, the types of `@at-inc/pi-agent-core` (a peer dependency) and a runtime in wasm (`@at-inc/pi-core`). Its pi-ai
-runtime values (`EventStream`) come from `@at-inc/pi-ai-rs`. Switch to it with a package alias:
-`"@at-inc/pi-agent-core": "npm:@at-inc/pi-agent-core-rs@<version>"`.
+layout, the types of `@at-inc/pi-agent-core` (a peer dependency; the declaration files re-export its own) and a
+runtime in wasm (`@at-inc/pi-core`). Its pi-ai runtime values (`EventStream`) come from `@at-inc/pi-ai-rs`. Switch to
+it with a package alias under another name than the peer: `"@earendil-works/pi-agent-core":
+"npm:@at-inc/pi-agent-core-rs@<version>"`.
 
 ## Bridged
 

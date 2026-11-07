@@ -27,6 +27,7 @@ export {
 	fauxThinking,
 	fauxToolCall,
 } from "./providers/faux.ts";
+export { cleanupSessionResources, registerSessionResourceCleanup } from "./session-resources.ts";
 export {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,

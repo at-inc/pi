@@ -17,7 +17,7 @@
 		"README.md"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"build": "node ../scripts/build-facade.mjs @at-inc/pi-agent-core ../../../packages/agent",
 		"test:vitest": "node ../../../node_modules/vitest/vitest.mjs --run --config vitest.config.ts"
 	},
 	"dependencies": {

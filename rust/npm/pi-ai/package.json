@@ -48,7 +48,7 @@
 		"README.md"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"build": "node ../scripts/build-facade.mjs @at-inc/pi-ai ../../../packages/ai",
 		"test:vitest": "node ../../../node_modules/vitest/vitest.mjs --run --config vitest.config.ts",
 		"test:workers": "node test/workers/smoke.ts && node test/workers/listen.ts",
 		"bench": "node --conditions=source bench/stream.ts"

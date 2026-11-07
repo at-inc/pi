@@ -24,15 +24,13 @@
 		"README.md"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"build": "node ../scripts/build-facade.mjs @at-inc/pi-mcp-ts ../../../packages/mcp",
 		"test:vitest": "node ../../../node_modules/vitest/vitest.mjs --run --config vitest.config.ts",
 		"test:workers": "node test/workers/smoke.ts"
 	},
 	"dependencies": {
-		"@at-inc/pi-core": "1.5.0"
-	},
-	"peerDependencies": {
-		"@earendil-works/pi-mcp": "1.5.0"
+		"@at-inc/pi-core": "1.5.0",
+		"@at-inc/pi-mcp-ts": "npm:@earendil-works/pi-mcp@1.5.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"

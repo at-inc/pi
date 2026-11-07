@@ -1,8 +1,9 @@
 # @at-inc/pi-mcp-rs
 
 `@earendil-works/pi-mcp` backed by the pi Rust core. It has the same exports map (`.`, `./oauth`, `./testing`) and
-module layout, the types of `@earendil-works/pi-mcp` (a peer dependency) and a runtime in wasm (`@at-inc/pi-core`).
-Switch to it with a package alias: `"@earendil-works/pi-mcp": "npm:@at-inc/pi-mcp-rs@<version>"`.
+module layout, the types of `@earendil-works/pi-mcp` and a runtime in wasm (`@at-inc/pi-core`). Its declaration files
+re-export the TS package's, which it depends on as `@at-inc/pi-mcp-ts`, so the usual alias keeps working:
+`"@earendil-works/pi-mcp": "npm:@at-inc/pi-mcp-rs@<version>"`.
 
 ## Bridged
 

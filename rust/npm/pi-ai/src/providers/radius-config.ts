@@ -19,3 +19,6 @@ export const getRadiusModelsFromConfig: typeof ts.getRadiusModelsFromConfig = (p
 
 export const getRadiusModels: typeof ts.getRadiusModels = (providerId, credential) =>
 	wasm.aiGetRadiusModels(providerId, credential);
+
+export const loadRadiusGatewayConfig: typeof ts.loadRadiusGatewayConfig = (gateway, apiKey, signal) =>
+	wasm.aiLoadRadiusGatewayConfig(gateway, apiKey, signal);

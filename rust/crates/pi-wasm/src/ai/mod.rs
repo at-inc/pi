@@ -59,6 +59,7 @@ mod provider_retry;
 mod providers;
 mod retry;
 mod sanitize_unicode;
+mod session_resources;
 mod simple_options;
 mod streaming_json;
 mod string_enum;
