@@ -92,7 +92,11 @@ pub fn generate_images(
 		let timeout_ms = options
 			.and_then(|options| options.timeout_ms)
 			.unwrap_or(DEFAULT_IMAGE_TIMEOUT_MS);
-		let timeout_signal = (timeout_ms > 0.0).then(|| AbortSignal::timeout(timeout_ms));
+		let timeout_signal = if timeout_ms > 0.0 {
+			Some(AbortSignal::try_timeout(timeout_ms)?)
+		} else {
+			None
+		};
 		let request_signal = combine_abort_signals(&[
 			options.and_then(|options| options.signal.as_ref()),
 			timeout_signal.as_ref(),
