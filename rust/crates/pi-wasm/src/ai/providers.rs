@@ -228,3 +228,36 @@ fn optional_credential(credential: JsValue) -> Result<Option<pi_ai::auth::types:
 pub fn default_radius_gateway() -> String {
 	providers::radius_config::DEFAULT_RADIUS_GATEWAY.to_string()
 }
+
+/// `personalizeOpenRouterCatalog(catalog, context)` (`providers/openrouter`). A model the core returns unchanged is the
+/// caller's object, and an unchanged catalog is the caller's array, as the TS returns them by reference.
+#[wasm_bindgen(js_name = aiPersonalizeOpenRouterCatalog)]
+pub fn personalize_open_router_catalog(catalog: js_sys::Array, context: JsValue) -> js_sys::Promise {
+	let models = arg::<Vec<AnyModel>>(catalog.clone().into());
+	let context = super::provider_bridge::refresh_context_from_js(&context);
+	wasm_bindgen_futures::future_to_promise(async move {
+		let models = models?;
+		let context = context.map_err(|error| crate::error::to_js(&error))?;
+		let result = providers::openrouter::personalize_open_router_catalog(&models, &context)
+			.await
+			.map_err(|error| crate::error::to_js(&error))?;
+		if result == models {
+			return Ok(catalog.into());
+		}
+		let mut next = 0;
+		let output = js_sys::Array::new();
+		for model in &result {
+			let original = models[next..].iter().position(|candidate| candidate == model);
+			match original {
+				Some(offset) => {
+					next += offset + 1;
+					output.push(&catalog.get((next - 1) as u32));
+				}
+				None => {
+					output.push(&throw(crate::json::to_js(model))?);
+				}
+			}
+		}
+		Ok(output.into())
+	})
+}

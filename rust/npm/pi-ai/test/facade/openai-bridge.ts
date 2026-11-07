@@ -2,7 +2,8 @@
 // the TS passed to it; the core speaks HTTP instead. When this module sees a mocked SDK it replaces the host's fetch
 // with a bridge that turns each Chat Completions or Responses request back into the SDK call the TS makes (client
 // options from the URL and headers, params from the body, request options `{ signal, maxRetries: 0 }`) and the mock's
-// chunks or thrown error back into an SSE response. Imported by the shims, so it sees the test file's mocks.
+// chunks (or, for a non-streaming request, its response object) or thrown error back into an HTTP response; a thrown
+// `APIError`'s `error` is the body's `error`, as the SDK parses it. Imported by the shims, so it sees the test file's mocks.
 //
 // The wire cannot tell `apiKey` from an `Authorization` the caller passed in `headers`, and the core sends header
 // names in lower case, so a request's authorization becomes both `apiKey` and `defaultHeaders.Authorization`; an
@@ -66,6 +67,11 @@ if (mocked) {
 				data: unknown;
 				response?: { status?: number; headers?: ResponseInit["headers"] };
 			};
+			if (!params.stream) {
+				const headers = new Headers(response?.headers);
+				if (!headers.has("content-type")) headers.set("content-type", "application/json");
+				return new Response(JSON.stringify(data), { status: response?.status ?? 200, headers });
+			}
 			return new Response(sse(data), {
 				status: response?.status ?? 200,
 				headers: response?.headers ?? { "content-type": "text/event-stream" },
@@ -73,8 +79,8 @@ if (mocked) {
 		} catch (error) {
 			const status = (error as { status?: unknown }).status;
 			if (typeof status !== "number") throw error;
-			const message = (error as Error).message;
-			return new Response(JSON.stringify({ error: { message } }), {
+			const body = (error as { error?: unknown }).error ?? { message: (error as Error).message };
+			return new Response(JSON.stringify({ error: body }), {
 				status,
 				headers: (error as { headers?: ResponseInit["headers"] }).headers,
 			});
