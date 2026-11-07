@@ -44,6 +44,18 @@ export const skipped: Record<string, string> = {
 		"imports ../src/utils/identity.ts (formatUserAgent), which is not bridged yet; the wasm core's User-Agent is 'pi/<version> (browser)' where the TS on Node reports the Node runtime",
 	"test/mistral-raw-stop-reason.test.ts":
 		"imports ../src/utils/retry.ts (isRetryableAssistantError), which is not bridged yet",
+	"test/bedrock-convert-messages.test.ts":
+		"content blocks of an unknown type fail to parse into the Rust Context (closed tagged enums; the TS skips them), and a lone surrogate reaches Rust as U+FFFD, so sanitizeSurrogates cannot drop it; the other 10 of 16 tests pass",
+	"test/bedrock-credentials.test.ts":
+		"needs getBuiltinModel (../src/providers/all.ts), bridged by the models slice; even then the request cannot show an explicit or env-scoped profile (the core resolves its keys before sending) or the secret key",
+	"test/bedrock-endpoint-resolution.test.ts":
+		"an explicit or env-scoped profile never reaches the wire: the core resolves its keys from the shared config files before sending, where the mocked SDK never does; the other 8 of 9 tests pass",
+	"test/bedrock-models.test.ts":
+		"needs getModels in ../src/compat.ts (the built-in catalog), bridged by the models slice",
+	"test/bedrock-raw-stop-reason.test.ts":
+		"asserts onProviderStreamEvent gets the SDK's own item objects (toBe) and a plain Error as an exception item; the core decodes items from the wire, where an exception member is always the modeled exception; the other 2 of 4 tests pass",
+	"test/bedrock-redacted-reasoning.test.ts":
+		"asserts onPayload sees redactedContent as a Uint8Array; the Rust command input is JSON with blobs as base64 text (bedrock_converse_stream.rs); the other 4 of 6 tests pass",
 };
 
 function facadeModules(): Plugin {
@@ -100,6 +112,7 @@ export default defineConfig({
 			"test/fork-model-fallbacks.test.ts",
 			"test/google-*.test.ts",
 			"test/mistral-*.test.ts",
+			"test/bedrock-*.test.ts",
 		],
 		exclude: Object.keys(skipped),
 		testTimeout: 30000,

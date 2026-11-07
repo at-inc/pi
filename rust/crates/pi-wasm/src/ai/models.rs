@@ -293,7 +293,7 @@ fn has_method(object: &JsValue, key: &str) -> bool {
 
 /// The chat implementation of `input.api` (or one entry of an `api` map): a facade `*Api()` value carries its
 /// `NativeStreams` and is used directly; any other object is a JS implementation.
-fn provider_streams(native: Option<NativeStreams>, object: JsValue) -> Rc<dyn ProviderStreams> {
+pub(super) fn provider_streams(native: Option<NativeStreams>, object: JsValue) -> Rc<dyn ProviderStreams> {
 	match native {
 		Some(native) => native.inner,
 		None => Rc::new(JsStreams { object }),

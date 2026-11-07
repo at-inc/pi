@@ -16,6 +16,10 @@
   (`setProvider`, `deleteProvider`, `clearProviders`, `getProviders`, `getProvider`, `getModels`, `getModel`,
   `stream`, `complete`, `streamSimple`, `completeSimple`).
 - `./utils/transcript`: `normalizeContext`.
+- `./api/bedrock-converse-stream`: `stream`, `streamSimple`.
+- `./api/bedrock-converse-stream.lazy`: `bedrockConverseStreamApi`, `setBedrockProviderModule` (a facade module
+  object keeps its Rust implementation; any other `{ stream, streamSimple }` is called through JS).
+- `./bedrock-provider`: `bedrockProviderModule`.
 - `./types`: types only.
 - `./api/anthropic-messages`: `stream` (including `options.client`, a pre-built SDK client called through JS),
   `streamSimple`.
@@ -60,3 +64,8 @@ package. `getModel` reads the Rust catalog, which is built from the same catalog
   `normalizeToolCallId` with a copy of the source message.
 - The Anthropic Messages `User-Agent` on wasm is `pi/<version> (browser)`; the TS on Node reports its platform and
   runtime. The host does not expose them to the core yet.
+- Bedrock: the command input `onPayload` sees and the items `onProviderStreamEvent` sees are JSON, with blobs
+  (`image.source.bytes`, `redactedContent`) as base64 text instead of `Uint8Array`, and an exception item is the
+  modeled exception. The client always sends through the host's fetch, so HTTP(S) proxies and
+  `AWS_BEDROCK_FORCE_HTTP1` do not apply, and it resolves credentials and the region before it sends (see
+  `rust/crates/pi-ai/src/api/bedrock_client.rs` for the SDK differences).
