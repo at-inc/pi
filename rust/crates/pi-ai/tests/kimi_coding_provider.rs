@@ -108,7 +108,10 @@ mod kimi_code_api_key_regions {
 				let mut options = ModelsSimpleStreamOptions::default();
 				options.fetch = Some(Rc::new(move |request: HttpRequest| {
 					counted.set(counted.get() + 1);
-					assert_eq!(request.url, format!("https://api.kimi.{domain}/coding/v1/chat/completions"));
+					assert_eq!(
+						request.url,
+						format!("https://api.kimi.{domain}/coding/v1/chat/completions")
+					);
 					assert_eq!(request.header("authorization"), Some("Bearer test-key"));
 					let response = HttpResponse::from_bytes(
 						200,
