@@ -3,6 +3,9 @@
 //! The tests run on `pi_host::testing`'s fake timers, which advance to the next timer whenever every task waits, so
 //! they check recorded poll times instead of stepping the clock.
 
+// The options' fields sit behind `Deref`, so the struct literal this lint suggests does not compile.
+#![allow(clippy::field_reassign_with_default)]
+
 mod common;
 
 use std::cell::{Cell, RefCell};

@@ -2,6 +2,9 @@
 //!
 //! `vi.stubEnv(name, "")` is the empty `TestHost` environment. `it.each` cases run in a loop.
 
+// The options' fields sit behind `Deref`, so the struct literal this lint suggests does not compile.
+#![allow(clippy::field_reassign_with_default)]
+
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
