@@ -11,20 +11,35 @@
 //! - `FauxResponseFactory` always returns a future; a sync TS factory, a throwing one, and a rejecting one all map
 //!   to it (`Err` is the throw). The factory gets the state `Rc`.
 //! - `fauxAssistantMessage(content)` takes `impl Into<FauxAssistantContent>` for `string | FauxContentBlock |
-//!   FauxContentBlock[]`; `FauxModelDefinition.cost` is a `ModelCost` (its `tiers` unused).
+//!   FauxContentBlock[]`; `FauxModelDefinition.cost` is a `ModelCost`, whose `tiers` pass through to the model.
 //! - `fauxProvider()` returns the provider as `Rc<Provider>` so `MutableModels.setProvider` keeps its identity.
 //!   Its chat API is a `ProviderStreams` over the core; `stream()` receives `ProviderStreamOptions`, so the
 //!   `SimpleStreamOptions` keys the TS reads off that options object (`deferred`, `reasoning`, `toolChoice`,
-//!   `thinkingBudgets`) are taken from `extra`.
+//!   `thinkingBudgets`) are taken from `extra`. `deferred` follows JS truthiness: a value `DeferredOption` cannot
+//!   hold becomes `Enabled(true)` when truthy (`1`, `"yes"`, `{ "window": "2h" }`) and `Enabled(false)` when falsy
+//!   (`0`, `""`), so a factory on the non-deferred path sees that instead of the raw value. The other three keys are
+//!   dropped when they do not deserialize (`"toolChoice": "required"`), and no other `extra` key reaches a factory
+//!   or the deferred submission options, since `SimpleStreamOptions` has no `extra`: a TS factory sees
+//!   `options.topLogprobs` for `{ "topLogprobs": 5 }`, a Rust one does not.
+//! - `stream()` clones the context and options it stores for a deferred response; TS keeps them by reference and
+//!   reads them at `fetchDeferred()`, so a caller that mutates them in between changes the TS factory input and usage
+//!   estimate but not these.
+//! - In the prompt text, the key order of `JSON.stringify(tool)` comes from the typed `Tool` (name, description,
+//!   parameters, constrainedSampling, then app fields), and a `tool-:` entry shows only `name`, since
+//!   `ToolReference` has no `extra`.
 //! - `cloneMessage`'s `timestamp ?? Date.now()` and `usage ?? DEFAULT_USAGE` never apply: both fields are required
 //!   in Rust.
-//! - Every event's `partial` is its own copy of the partial message (the TS `{ ...partial }`), not the shared live
-//!   object; TS copies still share content block objects that later deltas mutate.
-//! - `splitStringByTokenSize` cuts by UTF-16 code units like `slice`, but moves a cut that would split a surrogate
-//!   pair one unit later, since a Rust string cannot hold a lone surrogate.
+//! - Every event's `partial` is the one live partial message (`SharedAssistantMessage`, as PORTING.md specifies). TS
+//!   gives each event a shallow `{ ...partial }` copy: later deltas mutate its blocks too, but it keeps the content
+//!   array of its own time, so a TS event never shows a block started after it, while a Rust event read later does.
+//! - `splitStringByTokenSize` keeps the fractional index and cuts at `trunc(index)` in UTF-16 code units like `slice`.
+//!   A cut that would split a surrogate pair moves one unit later, since a Rust string cannot hold a lone surrogate;
+//!   only that cut moves, so `"abc😀defgh"` at token size 1 is `abc😀|def|gh` where TS gives
+//!   `abc\uD83D|\uDE00def|gh`.
 //! - `randomId`'s `Math.random().toString(36).slice(2)` is a random base-36 fraction rendered the same way, not
-//!   V8's exact digits.
-//! - `queueMicrotask` scheduling is a spawned host task, and an unpaced chunk yields to the executor once.
+//!   V8's exact digits; trailing zeros are dropped, as V8 prints the shortest digits.
+//! - `queueMicrotask` scheduling is a spawned host task, and an unpaced chunk yields to the executor once. So without
+//!   `tokensPerSecond`, a consumer that aborts mid-stream stops it after a different number of deltas than in TS.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -46,9 +61,9 @@ use crate::types::{
 	AnyModel, Api, AssistantContent, AssistantMessage, AssistantMessageEvent, BaseModel, CacheRetention,
 	CancelDeferredFunction, DeferredCancelOptions, DeferredFetchOptions, DeferredHandle, DeferredOption,
 	FetchDeferredFunction, JsonObject, Message, Model, ModelCost, ModelInputLimits, ModelInputModality, ProviderId,
-	ProviderResponse, ProviderStreamOptions, ProviderStreams, SimpleStreamOptions, StopReason, StreamOptions,
-	TextContent, ThinkingContent, ToolCall, ToolResultMessage, TranscriptContext, Usage, UsageCost, UserContent,
-	UserMessageContent,
+	ProviderResponse, ProviderStreamOptions, ProviderStreams, SharedAssistantMessage, SimpleStreamOptions, StopReason,
+	StreamOptions, TextContent, ThinkingContent, ToolCall, ToolResultMessage, TranscriptContext, Usage, UsageCost,
+	UserContent, UserMessageContent,
 };
 use crate::utils::event_stream::{AssistantMessageEventStream, create_assistant_message_event_stream};
 use crate::utils::streaming_json::ToolCallArgumentsStream;
@@ -327,6 +342,7 @@ fn random_base36_fraction() -> String {
 		fraction -= digit;
 		digits.push(char::from_digit(digit as u32, 36).expect("a base-36 digit is below 36"));
 	}
+	digits.truncate(digits.trim_end_matches('0').len());
 	digits
 }
 
@@ -485,18 +501,31 @@ fn with_usage_estimate(
 fn split_string_by_token_size(text: &str, min_token_size: f64, max_token_size: f64) -> Vec<String> {
 	let units: Vec<u16> = text.encode_utf16().collect();
 	let mut chunks = Vec::new();
-	let mut index = 0;
-	while index < units.len() {
+	let mut index = 0.0;
+	let mut start = 0;
+	while index < units.len() as f64 {
 		let token_size = min_token_size + (rand::random::<f64>() * (max_token_size - min_token_size + 1.0)).floor();
-		let char_size = f64::max(1.0, token_size * 4.0) as usize;
-		let mut end = usize::min(index + char_size, units.len());
-		if end < units.len() && (0xD800..0xDC00).contains(&units[end - 1]) {
+		index += math_max(1.0, token_size * 4.0);
+		// `slice` truncates its end (NaN is 0). Only a cut inside a surrogate pair moves, so later cuts stay at the TS
+		// positions.
+		let mut end = usize::min(index as usize, units.len());
+		if end > 0 && end < units.len() && (0xD800..0xDC00).contains(&units[end - 1]) {
 			end += 1;
 		}
-		chunks.push(String::from_utf16_lossy(&units[index..end]));
-		index = end;
+		chunks.push(String::from_utf16_lossy(&units[start..end]));
+		start = end;
 	}
 	if chunks.is_empty() { vec![String::new()] } else { chunks }
+}
+
+/// `Math.min(a, b)`, which propagates NaN.
+fn math_min(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
+}
+
+/// `Math.max(a, b)`, which propagates NaN.
+fn math_max(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
 }
 
 fn clone_message(message: AssistantMessage, api: &str, provider: &str, model_id: &str) -> AssistantMessage {
@@ -594,83 +623,86 @@ async fn stream_with_deltas(
 	signal: Option<&AbortSignal>,
 ) -> PiResult<()> {
 	let aborted = || signal.is_some_and(AbortSignal::aborted);
-	let mut partial = AssistantMessage {
+	let partial: SharedAssistantMessage = Rc::new(RefCell::new(AssistantMessage {
 		content: Vec::new(),
 		stop_reason: StopReason::Pending,
 		..message.clone()
-	};
+	}));
 	if aborted() {
-		end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial));
+		end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial.borrow()));
 		return Ok(());
 	}
 
 	stream.push(AssistantMessageEvent::Start {
-		partial: shared(&partial),
+		partial: partial.clone(),
 	});
 
 	for (index, block) in message.content.iter().enumerate() {
 		if aborted() {
-			end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial));
+			end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial.borrow()));
 			return Ok(());
 		}
 
 		match block {
 			AssistantContent::Thinking(block) => {
-				partial.content.push(AssistantContent::Thinking(faux_thinking("")));
+				partial
+					.borrow_mut()
+					.content
+					.push(AssistantContent::Thinking(faux_thinking("")));
 				stream.push(AssistantMessageEvent::ThinkingStart {
 					content_index: index,
-					partial: shared(&partial),
+					partial: partial.clone(),
 				});
 				for chunk in split_string_by_token_size(&block.thinking, min_token_size, max_token_size) {
 					schedule_chunk(&chunk, tokens_per_second).await;
 					if aborted() {
-						end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial));
+						end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial.borrow()));
 						return Ok(());
 					}
-					if let Some(AssistantContent::Thinking(thinking)) = partial.content.get_mut(index) {
+					if let Some(AssistantContent::Thinking(thinking)) = partial.borrow_mut().content.get_mut(index) {
 						thinking.thinking.push_str(&chunk);
 					}
 					stream.push(AssistantMessageEvent::ThinkingDelta {
 						content_index: index,
 						delta: chunk,
-						partial: shared(&partial),
+						partial: partial.clone(),
 					});
 				}
 				stream.push(AssistantMessageEvent::ThinkingEnd {
 					content_index: index,
 					content: block.thinking.clone(),
-					partial: shared(&partial),
+					partial: partial.clone(),
 				});
 			}
 			AssistantContent::Text(block) => {
-				partial.content.push(AssistantContent::Text(faux_text("")));
+				partial.borrow_mut().content.push(AssistantContent::Text(faux_text("")));
 				stream.push(AssistantMessageEvent::TextStart {
 					content_index: index,
-					partial: shared(&partial),
+					partial: partial.clone(),
 				});
 				for chunk in split_string_by_token_size(&block.text, min_token_size, max_token_size) {
 					schedule_chunk(&chunk, tokens_per_second).await;
 					if aborted() {
-						end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial));
+						end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial.borrow()));
 						return Ok(());
 					}
-					if let Some(AssistantContent::Text(text)) = partial.content.get_mut(index) {
+					if let Some(AssistantContent::Text(text)) = partial.borrow_mut().content.get_mut(index) {
 						text.text.push_str(&chunk);
 					}
 					stream.push(AssistantMessageEvent::TextDelta {
 						content_index: index,
 						delta: chunk,
-						partial: shared(&partial),
+						partial: partial.clone(),
 					});
 				}
 				stream.push(AssistantMessageEvent::TextEnd {
 					content_index: index,
 					content: block.text.clone(),
-					partial: shared(&partial),
+					partial: partial.clone(),
 				});
 			}
 			AssistantContent::ToolCall(block) => {
-				partial.content.push(AssistantContent::ToolCall(ToolCall {
+				partial.borrow_mut().content.push(AssistantContent::ToolCall(ToolCall {
 					id: block.id.clone(),
 					name: block.name.clone(),
 					arguments: JsonObject::new(),
@@ -678,7 +710,7 @@ async fn stream_with_deltas(
 				}));
 				stream.push(AssistantMessageEvent::ToolcallStart {
 					content_index: index,
-					partial: shared(&partial),
+					partial: partial.clone(),
 				});
 				// Partial arguments come from the same parser real providers use, so consumers see them grow.
 				let mut tool_arguments = ToolCallArgumentsStream::new();
@@ -687,26 +719,26 @@ async fn stream_with_deltas(
 				{
 					schedule_chunk(&chunk, tokens_per_second).await;
 					if aborted() {
-						end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial));
+						end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial.borrow()));
 						return Ok(());
 					}
 					let arguments = tool_arguments.append(&chunk);
-					if let Some(AssistantContent::ToolCall(tool_call)) = partial.content.get_mut(index) {
+					if let Some(AssistantContent::ToolCall(tool_call)) = partial.borrow_mut().content.get_mut(index) {
 						tool_call.arguments = (*arguments).clone();
 					}
 					stream.push(AssistantMessageEvent::ToolcallDelta {
 						content_index: index,
 						delta: chunk,
-						partial: shared(&partial),
+						partial: partial.clone(),
 					});
 				}
-				if let Some(AssistantContent::ToolCall(tool_call)) = partial.content.get_mut(index) {
+				if let Some(AssistantContent::ToolCall(tool_call)) = partial.borrow_mut().content.get_mut(index) {
 					tool_call.arguments = block.arguments.clone();
 				}
 				stream.push(AssistantMessageEvent::ToolcallEnd {
 					content_index: index,
 					tool_call: block.clone(),
-					partial: shared(&partial),
+					partial: partial.clone(),
 				});
 			}
 		}
@@ -768,14 +800,14 @@ pub fn create_faux_core(options: RegisterFauxProviderOptions) -> FauxCore {
 	let api = options.api.unwrap_or_else(|| random_id(DEFAULT_API));
 	let provider = options.provider.unwrap_or_else(|| DEFAULT_PROVIDER.to_string());
 	let token_size = options.token_size.unwrap_or_default();
-	let min_token_size = f64::max(
+	let min_token_size = math_max(
 		1.0,
-		f64::min(
+		math_min(
 			token_size.min.unwrap_or(DEFAULT_MIN_TOKEN_SIZE),
 			token_size.max.unwrap_or(DEFAULT_MAX_TOKEN_SIZE),
 		),
 	);
-	let max_token_size = f64::max(min_token_size, token_size.max.unwrap_or(DEFAULT_MAX_TOKEN_SIZE));
+	let max_token_size = math_max(min_token_size, token_size.max.unwrap_or(DEFAULT_MAX_TOKEN_SIZE));
 	let state = Rc::new(RefCell::new(FauxProviderState::default()));
 
 	let model_definitions = match options.models {
@@ -1179,6 +1211,20 @@ fn extra_option<T: DeserializeOwned>(extra: &JsonObject, key: &str) -> Option<T>
 		.and_then(|value| serde_json::from_value(Value::clone(value)).ok())
 }
 
+/// `deferred` read off the record; a value `DeferredOption` cannot hold keeps its JS truthiness, which is all the
+/// core's `if (streamOptions?.deferred)` reads.
+fn extra_deferred(extra: &JsonObject) -> Option<DeferredOption> {
+	let value = extra.get("deferred").filter(|value| !value.is_null())?;
+	serde_json::from_value(value.clone()).ok().or_else(|| {
+		Some(DeferredOption::Enabled(match value {
+			Value::Bool(value) => *value,
+			Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+			Value::String(value) => !value.is_empty(),
+			_ => true,
+		}))
+	})
+}
+
 impl ProviderStreams for FauxStreams {
 	fn stream(
 		&self,
@@ -1189,7 +1235,7 @@ impl ProviderStreams for FauxStreams {
 		let options = options.map(|options| SimpleStreamOptions {
 			tool_choice: extra_option(&options.extra, "toolChoice"),
 			reasoning: extra_option(&options.extra, "reasoning"),
-			deferred: extra_option(&options.extra, "deferred"),
+			deferred: extra_deferred(&options.extra),
 			thinking_budgets: extra_option(&options.extra, "thinkingBudgets"),
 			base: options.base,
 		});

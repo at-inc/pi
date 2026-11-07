@@ -982,3 +982,194 @@ mod faux_provider {
 		});
 	}
 }
+
+/// Rust-only checks of the chunk cuts, NaN token sizes, and the options record `fauxProvider()`'s `stream` reads.
+mod rust_only {
+	use pi_ai::providers::faux::{FauxProviderHandle, faux_provider};
+	use pi_ai::types::{DeferredOption, ProviderStreamOptions, ThinkingBudgets, ThinkingLevel, ToolChoice};
+
+	use super::*;
+
+	/// The text deltas of streaming `content` at `token_size`.
+	async fn text_deltas(content: &str, token_size: FauxTokenSize) -> Vec<String> {
+		let registration = register_faux_provider(Some(RegisterFauxProviderOptions {
+			token_size: Some(token_size),
+			..RegisterFauxProviderOptions::default()
+		}));
+		registration.set_responses(vec![faux_assistant_message(content, None).into()]);
+		collect_events(stream(&model_of(&registration), &hi(), None).unwrap())
+			.await
+			.into_iter()
+			.filter_map(|event| match event {
+				AssistantMessageEvent::TextDelta { delta, .. } => Some(delta),
+				_ => None,
+			})
+			.collect()
+	}
+
+	/// `faux.provider.stream(model, context, { temperature: 0.5, ...extra })`.
+	fn provider_stream(faux: &FauxProviderHandle, extra: Value) -> AssistantMessageEventStream {
+		(faux.provider.stream)(
+			&faux.get_model(None).unwrap(),
+			&normalize_context(&hi()),
+			Some(ProviderStreamOptions {
+				base: StreamOptions {
+					temperature: Some(0.5),
+					..StreamOptions::default()
+				},
+				extra: object(extra),
+			}),
+		)
+		.unwrap()
+	}
+
+	#[test]
+	fn keeps_the_fractional_index_between_cuts() {
+		pi_host::testing::run(|_| async {
+			assert_eq!(
+				text_deltas("abcdefghijklm", fixed_token_size(1.1)).await,
+				vec!["abcd", "efgh", "ijklm"]
+			);
+		});
+	}
+
+	#[test]
+	fn moves_only_the_cut_that_splits_a_surrogate_pair() {
+		pi_host::testing::run(|_| async {
+			assert_eq!(
+				text_deltas("abc😀defgh", fixed_token_size(1.0)).await,
+				vec!["abc😀", "def", "gh"]
+			);
+		});
+	}
+
+	#[test]
+	fn streams_each_block_as_one_empty_delta_for_a_nan_token_size() {
+		pi_host::testing::run(|_| async {
+			let registration = register_faux_provider(Some(RegisterFauxProviderOptions {
+				token_size: Some(FauxTokenSize {
+					min: Some(f64::NAN),
+					max: None,
+				}),
+				..RegisterFauxProviderOptions::default()
+			}));
+			let content = vec![AssistantContent::Thinking(faux_thinking("go")), text("ok")];
+			registration.set_responses(vec![faux_assistant_message(content.clone(), None).into()]);
+
+			let events = collect_events(stream(&model_of(&registration), &hi(), None).unwrap()).await;
+
+			let deltas: Vec<&str> = events
+				.iter()
+				.filter_map(|event| match event {
+					AssistantMessageEvent::ThinkingDelta { delta, .. }
+					| AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+					_ => None,
+				})
+				.collect();
+			assert_eq!(deltas, vec!["", ""]);
+			let Some(AssistantMessageEvent::Done { message, .. }) = events.last() else {
+				panic!("expected done, got {:?}", events.last());
+			};
+			assert_eq!(message.borrow().content, content);
+		});
+	}
+
+	#[test]
+	fn reads_deferred_off_the_options_record_with_js_truthiness() {
+		pi_host::testing::run(|_| async {
+			for (deferred, expected) in [
+				(json!(true), StopReason::Deferred),
+				(json!(1), StopReason::Deferred),
+				(json!("yes"), StopReason::Deferred),
+				(json!({ "window": "2h" }), StopReason::Deferred),
+				(json!({}), StopReason::Deferred),
+				(json!(false), StopReason::Stop),
+				(json!(0), StopReason::Stop),
+				(json!(""), StopReason::Stop),
+				(Value::Null, StopReason::Stop),
+			] {
+				let faux = faux_provider(None);
+				faux.set_responses(vec![faux_assistant_message("hi", None).into()]);
+				let message = provider_stream(&faux, json!({ "deferred": deferred }))
+					.result()
+					.await
+					.unwrap();
+				assert_eq!(message.stop_reason, expected, "deferred: {deferred}");
+			}
+		});
+	}
+
+	#[test]
+	fn passes_the_options_record_to_factories_and_deferred_submissions() {
+		pi_host::testing::run(|_| async {
+			let faux = faux_provider(None);
+			let seen = Rc::new(RefCell::new(Vec::new()));
+			let factory = || {
+				let seen = seen.clone();
+				FauxResponseStep::Factory(Rc::new(move |_context, options, _state, _model| {
+					let options = options.expect("the options reach the factory");
+					seen.borrow_mut().push((
+						options.temperature,
+						options.reasoning,
+						options.tool_choice,
+						options.thinking_budgets.clone(),
+						options.deferred.clone(),
+					));
+					Box::pin(async { Ok(faux_assistant_message("done", None)) })
+				}))
+			};
+			faux.set_responses(vec![factory(), factory()]);
+			let extra = |deferred: Value| {
+				json!({
+					"reasoning": "high",
+					"toolChoice": "none",
+					"thinkingBudgets": { "high": 64 },
+					"deferred": deferred,
+					"topLogprobs": 5,
+				})
+			};
+
+			provider_stream(&faux, extra(json!(0))).result().await.unwrap();
+			let submitted = provider_stream(&faux, extra(json!(true))).result().await.unwrap();
+			let fetch = faux
+				.provider
+				.fetch_deferred
+				.clone()
+				.expect("fauxProvider fetches deferred responses");
+			let fetched = fetch(
+				&faux.get_model(None).unwrap(),
+				&submitted.deferred.expect("a deferred handle"),
+				None,
+			)
+			.unwrap()
+			.result()
+			.await
+			.unwrap();
+
+			assert_eq!(fetched.content, vec![text("done")]);
+			let budgets = Some(ThinkingBudgets {
+				high: Some(64.0),
+				..ThinkingBudgets::default()
+			});
+			assert_eq!(
+				*seen.borrow(),
+				vec![
+					(
+						Some(0.5),
+						Some(ThinkingLevel::High),
+						Some(ToolChoice::None),
+						budgets.clone(),
+						Some(DeferredOption::Enabled(false)),
+					),
+					(
+						Some(0.5),
+						Some(ThinkingLevel::High),
+						Some(ToolChoice::None),
+						budgets,
+						None
+					),
+				]
+			);
+		});
+	}
+}
