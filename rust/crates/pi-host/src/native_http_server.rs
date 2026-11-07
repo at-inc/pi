@@ -147,3 +147,72 @@ async fn serve(handler: ServerHandler, mut stream: TcpStream) {
 	let _ = stream.write_all(out.as_bytes()).await;
 	let _ = stream.shutdown().await;
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::http::{HttpRequest, fetch};
+	use crate::http_server::{ServerResponse, listen_http};
+	use crate::native::run;
+
+	#[test]
+	fn answers_requests_with_the_handler_response_until_closed() {
+		run(|| async {
+			let seen = Rc::new(RefCell::new(Vec::new()));
+			let requests = seen.clone();
+			let handler: ServerHandler = Rc::new(move |request: ServerRequest| {
+				requests
+					.borrow_mut()
+					.push((request.method, request.url, request.headers.get("x-test").cloned()));
+				Box::pin(async {
+					ServerResponse {
+						status: 201,
+						headers: IndexMap::from([("content-type".into(), "text/plain".into())]),
+						body: "created".into(),
+					}
+				})
+			});
+			let server = listen_http("127.0.0.1", 0, handler).await.unwrap();
+			let url = format!("http://127.0.0.1:{}/callback?code=1", server.port());
+			let mut request = HttpRequest::new("GET", url.clone());
+			request.headers.insert("x-test".into(), "yes".into());
+			let response = fetch(request, None).await.unwrap();
+			assert_eq!(response.status, 201);
+			assert_eq!(
+				response.headers.get("content-type").map(String::as_str),
+				Some("text/plain")
+			);
+			assert_eq!(response.text().await.unwrap(), "created");
+			assert_eq!(
+				*seen.borrow(),
+				vec![(
+					"GET".to_string(),
+					"/callback?code=1".to_string(),
+					Some("yes".to_string())
+				)]
+			);
+			server.close().await.unwrap();
+			assert!(fetch(HttpRequest::new("GET", url), None).await.is_err());
+		});
+	}
+
+	#[test]
+	fn fails_like_the_error_event_when_the_port_is_taken() {
+		run(|| async {
+			let handler: ServerHandler = Rc::new(|_| Box::pin(async { ServerResponse::default() }));
+			let server = listen_http("127.0.0.1", 0, handler.clone()).await.unwrap();
+			let Err(error) = listen_http("127.0.0.1", server.port(), handler).await else {
+				panic!("listening on a taken port succeeded");
+			};
+			assert_eq!(
+				error.message,
+				format!("listen EADDRINUSE: address already in use 127.0.0.1:{}", server.port())
+			);
+			assert_eq!(
+				error.data.as_ref().and_then(|data| data.get("code")),
+				Some(&json!("EADDRINUSE"))
+			);
+			server.close().await.unwrap();
+		});
+	}
+}

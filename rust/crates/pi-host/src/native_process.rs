@@ -229,3 +229,98 @@ fn io_error(error: &std::io::Error, syscall: &str) -> PiError {
 	};
 	PiError::new(format!("{syscall} {code}")).with_data(json!({ "code": code }))
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+	use std::cell::RefCell;
+
+	use super::*;
+	use crate::native::run;
+	use crate::process::spawn_process;
+
+	/// Listeners that collect stdout and stderr and resolve `closed` on `close`.
+	fn collecting() -> (
+		ProcessListeners,
+		Rc<RefCell<(Vec<u8>, Vec<u8>)>>,
+		futures::channel::oneshot::Receiver<()>,
+	) {
+		let output = Rc::new(RefCell::new((Vec::new(), Vec::new())));
+		let (closed, on_closed) = futures::channel::oneshot::channel();
+		let closed = RefCell::new(Some(closed));
+		let (stdout, stderr) = (output.clone(), output.clone());
+		let listeners = ProcessListeners {
+			on_stdout: Rc::new(move |data| stdout.borrow_mut().0.extend_from_slice(data)),
+			on_stderr: Rc::new(move |data| stderr.borrow_mut().1.extend_from_slice(data)),
+			on_error: Rc::new(|error| panic!("unexpected process error: {error:?}")),
+			on_close: Rc::new(move || {
+				if let Some(closed) = closed.borrow_mut().take() {
+					let _ = closed.send(());
+				}
+			}),
+		};
+		(listeners, output, on_closed)
+	}
+
+	fn shell(script: &str) -> SpawnOptions {
+		SpawnOptions {
+			command: "sh".into(),
+			args: vec!["-c".into(), script.into()],
+			..Default::default()
+		}
+	}
+
+	#[test]
+	fn pipes_stdin_stdout_and_stderr_and_reports_close() {
+		run(|| async {
+			let (listeners, output, closed) = collecting();
+			let child = spawn_process(shell("cat; echo done >&2"), listeners).await.unwrap();
+			assert!(child.pid().is_some());
+			assert!(child.stdin_writable());
+			child.write(Bytes::from_static(b"hello\n")).await.unwrap();
+			child.end_stdin();
+			closed.await.unwrap();
+			assert!(child.exited());
+			assert_eq!(*output.borrow(), (b"hello\n".to_vec(), b"done\n".to_vec()));
+		});
+	}
+
+	#[test]
+	fn passes_env_and_cwd_and_clears_the_environment_on_request() {
+		run(|| async {
+			let (listeners, output, closed) = collecting();
+			let mut options = shell("printf '%s|%s|%s' \"$PI_TEST\" \"$HOME\" \"$(pwd)\"");
+			options.env.insert("PI_TEST".into(), "set".into());
+			options.cwd = Some("/".into());
+			options.clear_env = true;
+			spawn_process(options, listeners).await.unwrap();
+			closed.await.unwrap();
+			assert_eq!(output.borrow().0, b"set||/".to_vec());
+		});
+	}
+
+	#[test]
+	fn kill_terminates_the_process_group() {
+		run(|| async {
+			let (listeners, _output, closed) = collecting();
+			let child = spawn_process(shell("sleep 30 & wait"), listeners).await.unwrap();
+			child.kill(ProcessSignal::Kill);
+			closed.await.unwrap();
+			assert!(child.exited());
+		});
+	}
+
+	#[test]
+	fn fails_like_the_error_event_for_a_missing_command() {
+		run(|| async {
+			let (listeners, _output, _closed) = collecting();
+			let options = SpawnOptions {
+				command: "pi-host-test-missing-command".into(),
+				..Default::default()
+			};
+			let Err(error) = spawn_process(options, listeners).await else {
+				panic!("spawning a missing command succeeded");
+			};
+			assert_eq!(error.message, "spawn pi-host-test-missing-command ENOENT");
+		});
+	}
+}
