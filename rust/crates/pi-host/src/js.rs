@@ -7,9 +7,10 @@ use std::io;
 
 use serde::Serialize;
 
-/// `JSON.stringify(value)`: compact, insertion-ordered keys, and numbers formatted like JavaScript (`1`, not
-/// `1.0`; `1e+21`, not `1e21`).
+/// `JSON.stringify(value)`: compact, JavaScript key order (see `js_key_order`), and numbers formatted like
+/// JavaScript (`1`, not `1.0`; `1e+21`, not `1e21`).
 pub fn json_stringify<T: Serialize + ?Sized>(value: &T) -> String {
+	let value = js_value(value);
 	let mut out = Vec::new();
 	let mut serializer = serde_json::Serializer::with_formatter(&mut out, JsFormatter::compact());
 	value
@@ -20,6 +21,7 @@ pub fn json_stringify<T: Serialize + ?Sized>(value: &T) -> String {
 
 /// `JSON.stringify(value, null, indent)` with an indent of `indent` spaces.
 pub fn json_stringify_pretty<T: Serialize + ?Sized>(value: &T, indent: usize) -> String {
+	let value = js_value(value);
 	let mut out = Vec::new();
 	let indent = " ".repeat(indent);
 	let mut serializer = serde_json::Serializer::with_formatter(&mut out, JsFormatter::pretty(indent.as_bytes()));
@@ -27,6 +29,41 @@ pub fn json_stringify_pretty<T: Serialize + ?Sized>(value: &T, indent: usize) ->
 		.serialize(&mut serializer)
 		.expect("JSON.stringify: serialization of in-memory value failed");
 	String::from_utf8(out).expect("serde_json produced invalid UTF-8")
+}
+
+fn js_value<T: Serialize + ?Sized>(value: &T) -> serde_json::Value {
+	let mut value = serde_json::to_value(value).expect("JSON.stringify: serialization of in-memory value failed");
+	js_key_order(&mut value);
+	value
+}
+
+/// Reorders every object in `value` the way JavaScript orders own property keys: array-index keys (`"0"`,
+/// `"42"`, up to 2^32 - 2, no leading zeros) first in ascending numeric order, then the other keys in insertion
+/// order.
+pub fn js_key_order(value: &mut serde_json::Value) {
+	match value {
+		serde_json::Value::Array(items) => items.iter_mut().for_each(js_key_order),
+		serde_json::Value::Object(map) => {
+			map.values_mut().for_each(js_key_order);
+			if !map.keys().any(|key| array_index(key).is_some()) {
+				return;
+			}
+			let entries: Vec<_> = std::mem::take(map).into_iter().collect();
+			let (mut indices, others): (Vec<_>, Vec<_>) =
+				entries.into_iter().partition(|(key, _)| array_index(key).is_some());
+			indices.sort_by_key(|(key, _)| array_index(key));
+			map.extend(indices);
+			map.extend(others);
+		}
+		_ => {}
+	}
+}
+
+fn array_index(key: &str) -> Option<u32> {
+	if key.is_empty() || (key.len() > 1 && key.starts_with('0')) || !key.bytes().all(|byte| byte.is_ascii_digit()) {
+		return None;
+	}
+	key.parse::<u32>().ok().filter(|index| *index != u32::MAX)
 }
 
 /// `String(n)` / template-literal interpolation of a number.
