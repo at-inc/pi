@@ -6,8 +6,6 @@ pub mod abort_signals;
 pub mod diagnostics;
 pub mod error_body;
 pub mod estimate;
-// PORT-GATE: w1-ai-types removes this cfg once types.rs defines the message and event model.
-#[cfg(any())]
 pub mod event_stream;
 pub mod hash;
 pub mod headers;
