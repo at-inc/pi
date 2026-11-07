@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [features]
 default = []
-native = ["pi-host/native", "dep:tokio"]
+native = ["pi-host/native", "dep:tokio", "dep:zstd"]
 
 [dependencies]
 pi-host = { workspace = true }
@@ -34,6 +34,7 @@ aws-smithy-eventstream = { workspace = true }
 aws-smithy-types = { workspace = true }
 aws-credential-types = { workspace = true }
 tokio = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
 
 [dev-dependencies]
 pi-host = { workspace = true, features = ["testing"] }
