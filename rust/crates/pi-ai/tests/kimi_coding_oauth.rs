@@ -1,10 +1,7 @@
 //! Port of `packages/ai/test/kimi-coding-oauth.test.ts`.
 //!
 //! The tests run on `pi_host::testing`'s fake timers, which advance to the next timer whenever every task waits, so
-//! they check recorded poll times instead of stepping the clock. Every test reaches `utils/kimi_coding.rs` and
-//! `utils/provider_env.rs` (w2-ai-core) and waits for them. The last step of the international-endpoint test
-//! (`createModels` with `kimiCodingProvider()` sending a chat completion) exercises `models.ts` and the Kimi provider
-//! of shard w2-ai-core and is not ported here.
+//! they check recorded poll times instead of stepping the clock.
 
 mod common;
 
@@ -13,8 +10,16 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use common::{FetchHandler, form_body, json_response, run_with_env_and_fake_timers};
+use indexmap::IndexMap;
+use pi_ai::auth::credential_store::InMemoryCredentialStore;
 use pi_ai::auth::oauth::kimi_coding::kimi_coding_oauth;
-use pi_ai::auth::types::{AuthEvent, AuthPrompt, AuthPromptKind, ModelAuth, OAuthCredential, ProviderAuthInteraction};
+use pi_ai::auth::types::{
+	AuthEvent, AuthPrompt, AuthPromptKind, Credential, CredentialStore, ModelAuth, OAuthCredential,
+	ProviderAuthInteraction,
+};
+use pi_ai::models::{CreateModelsOptions, ModelsSimpleStreamOptions, create_models};
+use pi_ai::providers::kimi_coding::kimi_coding_provider;
+use pi_ai::types::{Context, Message, StopReason, UserMessage, UserMessageContent};
 use pi_host::{AbortController, HttpRequest, HttpResponse, LocalBoxFuture, PiError, PiResult};
 use serde_json::{Value, json};
 
@@ -93,7 +98,6 @@ mod kimi_code_oauth {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn logs_in_with_the_device_authorization_flow() {
 		let poll_responses = Rc::new(RefCell::new(VecDeque::from([
 			json_response(json!({ "error": "authorization_pending" }), 400),
@@ -186,19 +190,16 @@ mod kimi_code_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn fails_when_the_device_code_expires() {
 		fails_with_token_error("expired_token", "expired");
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn fails_when_the_user_denies_the_login() {
 		fails_with_token_error("access_denied", "denied");
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn honors_the_kimi_code_oauth_host_override() {
 		let urls: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 		let recorded = urls.clone();
@@ -237,7 +238,6 @@ mod kimi_code_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn refreshes_tokens_and_returns_a_bearer_header_for_requests() {
 		let fetch = handler(|request| {
 			assert_eq!(request.url, format!("{OAUTH_HOST}/api/oauth/token"));
@@ -289,8 +289,7 @@ mod kimi_code_oauth {
 
 	// Same regional-login failure reported in can1357/oh-my-pi#12024.
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
-	fn keeps_international_login_and_refresh_on_kimi_ai_after_environment_changes() {
+	fn keeps_international_login_refresh_and_model_requests_on_kimi_ai_after_environment_changes() {
 		let urls: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 		let recorded = urls.clone();
 		let fetch = handler(move |request| {
@@ -343,6 +342,53 @@ mod kimi_code_oauth {
 				&credential_json(&refreshed),
 				json!({ "oauthHost": "https://auth.kimi.ai", "baseUrl": "https://api.kimi.ai/coding/v1" }),
 			);
+
+			let credentials = Rc::new(InMemoryCredentialStore::new());
+			credentials
+				.modify(
+					"kimi-coding",
+					Box::new(move |_| Box::pin(async move { Ok(Some(Credential::OAuth(refreshed))) })),
+					None,
+				)
+				.await
+				.unwrap();
+			let models = create_models(Some(CreateModelsOptions {
+				credentials: Some(credentials),
+				..CreateModelsOptions::default()
+			}));
+			models.set_provider(Rc::new(kimi_coding_provider()));
+			let requests = Rc::new(Cell::new(0));
+			let counted = requests.clone();
+			let mut options = ModelsSimpleStreamOptions::default();
+			options.fetch = Some(Rc::new(move |request: HttpRequest| {
+				counted.set(counted.get() + 1);
+				assert_eq!(request.url, "https://api.kimi.ai/coding/v1/chat/completions");
+				assert_eq!(request.header("Authorization"), Some("Bearer global-access"));
+				let response = HttpResponse::from_bytes(
+					200,
+					IndexMap::from([("content-type".to_string(), "text/event-stream".to_string())]),
+					"data: {\"id\":\"chat_test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+				);
+				Box::pin(async move { Ok(response) })
+			}));
+			let result = models
+				.complete_simple(
+					&models.get_model("kimi-coding", "kimi-for-coding").unwrap(),
+					&Context {
+						messages: vec![Message::User(UserMessage {
+							content: UserMessageContent::Text("Hello".into()),
+							timestamp: pi_host::now_ms(),
+							..UserMessage::default()
+						})],
+						..Context::default()
+					},
+					Some(options),
+				)
+				.await
+				.unwrap();
+			assert_eq!(result.error_message, None);
+			assert_eq!(result.stop_reason, StopReason::Stop);
+			assert_eq!(requests.get(), 1);
 		});
 		assert_eq!(
 			*urls.borrow(),
@@ -355,7 +401,6 @@ mod kimi_code_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn infers_both_international_endpoints_from_an_override_without_a_prompt() {
 		for (name, value) in [
 			("KIMI_CODE_OAUTH_HOST", "https://auth.kimi.ai/"),
@@ -393,7 +438,6 @@ mod kimi_code_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn does_not_start_device_authorization_when_region_selection_is_canceled() {
 		let calls = Rc::new(Cell::new(0));
 		let counted = calls.clone();
@@ -410,7 +454,6 @@ mod kimi_code_oauth {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/kimi_coding.rs and utils/provider_env.rs from w2-ai-core"]
 	fn retries_refresh_on_429_and_fails_unauthorized_on_invalid_grant() {
 		// 429 once, then success.
 		let calls = Rc::new(Cell::new(0));

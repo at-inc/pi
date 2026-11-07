@@ -2,10 +2,7 @@
 //!
 //! The tests run on `pi_host::testing`'s fake timers, which advance to the next timer whenever every task waits, so
 //! they check the recorded request times instead of stepping the clock. `githubCopilotProvider().getModels()` lists
-//! `GITHUB_COPILOT_MODELS` in order, so the tests read model ids from that catalog
-//! (`providers/github_copilot_models.rs`, w2-ai-core) and wait for it. The `createModels` steps (reading the
-//! credential back through `Models.getAvailable`, and logging in through `Models.login` into a credential store)
-//! need w2-ai-core's `models.rs` and are not ported; the tests check the credential the flow returns instead.
+//! `GITHUB_COPILOT_MODELS` in order, so the tests read model ids from that catalog.
 
 mod common;
 
@@ -15,8 +12,14 @@ use std::rc::Rc;
 
 use common::{FetchHandler, form_body, json_response};
 use indexmap::IndexMap;
+use pi_ai::auth::credential_store::InMemoryCredentialStore;
 use pi_ai::auth::oauth::github_copilot::github_copilot_oauth;
-use pi_ai::auth::types::{AuthEvent, AuthPromptKind, OAuthCredential, ProviderAuthInteraction};
+use pi_ai::auth::types::{
+	AuthEvent, AuthInteraction, AuthPromptKind, AuthType, Credential, CredentialStore, OAuthCredential,
+	ProviderAuthInteraction,
+};
+use pi_ai::models::{CreateModelsOptions, create_models};
+use pi_ai::providers::github_copilot::github_copilot_provider;
 use pi_ai::providers::github_copilot_models::GITHUB_COPILOT_MODELS;
 use pi_host::{AbortController, HttpRequest, HttpResponse, PiError, PiResult};
 use serde_json::{Value, json};
@@ -186,6 +189,33 @@ fn refresh_github_copilot_models_for_test(data: Value, proxy_host: &str) -> PiRe
 	)
 }
 
+/// Stores `credential`, then lists the chat models `Models.getAvailable("github-copilot")` returns.
+fn available_model_ids(credential: OAuthCredential) -> Vec<String> {
+	pi_host::testing::run(|_| async move {
+		let store = Rc::new(InMemoryCredentialStore::new());
+		store
+			.modify(
+				"github-copilot",
+				Box::new(move |_| Box::pin(async move { Ok(Some(Credential::OAuth(credential))) })),
+				None,
+			)
+			.await
+			.unwrap();
+		let models = create_models(Some(CreateModelsOptions {
+			credentials: Some(store),
+			..CreateModelsOptions::default()
+		}));
+		models.set_provider(Rc::new(github_copilot_provider()));
+		models
+			.get_available(Some("github-copilot"), None)
+			.await
+			.unwrap()
+			.into_iter()
+			.map(|model| model.base.id)
+			.collect()
+	})
+}
+
 fn tool_capable_model(id: &str, picker_enabled: bool, policy_state: Option<&str>, tool_calls: bool) -> Value {
 	let mut model = json!({
 		"id": id,
@@ -202,7 +232,6 @@ mod git_hub_copilot_o_auth_device_flow {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/github_copilot_models.rs from w2-ai-core"]
 	fn filters_models_to_the_authenticated_account_picker_catalog() {
 		let picker_model_id = require_model_id(0);
 		let disabled_model_id = require_model_id(1);
@@ -218,10 +247,10 @@ mod git_hub_copilot_o_auth_device_flow {
 		)
 		.unwrap();
 		assert_eq!(credentials.field("availableModelIds"), Some(&json!([picker_model_id])));
+		assert_eq!(available_model_ids(credentials), vec![picker_model_id]);
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/github_copilot_models.rs from w2-ai-core"]
 	fn falls_back_to_explicitly_enabled_policy_models_when_the_picker_catalog_is_empty() {
 		let enabled_model_id = require_model_id(0);
 		let credentials = refresh_github_copilot_models_for_test(
@@ -236,6 +265,7 @@ mod git_hub_copilot_o_auth_device_flow {
 		.unwrap();
 
 		assert_eq!(credentials.field("availableModelIds"), Some(&json!([enabled_model_id])));
+		assert_eq!(available_model_ids(credentials), vec![enabled_model_id]);
 	}
 
 	#[test]
@@ -312,7 +342,6 @@ mod git_hub_copilot_o_auth_device_flow {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/github_copilot_models.rs from w2-ai-core"]
 	fn updates_only_known_tool_capable_unconfigured_account_model_policies() {
 		let configured_model_id = require_model_id(0);
 		let unconfigured_model_id = require_model_id(1);
@@ -345,7 +374,6 @@ mod git_hub_copilot_o_auth_device_flow {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/github_copilot_models.rs from w2-ai-core"]
 	fn retries_a_throttled_policy_update_after_retry_after() {
 		let model_id = require_model_id(0);
 		let policy_request_times = Rc::new(RefCell::new(Vec::<f64>::new()));
@@ -377,7 +405,6 @@ mod git_hub_copilot_o_auth_device_flow {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/github_copilot_models.rs from w2-ai-core"]
 	fn continues_policy_updates_after_a_transport_failure() {
 		let model_ids = vec![require_model_id(0), require_model_id(1)];
 		let policy_model_ids = Rc::new(RefCell::new(Vec::<String>::new()));
@@ -405,7 +432,6 @@ mod git_hub_copilot_o_auth_device_flow {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs providers/github_copilot_models.rs from w2-ai-core"]
 	fn stops_policy_updates_and_persists_authentication_when_the_retry_delay_exceeds_the_login_budget() {
 		let first_model_id = require_model_id(0);
 		let second_model_id = require_model_id(1);
@@ -427,9 +453,35 @@ mod git_hub_copilot_o_auth_device_flow {
 			})),
 		);
 
-		let credential = common::run_with_fake_timers(fetch, || login_github_copilot_for_test(Rc::default())).unwrap();
-		assert_eq!(credential.access, TEST_COPILOT_ACCESS_TOKEN);
+		let (credential, stored) = common::run_with_fake_timers(fetch, || async {
+			let store = Rc::new(InMemoryCredentialStore::new());
+			let models = create_models(Some(CreateModelsOptions {
+				credentials: Some(store.clone()),
+				..CreateModelsOptions::default()
+			}));
+			models.set_provider(Rc::new(github_copilot_provider()));
+			let credential = models
+				.login(
+					"github-copilot",
+					AuthType::OAuth,
+					AuthInteraction {
+						signal: Some(AbortController::new().signal()),
+						prompt: Rc::new(|_| Box::pin(async { Ok(String::new()) })),
+						notify: Rc::new(|_| {}),
+					},
+					None,
+				)
+				.await
+				.unwrap();
+			let stored = store.read("github-copilot", None).await.unwrap();
+			(credential, stored)
+		});
+		let Credential::OAuth(oauth) = &credential else {
+			panic!("expected an OAuth credential, got {credential:?}");
+		};
+		assert_eq!(oauth.access, TEST_COPILOT_ACCESS_TOKEN);
 		assert_eq!(*policy_model_ids.borrow(), vec![first_model_id]);
+		assert_eq!(stored, Some(credential));
 	}
 
 	#[test]
