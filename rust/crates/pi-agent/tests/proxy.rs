@@ -68,7 +68,10 @@ fn empty_context() -> pi_ai::types::TranscriptContext {
 }
 
 fn event_type(event: &AssistantMessageEvent) -> String {
-	serde_json::to_value(event).unwrap()["type"].as_str().unwrap().to_string()
+	serde_json::to_value(event).unwrap()["type"]
+		.as_str()
+		.unwrap()
+		.to_string()
 }
 
 mod stream_proxy {

@@ -1,5 +1,5 @@
 //! Port of `packages/agent/src/stream-fn.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The module-level `defaultStreamFn` is thread-local: the core is single-threaded, and each thread is one JS realm.
 

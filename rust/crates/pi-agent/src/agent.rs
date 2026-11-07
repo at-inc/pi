@@ -1,5 +1,5 @@
 //! Port of `packages/agent/src/agent.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Rust differences:
 //! - `Agent` is a cheap handle (`Rc`); clones share one agent, like references to the TS object.
@@ -9,9 +9,19 @@
 //! - `prompt(input, images?)` takes a [`PromptInput`]; `continue()` is `r#continue()`.
 //! - The constructor throws when no stream function is configured, so `Agent::new` returns a `PiResult`.
 //! - A listener is compared by `Rc` pointer, like the `Set` of functions: subscribing the same `Rc` twice keeps one
-//!   entry.
-//! - Dropping a `prompt()` / `continue()` future ends the run the way `finally` does (`finishRun`); a TS promise
-//!   cannot be dropped.
+//!   entry; two `Rc`s around the same function are two listeners.
+//! - Each listener receives its own copy of the event, so a listener that edits `event.message` changes neither the
+//!   transcript entry nor what later listeners see. In TS they all share one object.
+//! - `defaultConvertToLlm` keeps `AgentMessage::Llm` only. A hand-built `AgentMessage::Custom` with an LLM role is
+//!   dropped (TS keeps it by role), and `turn_end` reads `errorMessage` only from an `Llm` assistant message.
+//!   Deserialization never builds such a message: the four LLM roles always become `Llm`.
+//! - Holding `state_mut()` or `properties_mut()` across `prompt()` / `continue()` or an await of the run panics with a
+//!   `RefCell` borrow error; TS has no such restriction.
+//! - `prompt()` / `continue()` start the run when called and return its future; the loop itself (`agent_start` and
+//!   the first listener call) runs once the future is polled, where TS runs it up to the first `await` inside the
+//!   call. Dropping the future ends the run the way `finally` does (`finishRun`); a TS promise cannot be dropped.
+//! - `state.streamingMessage` during `message_update` is the provider's live partial (see `types.rs`), so its
+//!   top-level fields read the provider's latest values, where TS keeps the shallow copy taken at that update.
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::rc::Rc;
@@ -106,7 +116,10 @@ pub type AgentPrepareNextTurnFn =
 	Rc<dyn Fn(Option<AbortSignal>) -> LocalBoxFuture<'static, PiResult<Option<AgentLoopTurnUpdate>>>>;
 /// `AgentOptions.prepareNextTurnWithContext`.
 pub type AgentPrepareNextTurnWithContextFn = Rc<
-	dyn Fn(PrepareNextTurnContext, Option<AbortSignal>) -> LocalBoxFuture<'static, PiResult<Option<AgentLoopTurnUpdate>>>,
+	dyn Fn(
+		PrepareNextTurnContext,
+		Option<AbortSignal>,
+	) -> LocalBoxFuture<'static, PiResult<Option<AgentLoopTurnUpdate>>>,
 >;
 /// A listener passed to [`Agent::subscribe`].
 pub type AgentListener = Rc<dyn Fn(AgentEvent, AbortSignal) -> LocalBoxFuture<'static, PiResult<()>>>;
@@ -228,7 +241,10 @@ struct AgentInner {
 /// `prompt()` input: text with optional images, a single message, or a batch of messages.
 #[derive(Clone, Debug)]
 pub enum PromptInput {
-	Text { text: String, images: Option<Vec<ImageContent>> },
+	Text {
+		text: String,
+		images: Option<Vec<ImageContent>>,
+	},
 	Message(AgentMessage),
 	Messages(Vec<AgentMessage>),
 }
@@ -490,29 +506,32 @@ impl Agent {
 	}
 
 	/// Start a new prompt from text, a single message, or a batch of messages.
-	pub async fn prompt(&self, input: impl Into<PromptInput>) -> PiResult<()> {
+	///
+	/// The run starts during this call, like the synchronous part of the TS async method: the agent is streaming
+	/// and `abort()` / `wait_for_idle()` see the run before the returned future is first polled.
+	pub fn prompt(&self, input: impl Into<PromptInput>) -> LocalBoxFuture<'static, PiResult<()>> {
 		if self.inner.active_run.borrow().is_some() {
-			return Err(PiError::new(
+			return rejected(
 				"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.",
-			));
+			);
 		}
 		let messages = normalize_prompt_input(input.into());
-		self.run_prompt_messages(messages, false).await
+		self.run_prompt_messages(messages, false)
 	}
 
 	/// Continue from the current transcript. The last message must be a user or tool-result message.
-	pub async fn r#continue(&self) -> PiResult<()> {
+	///
+	/// The checks, the queue drain and the start of the run happen during this call, as in `prompt`.
+	pub fn r#continue(&self) -> LocalBoxFuture<'static, PiResult<()>> {
 		if self.inner.active_run.borrow().is_some() {
-			return Err(PiError::new(
-				"Agent is already processing. Wait for completion before continuing.",
-			));
+			return rejected("Agent is already processing. Wait for completion before continuing.");
 		}
 
 		let last_role = {
 			let state = self.inner.state.borrow();
 			let last_role = state.messages.last().map(|message| message.role().to_string());
 			if last_role.is_none() || state.messages.iter().all(|message| message.role() == "system") {
-				return Err(PiError::new("No messages to continue from"));
+				return rejected("No messages to continue from");
 			}
 			last_role
 		};
@@ -520,38 +539,47 @@ impl Agent {
 		if last_role.as_deref() == Some("assistant") {
 			let queued_steering = self.inner.steering_queue.borrow_mut().drain();
 			if !queued_steering.is_empty() {
-				return self.run_prompt_messages(queued_steering, true).await;
+				return self.run_prompt_messages(queued_steering, true);
 			}
 
 			let queued_follow_ups = self.inner.follow_up_queue.borrow_mut().drain();
 			if !queued_follow_ups.is_empty() {
-				return self.run_prompt_messages(queued_follow_ups, false).await;
+				return self.run_prompt_messages(queued_follow_ups, false);
 			}
 
-			return Err(PiError::new("Cannot continue from message role: assistant"));
+			return rejected("Cannot continue from message role: assistant");
 		}
 
-		self.run_continuation().await
+		self.run_continuation()
 	}
 
-	async fn run_prompt_messages(&self, messages: Vec<AgentMessage>, skip_initial_steering_poll: bool) -> PiResult<()> {
+	fn run_prompt_messages(
+		&self,
+		messages: Vec<AgentMessage>,
+		skip_initial_steering_poll: bool,
+	) -> LocalBoxFuture<'static, PiResult<()>> {
 		self.run_with_lifecycle(|signal| {
 			let context = self.create_context_snapshot();
 			let config = self.create_loop_config(skip_initial_steering_poll);
 			let stream_function = self.inner.properties.borrow().stream_function.clone();
-			run_agent_loop(messages, context, config, self.event_sink(), Some(signal), Some(stream_function))
+			run_agent_loop(
+				messages,
+				context,
+				config,
+				self.event_sink(),
+				Some(signal),
+				Some(stream_function),
+			)
 		})
-		.await
 	}
 
-	async fn run_continuation(&self) -> PiResult<()> {
+	fn run_continuation(&self) -> LocalBoxFuture<'static, PiResult<()>> {
 		self.run_with_lifecycle(|signal| {
 			let context = self.create_context_snapshot();
 			let config = self.create_loop_config(false);
 			let stream_function = self.inner.properties.borrow().stream_function.clone();
 			run_agent_loop_continue(context, config, self.event_sink(), Some(signal), Some(stream_function))
 		})
-		.await
 	}
 
 	fn event_sink(&self) -> AgentEventSink {
@@ -631,13 +659,13 @@ impl Agent {
 		config
 	}
 
-	async fn run_with_lifecycle<F, Fut>(&self, executor: F) -> PiResult<()>
+	fn run_with_lifecycle<F, Fut>(&self, executor: F) -> LocalBoxFuture<'static, PiResult<()>>
 	where
 		F: FnOnce(AbortSignal) -> Fut,
-		Fut: Future<Output = PiResult<Vec<AgentMessage>>>,
+		Fut: Future<Output = PiResult<Vec<AgentMessage>>> + 'static,
 	{
 		if self.inner.active_run.borrow().is_some() {
-			return Err(PiError::new("Agent is already processing."));
+			return rejected("Agent is already processing.");
 		}
 
 		let abort_controller = AbortController::new();
@@ -648,7 +676,7 @@ impl Agent {
 			resolve,
 			abort_controller: abort_controller.clone(),
 		});
-		let _finish_run = FinishRunOnDrop(self);
+		let finish_run = FinishRunOnDrop(self.clone());
 
 		{
 			let mut state = self.inner.state.borrow_mut();
@@ -658,10 +686,15 @@ impl Agent {
 		}
 
 		let signal = abort_controller.signal();
-		match executor(signal.clone()).await {
-			Ok(_) => Ok(()),
-			Err(error) => self.handle_run_failure(error, signal.aborted()).await,
-		}
+		let run = executor(signal.clone());
+		let agent = self.clone();
+		Box::pin(async move {
+			let _finish_run = finish_run;
+			match run.await {
+				Ok(_) => Ok(()),
+				Err(error) => agent.handle_run_failure(error, signal.aborted()).await,
+			}
+		})
 	}
 
 	async fn handle_run_failure(&self, error: PiError, aborted: bool) -> PiResult<()> {
@@ -673,7 +706,11 @@ impl Agent {
 				provider: state.model.provider.clone(),
 				model: state.model.id.clone(),
 				usage: Usage::default(),
-				stop_reason: if aborted { StopReason::Aborted } else { StopReason::Error },
+				stop_reason: if aborted {
+					StopReason::Aborted
+				} else {
+					StopReason::Error
+				},
 				error_message: Some(error.message),
 				timestamp: pi_host::now_ms(),
 				..AssistantMessage::default()
@@ -786,12 +823,17 @@ fn same_listener(left: &AgentListener, right: &AgentListener) -> bool {
 	std::ptr::addr_eq(Rc::as_ptr(left), Rc::as_ptr(right))
 }
 
-struct FinishRunOnDrop<'a>(&'a Agent);
+struct FinishRunOnDrop(Agent);
 
-impl Drop for FinishRunOnDrop<'_> {
+impl Drop for FinishRunOnDrop {
 	fn drop(&mut self) {
 		self.0.finish_run();
 	}
+}
+
+/// A rejected promise: the error a TS async method throws before its first `await`.
+fn rejected(message: &str) -> LocalBoxFuture<'static, PiResult<()>> {
+	Box::pin(futures::future::ready(Err(PiError::new(message))))
 }
 
 fn normalize_prompt_input(input: PromptInput) -> Vec<AgentMessage> {

@@ -1,5 +1,5 @@
 //! Port of `packages/agent/src/proxy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Proxy stream function for apps that route LLM calls through a server.
 //! The server manages auth and proxies requests to LLM providers.
@@ -9,18 +9,33 @@
 //!   without the TS `console.warn` (the core does no I/O); an event of a known type with missing or mistyped fields
 //!   fails the stream with the deserialization error, where TS reads `undefined` from it. Invalid JSON fails the
 //!   stream like TS, with serde's message instead of V8's `JSON.parse` message.
-//! - A content index past the end of `partial.content` appends the block; TS leaves a hole in the array.
+//! - `partial.content` has no holes: a content index past the end puts the block after the present ones, in index
+//!   order (TS leaves `null` holes in the array). Events keep the proxy's index, so with sparse indices it is not the
+//!   block's position in `content`.
+//! - `contentSignature: null` is stored as an absent signature (TS stores `null`). `toolCall` on `toolcall_end`
+//!   is merged as typed fields: a missing or `null` `toolCall` merges nothing like `Object.assign`, but values that
+//!   do not fit `ToolCall` (`"arguments": null`, a numeric `id`, another `type`) fail the stream.
+//! - `serde_json` rejects what `JSON.parse` accepts at the edges: lone surrogate escapes (`"\ud83d"`), nesting
+//!   deeper than 128 levels, numbers that overflow to `Infinity`. Those lines fail the stream.
+//! - Explicit `null`s from the server: `errorMessage: null` is stored as absent, `providerThinkingLevel: null` leaves
+//!   the previous value. Closed pi-ai types (`StopReason`, `Usage`) reject values the TS stores unchecked.
+//! - The final message given to `result()` is a copy taken at `done`/`error` (see PORTING.md). A failure after
+//!   `done` (bad trailing data, a reset, an abort before EOF) pushes its error event, but does not rewrite the
+//!   message the consumer already holds, where TS rewrites the live `partial`.
+//! - A response without a body reads as an empty body ("Connection closed by proxy server ..."), where TS fails on
+//!   `response.body!.getReader()`. The request starts when the spawned task first runs, not before `streamProxy`
+//!   returns. The request body serializes `model`, `context` and typed options in struct field order.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use futures::StreamExt;
 use futures::future::Either;
 use pi_ai::types::{
-	AssistantContent, AssistantMessage, AssistantMessageEvent, CacheRetention, Model, ProviderHeaders,
-	SamplingParams, SharedAssistantMessage, StopReason, TextContent, ThinkingBudgets, ThinkingContent,
-	ThinkingLevel, ToolCall, TranscriptContext, Transport, Usage,
+	AssistantContent, AssistantMessage, AssistantMessageEvent, CacheRetention, Model, ProviderHeaders, SamplingParams,
+	SharedAssistantMessage, StopReason, TextContent, ThinkingBudgets, ThinkingContent, ThinkingLevel, ToolCall,
+	TranscriptContext, Transport, Usage,
 };
 use pi_ai::utils::event_stream::{AssistantMessageEventStream, create_assistant_message_event_stream};
 use pi_ai::utils::streaming_json::ToolCallArgumentsStream;
@@ -34,42 +49,52 @@ use serde_json::{Map, Value};
 pub enum ProxyAssistantMessageEvent {
 	Start,
 	TextStart {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 	},
 	TextDelta {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 		delta: String,
 	},
 	TextEnd {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 		#[serde(default)]
 		content_signature: Option<String>,
 	},
 	ThinkingStart {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 	},
 	ThinkingDelta {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 		delta: String,
 	},
 	ThinkingEnd {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 		#[serde(default)]
 		content_signature: Option<String>,
 	},
 	ToolcallStart {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 		id: String,
 		tool_name: String,
 	},
 	ToolcallDelta {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
 		delta: String,
 	},
 	/// `toolCall` stays raw JSON: `toolcall_end` assigns its fields onto the streamed block.
 	ToolcallEnd {
+		#[serde(deserialize_with = "js_array_index")]
 		content_index: usize,
-		tool_call: Map<String, Value>,
+		#[serde(default)]
+		tool_call: Option<Map<String, Value>>,
 	},
 	Done {
 		reason: StopReason,
@@ -85,6 +110,17 @@ pub enum ProxyAssistantMessageEvent {
 		#[serde(default)]
 		provider_thinking_level: Option<String>,
 	},
+}
+
+/// A `contentIndex` as JS uses it to index an array: any integer-valued number (`0.0` and `1e0` included).
+fn js_array_index<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
+	let index = f64::deserialize(deserializer)?;
+	if index >= 0.0 && index.fract() == 0.0 && index < f64::from(u32::MAX) {
+		return Ok(index as usize);
+	}
+	Err(serde::de::Error::custom(format!(
+		"contentIndex {index} is not an array index"
+	)))
 }
 
 const PROXY_EVENT_TYPES: [&str; 12] = [
@@ -148,12 +184,19 @@ fn build_proxy_request_options(options: &ProxyStreamOptions) -> Map<String, Valu
 /// A property of an object literal: `JSON.stringify` drops it when it is undefined.
 fn insert_defined<T: Serialize>(object: &mut Map<String, Value>, key: &str, value: &Option<T>) {
 	if let Some(value) = value {
-		object.insert(key.to_string(), serde_json::to_value(value).expect("stream options serialize to JSON"));
+		object.insert(
+			key.to_string(),
+			serde_json::to_value(value).expect("stream options serialize to JSON"),
+		);
 	}
 }
 
 /// `streamProxy(model, context, options)`.
-pub fn stream_proxy(model: &Model, context: &TranscriptContext, options: ProxyStreamOptions) -> AssistantMessageEventStream {
+pub fn stream_proxy(
+	model: &Model,
+	context: &TranscriptContext,
+	options: ProxyStreamOptions,
+) -> AssistantMessageEventStream {
 	let stream = create_assistant_message_event_stream();
 
 	// Initialize the partial message that we'll build up from events
@@ -227,16 +270,24 @@ async fn run_proxy_stream(
 	let mut saw_terminal_event = false;
 	// Argument streams of open tool calls by content index, kept off the content blocks.
 	let mut tool_arguments: HashMap<usize, ToolCallArgumentsStream> = HashMap::new();
+	let mut content_positions = ContentPositions::default();
 
 	let mut process_line = |line: &str| -> PiResult<()> {
 		let Some(data) = line.strip_prefix("data: ") else {
 			return Ok(());
 		};
-		let data = data.trim();
+		let data = data.trim_matches(is_js_whitespace);
 		if data.is_empty() {
 			return Ok(());
 		}
-		let proxy_event: Value = serde_json::from_str(data).map_err(|error| PiError::named("SyntaxError", error.to_string()))?;
+		let proxy_event: Value =
+			serde_json::from_str(data).map_err(|error| PiError::named("SyntaxError", error.to_string()))?;
+		if proxy_event.is_null() {
+			return Err(PiError::named(
+				"TypeError",
+				"Cannot read properties of null (reading 'type')",
+			));
+		}
 		let known = proxy_event
 			.get("type")
 			.and_then(Value::as_str)
@@ -245,7 +296,7 @@ async fn run_proxy_stream(
 			return Ok(());
 		}
 		let proxy_event: ProxyAssistantMessageEvent = serde_json::from_value(proxy_event)?;
-		if let Some(event) = process_proxy_event(proxy_event, partial, &mut tool_arguments)? {
+		if let Some(event) = process_proxy_event(proxy_event, partial, &mut tool_arguments, &mut content_positions)? {
 			if matches!(
 				event,
 				AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
@@ -318,6 +369,11 @@ async fn run_proxy_stream(
 	Ok(())
 }
 
+/// JS `String.prototype.trim` whitespace: Unicode `White_Space` without U+0085, plus U+FEFF.
+fn is_js_whitespace(c: char) -> bool {
+	c == '\u{FEFF}' || (c.is_whitespace() && c != '\u{0085}')
+}
+
 /// JS truthiness of a JSON value.
 fn is_truthy(value: &Value) -> bool {
 	match value {
@@ -350,6 +406,8 @@ fn js_string(value: &Value) -> String {
 #[derive(Default)]
 struct Utf8StreamDecoder {
 	pending: Vec<u8>,
+	/// Whether text was produced yet; a BOM at the very start is dropped like `TextDecoder` (`ignoreBOM: false`).
+	started: bool,
 }
 
 impl Utf8StreamDecoder {
@@ -381,12 +439,24 @@ impl Utf8StreamDecoder {
 			}
 		}
 		self.pending = rest.to_vec();
-		out
+		self.strip_bom(out)
 	}
 
 	fn finish(&mut self) -> String {
 		let pending = std::mem::take(&mut self.pending);
-		String::from_utf8_lossy(&pending).into_owned()
+		let out = String::from_utf8_lossy(&pending).into_owned();
+		self.strip_bom(out)
+	}
+
+	fn strip_bom(&mut self, out: String) -> String {
+		if self.started || out.is_empty() {
+			return out;
+		}
+		self.started = true;
+		match out.strip_prefix('\u{FEFF}') {
+			Some(rest) => rest.to_string(),
+			None => out,
+		}
 	}
 }
 
@@ -395,6 +465,7 @@ fn process_proxy_event(
 	proxy_event: ProxyAssistantMessageEvent,
 	partial: &SharedAssistantMessage,
 	tool_arguments: &mut HashMap<usize, ToolCallArgumentsStream>,
+	positions: &mut ContentPositions,
 ) -> PiResult<Option<AssistantMessageEvent>> {
 	let event = match proxy_event {
 		ProxyAssistantMessageEvent::Start => AssistantMessageEvent::Start {
@@ -404,6 +475,7 @@ fn process_proxy_event(
 		ProxyAssistantMessageEvent::TextStart { content_index } => {
 			set_content(
 				partial,
+				positions,
 				content_index,
 				AssistantContent::Text(TextContent::default()),
 			);
@@ -414,7 +486,7 @@ fn process_proxy_event(
 		}
 
 		ProxyAssistantMessageEvent::TextDelta { content_index, delta } => {
-			match partial.borrow_mut().content.get_mut(content_index) {
+			match positions.block(&mut partial.borrow_mut().content, content_index) {
 				Some(AssistantContent::Text(content)) => content.text.push_str(&delta),
 				_ => return Err(PiError::new("Received text_delta for non-text content")),
 			}
@@ -429,7 +501,7 @@ fn process_proxy_event(
 			content_index,
 			content_signature,
 		} => {
-			let content = match partial.borrow_mut().content.get_mut(content_index) {
+			let content = match positions.block(&mut partial.borrow_mut().content, content_index) {
 				Some(AssistantContent::Text(content)) => {
 					content.text_signature = content_signature;
 					content.text.clone()
@@ -446,6 +518,7 @@ fn process_proxy_event(
 		ProxyAssistantMessageEvent::ThinkingStart { content_index } => {
 			set_content(
 				partial,
+				positions,
 				content_index,
 				AssistantContent::Thinking(ThinkingContent::default()),
 			);
@@ -456,7 +529,7 @@ fn process_proxy_event(
 		}
 
 		ProxyAssistantMessageEvent::ThinkingDelta { content_index, delta } => {
-			match partial.borrow_mut().content.get_mut(content_index) {
+			match positions.block(&mut partial.borrow_mut().content, content_index) {
 				Some(AssistantContent::Thinking(content)) => content.thinking.push_str(&delta),
 				_ => return Err(PiError::new("Received thinking_delta for non-thinking content")),
 			}
@@ -471,7 +544,7 @@ fn process_proxy_event(
 			content_index,
 			content_signature,
 		} => {
-			let content = match partial.borrow_mut().content.get_mut(content_index) {
+			let content = match positions.block(&mut partial.borrow_mut().content, content_index) {
 				Some(AssistantContent::Thinking(content)) => {
 					content.thinking_signature = content_signature;
 					content.thinking.clone()
@@ -492,6 +565,7 @@ fn process_proxy_event(
 		} => {
 			set_content(
 				partial,
+				positions,
 				content_index,
 				AssistantContent::ToolCall(ToolCall {
 					id,
@@ -508,7 +582,7 @@ fn process_proxy_event(
 
 		ProxyAssistantMessageEvent::ToolcallDelta { content_index, delta } => {
 			let args = tool_arguments.get_mut(&content_index);
-			match (partial.borrow_mut().content.get_mut(content_index), args) {
+			match (positions.block(&mut partial.borrow_mut().content, content_index), args) {
 				(Some(AssistantContent::ToolCall(content)), Some(args)) => {
 					content.arguments = (*args.append(&delta)).clone();
 				}
@@ -527,14 +601,17 @@ fn process_proxy_event(
 		} => {
 			let tool_call = {
 				let mut message = partial.borrow_mut();
-				let Some(AssistantContent::ToolCall(content)) = message.content.get_mut(content_index) else {
+				let Some(AssistantContent::ToolCall(content)) = positions.block(&mut message.content, content_index)
+				else {
 					return Ok(None);
 				};
 				// Object.assign(content, proxyEvent.toolCall)
 				let Value::Object(mut merged) = serde_json::to_value(&*content)? else {
 					unreachable!("a tool call serializes to an object");
 				};
-				merged.extend(tool_call);
+				if let Some(tool_call) = tool_call {
+					merged.extend(tool_call);
+				}
 				*content = serde_json::from_value(Value::Object(merged))?;
 				content.clone()
 			};
@@ -589,11 +666,38 @@ fn process_proxy_event(
 	Ok(Some(event))
 }
 
+/// The proxy content indices present in `partial.content`, in index order. TS assigns `partial.content[i]`, which
+/// leaves holes for indices past the end; a `Vec` has no holes, so a block sits at the count of present indices
+/// below its own. With dense indices (the normal case) the position is the index.
+#[derive(Default)]
+struct ContentPositions(BTreeSet<usize>);
+
+impl ContentPositions {
+	/// `partial.content[contentIndex]`: `None` where TS reads a hole or past the end.
+	fn block<'a>(&self, content: &'a mut [AssistantContent], content_index: usize) -> Option<&'a mut AssistantContent> {
+		if !self.0.contains(&content_index) {
+			return None;
+		}
+		content.get_mut(self.position(content_index))
+	}
+
+	fn position(&self, content_index: usize) -> usize {
+		self.0.range(..content_index).count()
+	}
+}
+
 /// `partial.content[contentIndex] = block`.
-fn set_content(partial: &SharedAssistantMessage, content_index: usize, block: AssistantContent) {
+fn set_content(
+	partial: &SharedAssistantMessage,
+	positions: &mut ContentPositions,
+	content_index: usize,
+	block: AssistantContent,
+) {
 	let content = &mut partial.borrow_mut().content;
-	match content.get_mut(content_index) {
-		Some(slot) => *slot = block,
-		None => content.push(block),
+	let position = positions.position(content_index);
+	if positions.0.insert(content_index) {
+		content.insert(position, block);
+	} else {
+		content[position] = block;
 	}
 }

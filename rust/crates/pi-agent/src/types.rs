@@ -1,5 +1,5 @@
 //! Port of `packages/agent/src/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Dropped type-level helpers with no runtime effect: `AgentToolParams`, `IsAny`. Generic types whose parameters only
 //! narrow a field (`AgentTool<TParameters, TDetails>`, `AgentToolResult<T>`, `AgentToolUpdateCallback<T>`) are one type
@@ -9,11 +9,25 @@
 //! Rust differences:
 //! - `message_update` carries the provider's live `SharedAssistantMessage`. TS passes a shallow copy whose `content`
 //!   array is the live array; a Rust copy would be a deep copy per delta, quadratic in the response length.
+//! - `message_start` for a streamed response carries a copy of the partial taken at `start`; TS's shallow copy shares
+//!   the live `content` array, so a stored TS event later shows the streamed blocks.
 //! - `BeforeToolCallContext.args` is shared (`Rc<RefCell<Value>>`): a hook that changes the arguments changes what the
-//!   tool executes, as mutating the TS object does.
+//!   tool executes, as mutating the TS object does. Replacing the whole value also takes effect, where reassigning
+//!   `ctx.args` in TS does not.
+//! - `prepareArguments` receives a copy of the arguments. A TS shim that edits its argument in place also edits the
+//!   tool call in the transcript (and what the hooks and the next request see); in Rust only its result is used.
+//! - `thinkingLevel: null` from `prepareNextTurn` / `prepareRequest` reads as absent and keeps the current level;
+//!   TS turns reasoning off. Only JSON callers (bindings) can send it.
 //! - Hook contexts (`context`, `assistantMessage`) are snapshots taken when the hook runs, where TS passes the live
 //!   loop objects.
 //! - `AgentState` is a struct; the accessor properties `tools` and `messages` are methods.
+//! - A message whose role is `user`, `assistant`, `system` or `toolResult` deserializes through pi-ai's typed
+//!   `Message`, so one missing a required field (`timestamp`) is an error where TS passes it through.
+//! - Narrower than the TS runtime: a `null` tool result `content` becomes `[]` before `tool_execution_end` and
+//!   `afterToolCall` (TS normalizes it only in the tool result message); `prepareArguments` must return an object
+//!   (TS hands any value on to validation); `QueueMode` and `ToolExecutionMode` are closed enums (TS runs an unknown
+//!   `toolExecution` string as parallel); `RunToolCallOptions.tools` is required, as its TS type says, with no
+//!   runtime fallback to `context.tools`; `DEFAULT_AGENT_IDENTITY` is immutable.
 
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
@@ -248,7 +262,10 @@ pub type PrepareNextTurnFn =
 pub type GetMessagesFn = Rc<dyn Fn() -> LocalBoxFuture<'static, PiResult<Vec<AgentMessage>>>>;
 /// `AgentLoopConfig.beforeToolCall`.
 pub type BeforeToolCallFn = Rc<
-	dyn Fn(BeforeToolCallContext, Option<AbortSignal>) -> LocalBoxFuture<'static, PiResult<Option<BeforeToolCallResult>>>,
+	dyn Fn(
+		BeforeToolCallContext,
+		Option<AbortSignal>,
+	) -> LocalBoxFuture<'static, PiResult<Option<BeforeToolCallResult>>>,
 >;
 /// `AgentLoopConfig.afterToolCall`.
 pub type AfterToolCallFn = Rc<
@@ -601,11 +618,19 @@ pub struct AgentToolResult {
 	pub content: Vec<UserContent>,
 	/// Arbitrary structured details for logs or UI rendering. `None` is `undefined`; an explicit `null` stays
 	/// `Some(Value::Null)`.
-	#[serde(default, deserialize_with = "present_json_value", skip_serializing_if = "Option::is_none")]
+	#[serde(
+		default,
+		deserialize_with = "present_json_value",
+		skip_serializing_if = "Option::is_none"
+	)]
 	pub details: Option<Value>,
 	/// Machine-readable result matching the tool's `outputSchema`, for programmatic callers. Not sent
 	/// to the model; `content` remains the model-facing result.
-	#[serde(default, deserialize_with = "present_json_value", skip_serializing_if = "Option::is_none")]
+	#[serde(
+		default,
+		deserialize_with = "present_json_value",
+		skip_serializing_if = "Option::is_none"
+	)]
 	pub structured_content: Option<Value>,
 	/// Usage from the final tool execution itself, if available. Not used for main LLM context accounting.
 	#[serde(default, skip_serializing_if = "Option::is_none")]

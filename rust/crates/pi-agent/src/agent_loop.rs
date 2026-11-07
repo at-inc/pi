@@ -1,5 +1,5 @@
 //! Port of `packages/agent/src/agent-loop.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Agent loop that works with AgentMessage throughout.
 //! Transforms to Message[] only at the LLM call boundary.
@@ -9,7 +9,22 @@
 //!   into it; the Rust loop takes the context by value and leaves the caller's transcript unchanged. Hooks receive
 //!   snapshots (see `types.rs`).
 //! - The streamed partial is not stored in the loop's context while the response streams; the final message is
-//!   appended when the response ends. No hook runs in between, so nothing can observe the difference.
+//!   appended when the response ends, after the partials of any earlier `start` events (read when the response
+//!   ends, like the live TS objects). No hook runs in between, so the context the hooks see matches TS.
+//! - `agentLoop`/`agentLoopContinue` run the loop as a spawned task: nothing runs (no `agent_start`, no system
+//!   message timestamp) until the task is first polled, where TS runs up to the first `await` before returning. A
+//!   run that fails is dropped and its stream never ends; TS leaves an unhandled rejection.
+//! - The stream function receives `config.base` (the stream options) plus `apiKey`, `identity` and `signal`. TS
+//!   spreads the whole config, so a custom stream function there also sees `model`, `toolExecution` and the hooks.
+//!   Extra provider keys travel in `config.base.extra`.
+//! - `transformContext` receives a copy of the messages, so in-place edits of the array are lost; use its result.
+//!   A tool's `execute` receives its arguments by value, so `afterToolCall` sees the arguments as prepared, not as
+//!   the tool may have mutated them.
+//! - When several `onUpdate` emits of one tool fail, the error of the first update is returned, not the first to
+//!   fail in time.
+//! - The loop's messages serialize in pi-ai's struct field order (`ToolResultMessage` puts `timestamp` before
+//!   `durationMs`, `AssistantMessage.thinkingLevel` sits before `usage`, `SystemMessage` tool changes before
+//!   `timestamp`). TS appends those keys last. Code that sends a transcript as JSON must order the keys itself.
 //! - A tool's `onUpdate` starts its `tool_execution_update` emit as a spawned task that runs when the tool next
 //!   yields. In TS the synchronous part of the emit (the agent's state update and the first listener call) runs
 //!   inside `onUpdate`.
@@ -21,10 +36,11 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use futures::channel::oneshot;
+use futures::stream::{FuturesUnordered, StreamExt};
 use pi_ai::types::{
-	AssistantContent, AssistantMessage, AssistantMessageEvent, Context, ModelThinkingLevel,
-	SharedAssistantMessage, StopReason, SystemMessage, SystemMessageContent, TextContent, ThinkingLevel as ReasoningLevel,
-	ToolResultMessage, UserContent,
+	AssistantContent, AssistantMessage, AssistantMessageEvent, Context, ModelThinkingLevel, SharedAssistantMessage,
+	StopReason, SystemMessage, SystemMessageContent, TextContent, ThinkingLevel as ReasoningLevel, ToolResultMessage,
+	UserContent,
 };
 use pi_ai::utils::event_stream::{AssistantMessageEventStream, EventStream};
 use pi_ai::utils::identity::{ClientIdentity, PI_ATTRIBUTION, merge_client_identity};
@@ -201,7 +217,9 @@ pub(crate) fn reasoning_for(level: ThinkingLevel) -> Option<ReasoningLevel> {
 
 /// `config.reasoning ?? "off"`.
 fn thinking_level_of(config: &AgentLoopConfig) -> ThinkingLevel {
-	config.reasoning.map_or(ModelThinkingLevel::Off, ModelThinkingLevel::from)
+	config
+		.reasoning
+		.map_or(ModelThinkingLevel::Off, ModelThinkingLevel::from)
 }
 
 async fn poll_messages(source: &Option<crate::types::GetMessagesFn>) -> PiResult<Vec<AgentMessage>> {
@@ -310,7 +328,8 @@ async fn run_loop(
 
 			// Stream assistant response
 			let message =
-				stream_assistant_response(&mut current_context, &config, signal.clone(), emit, &stream_function).await?;
+				stream_assistant_response(&mut current_context, &config, signal.clone(), emit, &stream_function)
+					.await?;
 			new_messages.push(message.clone().into());
 
 			if matches!(message.stop_reason, StopReason::Error | StopReason::Aborted) {
@@ -501,7 +520,7 @@ fn declare_tool_changes(context: &AgentContext, pending_messages: Vec<AgentMessa
 	);
 	let index = pending_messages
 		.iter()
-		.position(|message| message.role() != "system")
+		.position(|message| message.as_system_message().is_none())
 		.unwrap_or(pending_messages.len());
 	let mut messages = pending_messages;
 	messages.insert(index, update.into());
@@ -558,11 +577,15 @@ async fn stream_assistant_response(
 	let thinking_level = thinking_level_of(config);
 
 	let mut partial_message: Option<SharedAssistantMessage> = None;
+	// TS pushes every `start` partial into the context and replaces only the last one with the final message.
+	let mut earlier_partials: Vec<SharedAssistantMessage> = Vec::new();
 
 	while let Some(event) = response.next().await {
 		match &event {
 			AssistantMessageEvent::Start { partial } => {
-				partial_message = Some(partial.clone());
+				if let Some(previous) = partial_message.replace(partial.clone()) {
+					earlier_partials.push(previous);
+				}
 				let message = partial.borrow().clone();
 				emit(AgentEvent::MessageStart {
 					message: message.into(),
@@ -590,12 +613,28 @@ async fn stream_assistant_response(
 			}
 
 			AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. } => {
-				return finish_response(context, &response, thinking_level, partial_message.is_some(), emit).await;
+				return finish_response(
+					context,
+					&response,
+					thinking_level,
+					partial_message.is_some(),
+					&earlier_partials,
+					emit,
+				)
+				.await;
 			}
 		}
 	}
 
-	finish_response(context, &response, thinking_level, partial_message.is_some(), emit).await
+	finish_response(
+		context,
+		&response,
+		thinking_level,
+		partial_message.is_some(),
+		&earlier_partials,
+		emit,
+	)
+	.await
 }
 
 async fn finish_response(
@@ -603,6 +642,7 @@ async fn finish_response(
 	response: &AssistantMessageEventStream,
 	thinking_level: ThinkingLevel,
 	added_partial: bool,
+	earlier_partials: &[SharedAssistantMessage],
 	emit: &AgentEventSink,
 ) -> PiResult<AssistantMessage> {
 	let mut final_message = response
@@ -610,6 +650,9 @@ async fn finish_response(
 		.await
 		.expect("the stream function's stream resolves its result once it ends");
 	final_message.thinking_level = Some(thinking_level);
+	context
+		.messages
+		.extend(earlier_partials.iter().map(|partial| partial.borrow().clone().into()));
 	context.messages.push(final_message.clone().into());
 	if !added_partial {
 		emit(AgentEvent::MessageStart {
@@ -717,9 +760,15 @@ async fn execute_tool_calls_sequential(
 	for tool_call in tool_calls {
 		emit_tool_execution_start(&tool_call, emit).await?;
 
-		let preparation =
-			prepare_tool_call(current_context, assistant_message, tool_call.clone(), hooks, signal.clone(), tools)
-				.await;
+		let preparation = prepare_tool_call(
+			current_context,
+			assistant_message,
+			tool_call.clone(),
+			hooks,
+			signal.clone(),
+			tools,
+		)
+		.await;
 		let finalized = match preparation {
 			Preparation::Immediate { result, is_error } => FinalizedToolCallOutcome {
 				tool_call,
@@ -734,8 +783,15 @@ async fn execute_tool_calls_sequential(
 					emit_tool_execution_update(&preparation.tool_call, emit),
 				)
 				.await?;
-				finalize_executed_tool_call(current_context, assistant_message, preparation, executed, hooks, signal.clone())
-					.await
+				finalize_executed_tool_call(
+					current_context,
+					assistant_message,
+					preparation,
+					executed,
+					hooks,
+					signal.clone(),
+				)
+				.await
 			}
 		};
 
@@ -770,9 +826,15 @@ async fn execute_tool_calls_parallel(
 	for tool_call in tool_calls {
 		emit_tool_execution_start(&tool_call, emit).await?;
 
-		let preparation =
-			prepare_tool_call(current_context, assistant_message, tool_call.clone(), hooks, signal.clone(), tools)
-				.await;
+		let preparation = prepare_tool_call(
+			current_context,
+			assistant_message,
+			tool_call.clone(),
+			hooks,
+			signal.clone(),
+			tools,
+		)
+		.await;
 		match preparation {
 			Preparation::Immediate { result, is_error } => {
 				let finalized = FinalizedToolCallOutcome {
@@ -795,37 +857,58 @@ async fn execute_tool_calls_parallel(
 		}
 	}
 
-	let ordered_finalized_calls = futures::future::try_join_all(finalized_calls.into_iter().map(|entry| {
-		let signal = signal.clone();
-		async move {
-			let preparation = match entry {
-				FinalizedToolCallEntry::Finalized(finalized) => return Ok(finalized),
-				FinalizedToolCallEntry::Pending(preparation) => preparation,
-			};
-			if is_aborted(&signal) {
-				let finalized = FinalizedToolCallOutcome {
-					tool_call: preparation.tool_call,
-					result: create_error_tool_result("Operation aborted"),
-					is_error: true,
-					duration_ms: None,
+	// Each call settles on its own, so `tool_execution_end` follows completion order like the TS promise chains;
+	// the results are put back in source order for the tool result messages.
+	let call_count = finalized_calls.len();
+	let mut running: FuturesUnordered<_> = finalized_calls
+		.into_iter()
+		.enumerate()
+		.map(|(index, entry)| {
+			let signal = signal.clone();
+			async move {
+				let preparation = match entry {
+					FinalizedToolCallEntry::Finalized(finalized) => return Ok((index, finalized)),
+					FinalizedToolCallEntry::Pending(preparation) => preparation,
 				};
+				if is_aborted(&signal) {
+					let finalized = FinalizedToolCallOutcome {
+						tool_call: preparation.tool_call,
+						result: create_error_tool_result("Operation aborted"),
+						is_error: true,
+						duration_ms: None,
+					};
+					emit_tool_execution_end(&finalized, emit).await?;
+					return Ok((index, finalized));
+				}
+				let executed = execute_prepared_tool_call(
+					&preparation,
+					signal.clone(),
+					emit_tool_execution_update(&preparation.tool_call, emit),
+				)
+				.await?;
+				let finalized = finalize_executed_tool_call(
+					current_context,
+					assistant_message,
+					preparation,
+					executed,
+					hooks,
+					signal,
+				)
+				.await;
 				emit_tool_execution_end(&finalized, emit).await?;
-				return Ok(finalized);
+				PiResult::Ok((index, finalized))
 			}
-			let executed = execute_prepared_tool_call(
-				&preparation,
-				signal.clone(),
-				emit_tool_execution_update(&preparation.tool_call, emit),
-			)
-			.await?;
-			let finalized =
-				finalize_executed_tool_call(current_context, assistant_message, preparation, executed, hooks, signal)
-					.await;
-			emit_tool_execution_end(&finalized, emit).await?;
-			PiResult::Ok(finalized)
-		}
-	}))
-	.await?;
+		})
+		.collect();
+	let mut settled: Vec<Option<FinalizedToolCallOutcome>> = (0..call_count).map(|_| None).collect();
+	while let Some(outcome) = running.next().await {
+		let (index, finalized) = outcome?;
+		settled[index] = Some(finalized);
+	}
+	let ordered_finalized_calls: Vec<FinalizedToolCallOutcome> = settled
+		.into_iter()
+		.map(|finalized| finalized.expect("every running tool call settles before the loop ends"))
+		.collect();
 	let mut messages: Vec<ToolResultMessage> = Vec::new();
 	for finalized in &ordered_finalized_calls {
 		let tool_result_message = create_tool_result_message(finalized);
@@ -1028,8 +1111,15 @@ pub async fn run_tool_call(tool_call: AgentToolCall, options: RunToolCallOptions
 		signal,
 		on_update,
 	} = options;
-	let preparation =
-		prepare_tool_call(&context, &assistant_message, tool_call.clone(), &hooks, signal.clone(), &tools).await;
+	let preparation = prepare_tool_call(
+		&context,
+		&assistant_message,
+		tool_call.clone(),
+		&hooks,
+		signal.clone(),
+		&tools,
+	)
+	.await;
 	let preparation = match preparation {
 		Preparation::Immediate { result, is_error } => {
 			return Ok(AgentToolCallOutcome {

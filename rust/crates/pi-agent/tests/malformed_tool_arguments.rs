@@ -13,8 +13,8 @@ use pi_agent::agent::{Agent, AgentInitialState, AgentOptions};
 use pi_agent::proxy::{ProxyStreamOptions, stream_proxy};
 use pi_agent::types::{AgentMessage, AgentTool, AgentToolResult, StreamFn};
 use pi_ai::types::{
-	AssistantContent, AssistantMessage, AssistantMessageEvent, Message, Model, StopReason, TextContent, Tool,
-	ToolCall, UserContent,
+	AssistantContent, AssistantMessage, AssistantMessageEvent, Message, Model, StopReason, TextContent, Tool, ToolCall,
+	UserContent,
 };
 use pi_ai::utils::event_stream::AssistantMessageEventStream;
 use pi_host::HttpResponse;
