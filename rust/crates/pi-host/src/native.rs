@@ -97,9 +97,18 @@ impl Host for NativeHost {
 				PiError::type_error("terminated").with_data(serde_json::json!({ "cause": error.to_string() }))
 			});
 			let body = match signal {
-				Some(signal) => body
-					.take_while(move |_| futures::future::ready(!signal.aborted()))
-					.boxed_local(),
+				Some(signal) => futures::stream::unfold(Some((body.boxed_local(), signal)), |state| async move {
+					let (mut body, signal) = state?;
+					let watcher = signal.clone();
+					let aborted = watcher.aborted_future();
+					futures::pin_mut!(aborted);
+					match futures::future::select(body.next(), aborted).await {
+						futures::future::Either::Left((Some(chunk), _)) => Some((chunk, Some((body, signal)))),
+						futures::future::Either::Left((None, _)) => None,
+						futures::future::Either::Right((reason, _)) => Some((Err(reason), None)),
+					}
+				})
+				.boxed_local(),
 				None => body.boxed_local(),
 			};
 			Ok(HttpResponse {

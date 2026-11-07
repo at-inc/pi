@@ -44,6 +44,13 @@ aws-smithy-types = "1"
 aws-credential-types = "1"
 rsa = { version = "0.9", default-features = false, features = ["std", "pem", "sha2", "u64_digit"] }
 
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.dev.package."*"]
+debug = false
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 
