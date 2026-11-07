@@ -2182,3 +2182,84 @@ mod openai_codex_streaming {
 		});
 	}
 }
+
+
+/// Rust-only regressions from the adversarial review of `openai-codex-responses.ts`. The expected values come from
+/// running the same requests through the TS adapter under vitest with a stubbed `fetch`.
+mod review_regressions {
+	use super::*;
+
+	/// One SSE request with `maxRetries: 1`: the first Codex response is `status` with `body`, the next the SSE payload.
+	/// Returns the result and the number of Codex requests.
+	async fn first_response_fails(
+		host: &TestHost,
+		status: u16,
+		retry_after: Option<&'static str>,
+		body: Value,
+		max_retry_delay_ms: Option<f64>,
+	) -> (AssistantMessage, usize) {
+		let token = mock_token("acc_test");
+		let fetch_calls = Rc::new(Cell::new(0));
+		let counted = fetch_calls.clone();
+		let body = json_stringify(&body);
+		host.on_fetch(move |_| {
+			counted.set(counted.get() + 1);
+			let mut headers = vec![("content-type", "application/json")];
+			headers.extend(retry_after.map(|value| ("retry-after", value)));
+			let response = if counted.get() == 1 {
+				text_response(status, &headers, body.clone())
+			} else {
+				sse_response(build_sse_payload("completed", false, None))
+			};
+			Box::pin(async move { Ok(response) })
+		});
+		let model = gpt_51_codex();
+		let context = say_hello_context(pi_host::now_ms());
+		let result = result(stream_openai_codex_responses(
+			&model,
+			&context,
+			options(&token, |options| {
+				options.transport = Some(Transport::Sse);
+				options.max_retries = Some(1.0);
+				options.max_retry_delay_ms = max_retry_delay_ms;
+			}),
+		))
+		.await;
+		(result, fetch_calls.get())
+	}
+
+	// TS `/rate.?limit/i` has no `u` flag, so `.` is one UTF-16 code unit and a character outside the BMP never matches:
+	// that 400 is not retryable, ignores `retry-after` and takes the network-error retry instead.
+	#[test]
+	fn retry_text_wildcard_matches_one_utf16_code_unit() {
+		run_codex(|host| async move {
+			let body = json!({ "error": { "code": "bad", "message": "rate\u{1F600}limit" } });
+			let (result, calls) = first_response_fails(&host, 400, Some("2"), body, Some(1000.0)).await;
+			assert_eq!(result.stop_reason, StopReason::Stop);
+			assert_eq!(text_of(&result).as_deref(), Some("Hello"));
+			assert_eq!(calls, 2);
+		});
+		run_codex(|host| async move {
+			let body = json!({ "error": { "code": "bad", "message": "rate\u{e9}limit" } });
+			let (result, calls) = first_response_fails(&host, 400, Some("2"), body, Some(1000.0)).await;
+			assert_eq!(result.stop_reason, StopReason::Error);
+			assert_eq!(result.error_message.as_deref(), Some("Server requested 2s retry delay (max: 1s)"));
+			assert_eq!(calls, 1);
+		});
+	}
+
+	// `Math.round` of an odd integer above 2^52 is the integer itself; `floor(v + 0.5)` rounds `v + 0.5` to even first.
+	#[test]
+	fn usage_limit_minutes_round_like_math_round_above_2_pow_52() {
+		run_codex(|host| async move {
+			assert_eq!(pi_host::now_ms(), 1_700_000_000_000.0);
+			let body = json!({ "error": { "code": "usage_limit_reached", "resets_at": 3e17 } });
+			let (result, calls) = first_response_fails(&host, 400, None, body, None).await;
+			assert_eq!(
+				result.error_message.as_deref(),
+				Some("You have hit your ChatGPT usage limit. Try again in ~4999999971666667 min.")
+			);
+			assert_eq!(calls, 1);
+		});
+	}
+}

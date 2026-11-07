@@ -196,10 +196,10 @@ fn is_terminal_rate_limit_error(error_text: &str) -> bool {
 }
 
 // `/.../i` over an ASCII pattern: JS case folding never maps a non-ASCII character to an ASCII one, and `.` excludes
-// the JS line terminators.
+// the JS line terminators and matches one UTF-16 code unit, so never a character outside the BMP.
 static RETRYABLE_ERROR_TEXT: LazyLock<Regex> = LazyLock::new(|| {
 	Regex::new(
-		"rate[^\n\r\u{2028}\u{2029}]?limit|overloaded|service[^\n\r\u{2028}\u{2029}]?unavailable|upstream[^\n\r\u{2028}\u{2029}]?connect|connection[^\n\r\u{2028}\u{2029}]?refused",
+		"rate[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]?limit|overloaded|service[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]?unavailable|upstream[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]?connect|connection[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]?refused",
 	)
 	.expect("valid regex")
 });
@@ -2409,7 +2409,9 @@ fn js_math_round(value: f64) -> f64 {
 	if !value.is_finite() || value == 0.0 {
 		return value;
 	}
-	let rounded = (value + 0.5).floor();
+	// `value + 0.5` can round up in floating point (0.49999999999999994, odd integers above 2^52); `value - floor` is exact.
+	let floor = value.floor();
+	let rounded = if value - floor >= 0.5 { floor + 1.0 } else { floor };
 	if rounded == 0.0 && value < 0.0 { -0.0 } else { rounded }
 }
 
