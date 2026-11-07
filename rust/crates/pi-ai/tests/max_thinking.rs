@@ -1,8 +1,7 @@
 //! Port of `packages/ai/test/max-thinking.test.ts`.
 //!
 //! `getModel`, `getSupportedThinkingLevels` and `clampThinkingLevel` (compat.ts) are `get_builtin_model` and the
-//! `models.rs` functions. Not ported: `sends max to the Codex Responses API for %s`, which captures the request
-//! through the openai-codex-responses API (wave-3, `w3-openai-responses`).
+//! `models.rs` functions. `it.each` cases run in a loop.
 
 use std::cell::RefCell;
 use std::rc::Rc;
