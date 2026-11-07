@@ -45,6 +45,24 @@ fn regex_backreferences_follow_javascript() {
 }
 
 #[test]
+fn regex_zero_width_repeats_follow_javascript() {
+	assert_eq!(test("(?:)*?", "u", "a"), Ok(true));
+	assert_eq!(test("^(?i:)+a$", "", "a"), Ok(true));
+	assert_eq!(test("^(?:(?<=a))*b$", "u", "b"), Ok(true));
+	assert_eq!(test("^(?:^)*a", "u", "a"), Ok(true));
+	assert_eq!(test(r"^(?=(a))?\1b", "", "ab"), Ok(false));
+	assert_eq!(test(r"^(?:(?=(a)))*\1b", "u", "ab"), Ok(false));
+	assert_eq!(test(r"^(?:(?=(a)))+\1b$", "u", "ab"), Ok(true));
+}
+
+#[test]
+fn regex_references_inside_or_before_their_group_match_empty() {
+	assert_eq!(test(r"^(\1a)$", "u", "a"), Ok(true));
+	assert_eq!(test(r"^(?<n>a\k<n>)$", "u", "a"), Ok(true));
+	assert_eq!(test(r"^(?:\1(b))+$", "u", "bb"), Ok(true));
+}
+
+#[test]
 fn regex_group_names_follow_javascript() {
 	assert_eq!(test(r"(?<\u0061>x)\k<a>", "u", "xx"), Ok(true));
 	assert_eq!(test("(?<a\u{301}>x)", "u", "x"), Ok(true));
@@ -107,6 +125,52 @@ fn regex_errors_use_v8_wording() {
 	assert_eq!(
 		message(r"(?<a>x)[\k]", ""),
 		"Invalid regular expression: /(?<a>x)[\\k]/: Invalid escape"
+	);
+	assert_eq!(
+		message(r"[\1]", "u"),
+		"Invalid regular expression: /[\\1]/u: Invalid decimal escape"
+	);
+	assert_eq!(
+		message(r"[\8]", "u"),
+		"Invalid regular expression: /[\\8]/u: Invalid escape"
+	);
+	assert_eq!(
+		message(r"[\p{L]", "u"),
+		"Invalid regular expression: /[\\p{L]/u: Invalid property name in character class"
+	);
+	assert_eq!(
+		message(r"\b{2,1}", ""),
+		"Invalid regular expression: /\\b{2,1}/: Nothing to repeat"
+	);
+	assert_eq!(
+		message(r"(?<a>x)\k<a", "u"),
+		"Invalid regular expression: /(?<a>x)\\k<a/u: Invalid capture group name"
+	);
+}
+
+// V8 checks named references after the whole pattern parsed, and a group's name when the group closes.
+#[test]
+fn regex_errors_come_in_v8_order() {
+	let message = |source: &str, flags: &str| test(source, flags, "").unwrap_err();
+	assert_eq!(
+		message(r"\k<m>(?<n>)(", "u"),
+		"Invalid regular expression: /\\k<m>(?<n>)(/u: Unterminated group"
+	);
+	assert_eq!(
+		message(r"(?<a>x)\k<b>[\k]", ""),
+		"Invalid regular expression: /(?<a>x)\\k<b>[\\k]/: Invalid escape"
+	);
+	assert_eq!(
+		message("(?<a>(?<a>x)(?x:))", "u"),
+		"Invalid regular expression: /(?<a>(?<a>x)(?x:))/u: Invalid group"
+	);
+	assert_eq!(
+		message(r"[\k](?<1>)", ""),
+		"Invalid regular expression: /[\\k](?<1>)/: Invalid escape"
+	);
+	assert_eq!(
+		message("(?<a>(?<a>x))", "u"),
+		"Invalid regular expression: /(?<a>(?<a>x))/u: Duplicate capture group name"
 	);
 }
 
