@@ -1,0 +1,188 @@
+//! Rust-only: JavaScript behavior the port must keep where Rust's defaults differ, from the adversarial review of the
+//! port. Each expected value is what the TypeScript source gives on Node.
+
+use pi_schema::formats::formats;
+use pi_schema::shared::JsRegex;
+use pi_schema::{CompileOptions, compile, compile_coercing, obj, opt, str};
+use serde_json::{Value, json};
+
+fn test(source: &str, flags: &str, value: &str) -> Result<bool, String> {
+	JsRegex::new(source, flags)
+		.map(|re| re.test(value))
+		.map_err(|error| error.message)
+}
+
+fn compile_error(schema: Value) -> String {
+	compile(&schema, &CompileOptions::default())
+		.err()
+		.expect("the schema does not compile")
+		.message
+}
+
+fn paths(schema: Value, value: Value) -> Vec<String> {
+	let validator = compile(&schema, &CompileOptions::default()).unwrap();
+	validator
+		.errors(&value)
+		.unwrap()
+		.into_iter()
+		.map(|error| error.path)
+		.collect()
+}
+
+#[test]
+fn regex_backreferences_follow_javascript() {
+	assert_eq!(test(r"^(a)\1\x30$", "u", "aa0"), Ok(true));
+	assert_eq!(test(r"^\1(a)$", "", "a"), Ok(true));
+	assert_eq!(test(r"^\k<n>(?<n>a)$", "u", "a"), Ok(true));
+	assert_eq!(test(r"^(?=(a))?(b)\2$", "", "bb"), Ok(true));
+	assert_eq!(test(r"^(?=(a))*b(b)\1$", "", "bb"), Ok(true));
+	assert_eq!(test(r"^(?:(?<a>x)|(?<a>y))\k<a>$", "u", "yy"), Ok(true));
+	assert_eq!(test(r"^(?:(?<a>x)|(?<a>y))\k<a>$", "u", "xy"), Ok(false));
+	assert_eq!(
+		test("(?<a>x)(?<a>y)", "u", "xy"),
+		Err("Invalid regular expression: /(?<a>x)(?<a>y)/u: Duplicate capture group name".into())
+	);
+}
+
+#[test]
+fn regex_group_names_follow_javascript() {
+	assert_eq!(test(r"(?<\u0061>x)\k<a>", "u", "xx"), Ok(true));
+	assert_eq!(test("(?<a\u{301}>x)", "u", "x"), Ok(true));
+	assert!(test("(?<a\u{b2}>x)", "u", "x").is_err());
+	assert_eq!(test(r"^(?<g_e9>a)(?<é>b)\k<g_e9>$", "u", "aba"), Ok(true));
+}
+
+#[test]
+fn regex_properties_follow_ecmascript_names() {
+	assert!(test(r"^\p{Greek}$", "u", "α").is_err());
+	assert!(test(r"^\p{LeTTer}$", "u", "a").is_err());
+	assert_eq!(test(r"^\p{Script=Greek}$", "u", "α"), Ok(true));
+	assert_eq!(test(r"^\p{space}$", "u", " "), Ok(true));
+	assert_eq!(test(r"^\p{Script=Unknown}$", "u", "\u{378}"), Ok(true));
+	assert_eq!(test(r"^\p{Cs}$", "u", "a"), Ok(false));
+	assert_eq!(test(r"^\P{Script=Sidetic}$", "u", "a"), Ok(true));
+}
+
+#[test]
+fn regex_quantifiers_and_lines_follow_javascript() {
+	assert_eq!(test(r"^.{0,100000}$", "u", "abc"), Ok(true));
+	assert_eq!(test(r"^a{0,99999999999}$", "u", "aaa"), Ok(true));
+	assert_eq!(test(r"^a{4294967296}$", "u", "aaa"), Ok(false));
+	assert_eq!(test(r"[]+a", "", "a"), Ok(false));
+	assert_eq!(test(r"(?m:^b)", "", "a\rb"), Ok(true));
+	assert_eq!(test(r"^b", "m", "a\u{2028}b"), Ok(true));
+	assert_eq!(
+		test(r"^(?:(a|a)+\bb|a+c)$", "", &format!("{}c", "a".repeat(18))),
+		Ok(true)
+	);
+}
+
+#[test]
+fn regex_errors_use_v8_wording() {
+	let message = |source: &str, flags: &str| test(source, flags, "").unwrap_err();
+	assert_eq!(
+		message("(?ii:a)", ""),
+		"Invalid regular expression: /(?ii:a)/: Repeated flag in flag group"
+	);
+	assert_eq!(
+		message("(?-:a)", ""),
+		"Invalid regular expression: /(?-:a)/: Invalid flag group"
+	);
+	assert_eq!(
+		message("(?<=a)*b", ""),
+		"Invalid regular expression: /(?<=a)*b/: Invalid quantifier"
+	);
+	assert_eq!(
+		message("a{,5}", "u"),
+		"Invalid regular expression: /a{,5}/u: Incomplete quantifier"
+	);
+	assert_eq!(
+		message(r"\c1", "u"),
+		"Invalid regular expression: /\\c1/u: Invalid Unicode escape"
+	);
+	assert_eq!(
+		message(r"\p{Greek}", "ui"),
+		"Invalid regular expression: /\\p{Greek}/iu: Invalid property name"
+	);
+	assert_eq!(
+		message(r"(?<a>x)[\k]", ""),
+		"Invalid regular expression: /(?<a>x)[\\k]/: Invalid escape"
+	);
+}
+
+#[test]
+fn integer_like_keys_come_first() {
+	assert_eq!(
+		paths(
+			json!({"properties": {"b": {"type": "string"}, "1": {"type": "string"}}}),
+			json!({"b": 0, "1": 0})
+		),
+		["/1", "/b"]
+	);
+	assert_eq!(
+		paths(
+			json!({"dependentRequired": {"b": ["x"]}, "dependencies": {"1": ["y"]}}),
+			json!({"b": 0, "1": 0})
+		),
+		["/y", "/x"]
+	);
+	assert_eq!(
+		compile_error(json!({"properties": {"b": 7, "1": 8}})),
+		"A schema must be an object or a boolean, got 8"
+	);
+	let anchored = json!({"$defs": {"b": {"$anchor": "x", "type": "string"}, "1": {"$anchor": "x", "type": "number"}}, "$ref": "#x"});
+	assert!(
+		compile(&anchored, &CompileOptions::default())
+			.unwrap()
+			.check(&json!("s"))
+	);
+	assert_eq!(
+		serde_json::to_string(&str(json!({"10": 1}))).unwrap(),
+		r#"{"10":1,"type":"string"}"#
+	);
+	let object = obj(
+		[("b", str(Value::Null).into()), ("1", opt(str(Value::Null)).into())],
+		Value::Null,
+	);
+	assert_eq!(object["required"], json!(["b"]));
+	assert_eq!(
+		object["properties"].as_object().unwrap().keys().collect::<Vec<_>>(),
+		["1", "b"]
+	);
+}
+
+#[test]
+fn large_integers_round_like_javascript_numbers() {
+	assert_eq!(
+		compile_error(json!({"not": 9007199254740993u64})),
+		"A schema must be an object or a boolean, got 9007199254740992"
+	);
+	let validator = compile_coercing(&json!({"type": "number"}), &CompileOptions::default()).unwrap();
+	assert_eq!(
+		validator.coerce(&json!("0x200000000000011")).unwrap().as_f64(),
+		Some(144115188075855900.0)
+	);
+}
+
+#[test]
+fn a_reference_cycle_fails_instead_of_overflowing_the_stack() {
+	let validator = compile(&json!({"$ref": "#"}), &CompileOptions::default()).unwrap();
+	assert!(!validator.check(&json!(1)));
+	let error = validator.errors(&json!(1)).unwrap_err();
+	assert_eq!(
+		(error.name.as_str(), error.message.as_str()),
+		("RangeError", "Maximum call stack size exceeded")
+	);
+}
+
+#[test]
+fn formats_follow_javascript() {
+	let formats = formats();
+	let format = |name: &str, value: &str| (formats.get(name).unwrap())(value);
+	assert!(format("hostname", "xn--ib9b66e"));
+	assert!(format("idn-hostname", "a.xn--ib9b66e"));
+	assert!(format("iri-reference", "///a"));
+	assert!(!format("iri-reference", "///"));
+	assert!(format("idn-email", &format!("\"{}\"@b", "a".repeat(500_000))));
+	assert!(!format("idn-email", "a@b-"));
+}
