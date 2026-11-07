@@ -27,6 +27,7 @@ use crate::types::{
 use crate::utils::error_body::{format_provider_error, normalize_provider_error};
 use crate::utils::headers::{headers_to_record, provider_headers_to_record};
 use crate::utils::identity::{ClientIdentityTarget, get_identity_headers};
+use crate::utils::json_parse::json_parse;
 use crate::utils::provider_retry::{ProviderRetryOptions, retry_provider_request};
 use crate::utils::text::js_entries;
 
@@ -361,22 +362,24 @@ async fn post(request: &RequestContext, path: &str, body: Value, observe: bool) 
 	let fetch = options.as_ref().and_then(|options| options.fetch.clone());
 	let (status, response_headers, json) = retry_provider_request(
 		|| {
-			let timeout_signal = timeout_ms.map(AbortSignal::timeout);
-			let request_signal = match (&signal, &timeout_signal) {
-				(Some(signal), Some(timeout_signal)) => {
-					Some(AbortSignal::any(&[signal.clone(), timeout_signal.clone()]))
-				}
-				(signal, timeout_signal) => signal.clone().or_else(|| timeout_signal.clone()),
-			};
-			let http_request = HttpRequest {
-				method: "POST".into(),
-				url: url.clone(),
-				headers: headers.clone(),
-				body: Some(request_body.clone()),
-				signal: request_signal,
-			};
+			let (url, headers, request_body) = (url.clone(), headers.clone(), request_body.clone());
 			let (fetch, signal) = (fetch.clone(), signal.clone());
 			async move {
+				// Node's `AbortSignal.timeout` throws a RangeError for an invalid delay, outside the attempt's catch.
+				let timeout_signal = timeout_ms.map(AbortSignal::try_timeout).transpose()?;
+				let request_signal = match (&signal, &timeout_signal) {
+					(Some(signal), Some(timeout_signal)) => {
+						Some(AbortSignal::any(&[signal.clone(), timeout_signal.clone()]))
+					}
+					(signal, timeout_signal) => signal.clone().or_else(|| timeout_signal.clone()),
+				};
+				let http_request = HttpRequest {
+					method: "POST".into(),
+					url,
+					headers,
+					body: Some(request_body),
+					signal: request_signal,
+				};
 				let attempt = async {
 					let next = pi_host::fetch(http_request, fetch.as_ref()).await?;
 					let (status, headers) = (next.status, next.headers.clone());
@@ -384,7 +387,7 @@ async fn post(request: &RequestContext, path: &str, body: Value, observe: bool) 
 						let text = next.text().await?;
 						return Err(http_error(status, &headers, text));
 					}
-					Ok((status, headers, next.json().await?))
+					Ok((status, headers, json_parse(&next.text().await?)?))
 				};
 				attempt.await.map_err(|error| {
 					if timeout_signal.as_ref().is_some_and(AbortSignal::aborted)

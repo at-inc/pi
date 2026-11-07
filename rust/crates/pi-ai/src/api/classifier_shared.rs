@@ -18,6 +18,7 @@ use crate::models::calculate_cost;
 use crate::types::{ClassifierModel, ClassifierOptions, ProviderHeaders, ProviderResponse, Usage, UsageCost};
 use crate::utils::headers::{headers_to_record, provider_headers_to_record};
 use crate::utils::identity::{ClientIdentity, ClientIdentityTarget, get_identity_headers};
+use crate::utils::json_parse::json_parse;
 use crate::utils::provider_retry::{ProviderRetryOptions, retry_provider_request};
 
 /// `httpError(label, response, body)`.
@@ -109,15 +110,16 @@ pub async fn post_classifier_request(
 	let request_body = Bytes::from(json_stringify(&payload));
 	let (status, headers, json) = retry_provider_request(
 		|| {
-			let timeout_signal = options.timeout_ms.map(AbortSignal::timeout);
-			let signal = match (&options.signal, &timeout_signal) {
-				(Some(signal), Some(timeout_signal)) => {
-					Some(AbortSignal::any(&[signal.clone(), timeout_signal.clone()]))
-				}
-				(signal, timeout_signal) => signal.clone().or_else(|| timeout_signal.clone()),
-			};
 			let request_body = request_body.clone();
 			async move {
+				// Node's `AbortSignal.timeout` throws a RangeError for an invalid delay, outside the attempt's catch.
+				let timeout_signal = options.timeout_ms.map(AbortSignal::try_timeout).transpose()?;
+				let signal = match (&options.signal, &timeout_signal) {
+					(Some(signal), Some(timeout_signal)) => {
+						Some(AbortSignal::any(&[signal.clone(), timeout_signal.clone()]))
+					}
+					(signal, timeout_signal) => signal.clone().or_else(|| timeout_signal.clone()),
+				};
 				let attempt = async {
 					let request = HttpRequest {
 						method: "POST".into(),
@@ -132,7 +134,7 @@ pub async fn post_classifier_request(
 						let text = next.text().await?;
 						return Err(http_error(label, status, &headers, text));
 					}
-					Ok((status, headers, next.json().await?))
+					Ok((status, headers, json_parse(&next.text().await?)?))
 				};
 				attempt.await.map_err(|error| {
 					if timeout_signal.as_ref().is_some_and(AbortSignal::aborted)

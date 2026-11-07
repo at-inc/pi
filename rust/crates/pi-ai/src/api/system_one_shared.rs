@@ -137,6 +137,21 @@ fn parse_answers(
 /// Clef accepts at most this many images per request.
 const MAX_DATA_URL_IMAGES: usize = 4;
 
+/// The methods `k in Object.prototype` finds (`__proto__` aside, which is an accessor).
+const OBJECT_PROTOTYPE_METHODS: [&str; 11] = [
+	"constructor",
+	"__defineGetter__",
+	"__defineSetter__",
+	"hasOwnProperty",
+	"__lookupGetter__",
+	"__lookupSetter__",
+	"isPrototypeOf",
+	"propertyIsEnumerable",
+	"toString",
+	"valueOf",
+	"toLocaleString",
+];
+
 fn data_url(image: &ImageContent) -> String {
 	format!("data:{};base64,{}", image.mime_type, image.data)
 }
@@ -185,9 +200,13 @@ fn add_images(
 		SystemOneImageInput::Assets => {
 			let mut assets = Map::new();
 			for (index, image) in images.iter().enumerate() {
+				// `ASSET_FORMATS[mimeType]` reads a plain object, so `Object.prototype` members are found too: a
+				// method, which JSON.stringify drops, or `__proto__`, which stringifies as `{}`.
 				let format = match image.mime_type.as_str() {
-					"image/png" => "png",
-					"image/jpeg" => "jpeg",
+					"image/png" => Some(json!("png")),
+					"image/jpeg" => Some(json!("jpeg")),
+					"__proto__" => Some(json!({})),
+					name if OBJECT_PROTOTYPE_METHODS.contains(&name) => None,
 					_ => {
 						return Err(PiError::new(format!(
 							"{label} accepts PNG and JPEG images for {}, got {}",
@@ -195,10 +214,13 @@ fn add_images(
 						)));
 					}
 				};
-				assets.insert(
-					format!("<image-{}>", index + 1),
-					json!({ "type": "image", "format": format, "data_base64": image.data }),
-				);
+				let mut asset = Map::new();
+				asset.insert("type".into(), json!("image"));
+				if let Some(format) = format {
+					asset.insert("format".into(), format);
+				}
+				asset.insert("data_base64".into(), json!(image.data));
+				assets.insert(format!("<image-{}>", index + 1), Value::Object(asset));
 			}
 			// Every asset must be referenced from the request. The names go before the state, where Clef
 			// also places its images.
