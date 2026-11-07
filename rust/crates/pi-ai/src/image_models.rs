@@ -6,7 +6,9 @@
 //!
 //! The TS types narrowing providers and ids to the generated catalog (`BuiltinImageProvider`,
 //! `BuiltinImageModel`) have no runtime effect; providers and ids are strings, and `getImageModel` returns `None`
-//! for an unknown pair where TS returns `undefined` typed as a model.
+//! for an unknown pair where TS returns `undefined` typed as a model. The reads return clones of the catalog models, so
+//! a caller's change to one does not show up in later reads as it does in TS. The `@deprecated` tags are
+//! `#[deprecated]` attributes.
 
 use std::sync::LazyLock;
 
@@ -29,7 +31,9 @@ static IMAGE_MODELS_BY_PROVIDER: LazyLock<IndexMap<String, IndexMap<String, Imag
 	image_models_by_provider
 });
 
-/// @deprecated Static catalog read. Use `getBuiltinImageModel` from "@at-inc/pi-ai/providers/all" or `Models.getModelOfType("image", ...)`.
+#[deprecated(
+	note = "Static catalog read. Use `getBuiltinImageModel` from \"@at-inc/pi-ai/providers/all\" or `Models.getModelOfType(\"image\", ...)`."
+)]
 pub fn get_image_model(provider: &str, model_id: &str) -> Option<ImageModel> {
 	IMAGE_MODELS_BY_PROVIDER
 		.get(provider)
@@ -37,12 +41,14 @@ pub fn get_image_model(provider: &str, model_id: &str) -> Option<ImageModel> {
 		.cloned()
 }
 
-/// @deprecated Static catalog read. Use `Models.getProviders()`.
+#[deprecated(note = "Static catalog read. Use `Models.getProviders()`.")]
 pub fn get_image_providers() -> Vec<String> {
 	IMAGE_MODELS_BY_PROVIDER.keys().cloned().collect()
 }
 
-/// @deprecated Static catalog read. Use `getBuiltinImageModels` from "@at-inc/pi-ai/providers/all" or `Models.getModelsOfType("image")`.
+#[deprecated(
+	note = "Static catalog read. Use `getBuiltinImageModels` from \"@at-inc/pi-ai/providers/all\" or `Models.getModelsOfType(\"image\")`."
+)]
 pub fn get_image_models(provider: &str) -> Vec<ImageModel> {
 	IMAGE_MODELS_BY_PROVIDER
 		.get(provider)
