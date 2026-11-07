@@ -8,6 +8,15 @@ use serde_json::json;
 mod parse_streaming_json {
 	use super::*;
 
+	// Rust-only: TS returns the number itself, which `JSON.stringify` writes as `null`.
+	#[test]
+	fn keeps_a_root_non_finite_number_as_null() {
+		for text in ["NaN", "N", "Inf", "-I", "-Infinity", " Infinity}"] {
+			assert_eq!(parse_streaming_json(Some(text)), serde_json::Value::Null, "{text}");
+		}
+		assert_eq!(parse_streaming_json(Some("nul")), json!({}));
+	}
+
 	// #10868
 	#[test]
 	fn keeps_invalid_u_escapes_as_literal_text_without_dropping_fields() {

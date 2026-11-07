@@ -489,7 +489,11 @@ impl StreamingJsonParser {
 			}
 			return;
 		}
+		// A clean parser's last snapshot already shows the open string with all its text, and TS placed the string
+		// when it started, so closing it keeps that snapshot.
+		let shown = !self.dirty;
 		self.place(open.slot.as_ref(), Value::String(open.text));
+		self.dirty &= !shown;
 		self.value_ended();
 	}
 

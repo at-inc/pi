@@ -1254,6 +1254,15 @@ mod tool_call_arguments_stream {
 		value.as_object().unwrap().clone()
 	}
 
+	// Rust-only: TS places a string when it starts, so closing a string the last snapshot showed changes nothing.
+	#[test]
+	fn keeps_the_same_arguments_when_a_shown_string_closes() {
+		let mut args = ToolCallArgumentsStream::new();
+		let open = args.append("{\"a\":\"x");
+		assert!(Rc::ptr_eq(&args.append("\""), &open));
+		assert!(!Rc::ptr_eq(&args.append(",\"b\":1"), &open));
+	}
+
 	#[test]
 	fn shows_partial_arguments_as_an_object_and_finishes_with_one_full_parse() {
 		let mut args = ToolCallArgumentsStream::new();

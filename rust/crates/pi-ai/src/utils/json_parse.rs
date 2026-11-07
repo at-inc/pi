@@ -6,7 +6,8 @@
 //! code units and object key order (array-index keys first, ascending); `partial_json_parse` follows
 //! `partial-json`'s `parse` with every partial type allowed. Two values cannot be represented: a lone surrogate
 //! escape decodes to U+FFFD, and the `Infinity`, `-Infinity` and `NaN` that `partial-json` accepts become `null`,
-//! which is what `JSON.stringify` writes for them.
+//! which is what `JSON.stringify` writes for them (`parse_streaming_json` of a root `NaN` therefore returns `null`,
+//! where TS returns the number).
 
 use pi_host::js::number_to_string;
 use pi_host::{PiError, PiResult};
@@ -155,6 +156,15 @@ pub fn parse_streaming_json(partial_json: Option<&str>) -> Value {
 	}
 	let partial = partial_json_parse(partial_json).or_else(|()| partial_json_parse(&repair_json(partial_json)));
 	match partial {
+		// `partialParse(...) ?? {}` keeps a root `NaN` or `Infinity`, which reads as `null` here; only `null` itself
+		// becomes `{}`.
+		Ok(Value::Null)
+			if !partial_json
+				.trim_start_matches([' ', '\n', '\r', '\t'])
+				.starts_with('n') =>
+		{
+			Value::Null
+		}
 		Ok(Value::Null) | Err(()) => Value::Object(Map::new()),
 		Ok(value) => value,
 	}
