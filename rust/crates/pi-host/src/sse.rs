@@ -114,7 +114,7 @@ impl SseDecoder {
 	fn dispatch(&mut self, events: &mut Vec<SseEvent>) {
 		let event = self.event.take();
 		let retry = self.retry.take();
-		if !self.has_data && event.is_none() {
+		if !self.has_data && event.as_deref().is_none_or(str::is_empty) {
 			self.data.clear();
 			return;
 		}

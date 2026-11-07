@@ -654,6 +654,10 @@ pub fn stream_from_sse_response(
 	response: HttpResponse,
 	signal: Option<AbortSignal>,
 ) -> LocalBoxStream<'static, PiResult<Value>> {
+	if matches!(response.status, 101 | 103 | 204 | 205 | 304) {
+		return futures::stream::once(async { Err(PiError::new("Attempted to iterate over a response with no body")) })
+			.boxed_local();
+	}
 	let headers = response.headers.clone();
 	let body_signal = signal.clone();
 	let body = response.body;
