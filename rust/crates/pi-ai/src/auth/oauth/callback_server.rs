@@ -191,7 +191,111 @@ mod native {
 
 #[cfg(feature = "native")]
 mod native {
-	use std::cell::RefCell;
+	use std::rc::Rc;
+
+	use pi_host::{PiError, PiResult};
+	use url::Url;
+
+	use super::loopback::{LoopbackRequest, LoopbackResponse};
+	use super::{CallbackState, OAuthCallbackServerOptions};
+	use crate::utils::oauth_page::{oauth_error_html, oauth_success_html};
+
+	/// Binds the socket and starts accepting; returns the bound port.
+	pub(super) async fn listen<T: 'static>(
+		options: &OAuthCallbackServerOptions<T>,
+		state: Rc<CallbackState<T>>,
+	) -> PiResult<u16> {
+		let provider_name = options.provider_name.clone();
+		let path = options.path.clone();
+		let expected_state = options.state.clone();
+		let complete = options.complete.clone();
+		let callback = state.clone();
+		let handler = Rc::new(move |request: LoopbackRequest| {
+			let provider_name = provider_name.clone();
+			let path = path.clone();
+			let expected_state = expected_state.clone();
+			let complete = complete.clone();
+			let callback = callback.clone();
+			Box::pin(async move {
+				let url = Url::parse("http://localhost").and_then(|base| base.join(&request.target));
+				let url = match url {
+					Ok(url) if request.method == "GET" && url.path() == path => url,
+					_ => return page(404, oauth_error_html("Callback route not found.", None)),
+				};
+				let param = |name: &str| {
+					url.query_pairs()
+						.find(|(key, _)| key == name)
+						.map(|(_, value)| value.into_owned())
+				};
+				if let Some(expected) = &expected_state
+					&& param("state").as_ref() != Some(expected)
+				{
+					return page(400, oauth_error_html("State mismatch.", None));
+				}
+				if callback.claimed.get() || callback.settled.get() {
+					return page(409, oauth_error_html("This sign-in has already been handled.", None));
+				}
+				// TS sends each page and settles the wait in the same tick, so the wait settles before the page
+				// is written.
+				if let Some(error) = param("error").filter(|error| !error.is_empty()) {
+					let description = param("error_description").unwrap_or(error);
+					callback.finish(Err(PiError::new(format!(
+						"{provider_name} authorization failed: {description}"
+					))));
+					return page(
+						400,
+						oauth_error_html(&format!("{provider_name} authorization failed."), Some(&description)),
+					);
+				}
+				let Some(code) = param("code").filter(|code| !code.is_empty()) else {
+					return page(400, oauth_error_html("Missing authorization code.", None));
+				};
+				callback.claimed.set(true);
+				match complete(code).await {
+					Ok(value) => {
+						callback.finish(Ok(Some(value)));
+						page(
+							200,
+							oauth_success_html(&format!("Signed in to {provider_name}. You may now close this page.")),
+						)
+					}
+					Err(failure) => {
+						let html =
+							oauth_error_html(&format!("{provider_name} sign-in failed."), Some(&failure.message));
+						callback.finish(Err(failure));
+						page(502, html)
+					}
+				}
+			}) as pi_host::LocalBoxFuture<'static, LoopbackResponse>
+		});
+		let on_error = {
+			let state = state.clone();
+			Rc::new(move |error: PiError| state.finish(Err(error)))
+		};
+		let server = super::loopback::listen(&options.host, options.port, handler, on_error).await?;
+		let port = server.port;
+		*state.close_listener.borrow_mut() = Some(Box::new(move || server.close()));
+		Ok(port)
+	}
+
+	fn page(status: u16, html: String) -> LoopbackResponse {
+		LoopbackResponse {
+			status,
+			headers: vec![
+				("content-type", "text/html; charset=utf-8"),
+				("cache-control", "no-store"),
+			],
+			body: html,
+		}
+	}
+}
+
+/// The subset of `node:http` the loopback OAuth servers use: one request head per connection, answered by a
+/// handler, with Node's binding, parser rejections and `close()` behaviour.
+#[cfg(feature = "native")]
+pub(crate) mod loopback {
+	use std::cell::{Cell, RefCell};
+	use std::collections::HashMap;
 	use std::future::poll_fn;
 	use std::io::ErrorKind;
 	use std::net::SocketAddr;
@@ -199,42 +303,69 @@ mod native {
 	use std::task::Poll;
 
 	use futures::future::{AbortHandle, Abortable, Either, select};
-	use pi_host::{PiError, PiResult};
+	use pi_host::{LocalBoxFuture, PiError, PiResult};
 	use serde_json::json;
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 	use tokio::net::{TcpListener, TcpStream};
-	use url::Url;
 
-	use super::{CallbackState, OAuthCallbackCompleteFunction, OAuthCallbackServerOptions};
-	use crate::utils::oauth_page::{oauth_error_html, oauth_success_html};
-
-	struct Route<T> {
-		provider_name: String,
-		path: String,
-		state: Option<String>,
-		complete: OAuthCallbackCompleteFunction<T>,
-		callback: Rc<CallbackState<T>>,
+	/// Method and raw target of a request.
+	pub(crate) struct LoopbackRequest {
+		pub method: String,
+		pub target: String,
 	}
 
-	/// Binds the socket and starts accepting; returns the bound port.
-	pub(super) async fn listen<T: 'static>(
-		options: &OAuthCallbackServerOptions<T>,
-		state: Rc<CallbackState<T>>,
-	) -> PiResult<u16> {
-		// Node's `listen(port, host)` binds the first address `dns.lookup` returns.
-		let address = tokio::net::lookup_host((options.host.as_str(), options.port))
+	/// `response.writeHead(status, headers)` plus `response.end(body)`.
+	pub(crate) struct LoopbackResponse {
+		pub status: u16,
+		pub headers: Vec<(&'static str, &'static str)>,
+		pub body: String,
+	}
+
+	pub(crate) type LoopbackHandler = Rc<dyn Fn(LoopbackRequest) -> LocalBoxFuture<'static, LoopbackResponse>>;
+	/// The server's `error` event after it listens.
+	pub(crate) type LoopbackErrorHandler = Rc<dyn Fn(PiError)>;
+
+	/// A listening server; dropping it leaves it listening, like an unreferenced Node server.
+	pub(crate) struct LoopbackServer {
+		pub port: u16,
+		socket: Rc<RefCell<Option<TcpListener>>>,
+		accepting: AbortHandle,
+		connections: Rc<RefCell<HashMap<u64, AbortHandle>>>,
+	}
+
+	impl LoopbackServer {
+		/// `server.close()`: closes the listening socket now; open connections finish their response.
+		pub(crate) fn close(&self) {
+			self.socket.borrow_mut().take();
+			self.accepting.abort();
+		}
+
+		/// `server.closeAllConnections()`.
+		pub(crate) fn close_all_connections(&self) {
+			for (_, connection) in self.connections.borrow_mut().drain() {
+				connection.abort();
+			}
+		}
+	}
+
+	/// `createServer(handler).listen(port, host)`: binds the first address the host resolves to.
+	pub(crate) async fn listen(
+		host: &str,
+		port: u16,
+		handler: LoopbackHandler,
+		on_error: LoopbackErrorHandler,
+	) -> PiResult<LoopbackServer> {
+		let address = tokio::net::lookup_host((host, port))
 			.await
 			.ok()
 			.and_then(|mut addresses| addresses.next());
 		let Some(address) = address else {
-			return Err(
-				PiError::new(format!("getaddrinfo ENOTFOUND {}", options.host)).with_data(json!({
-					"errno": -3008,
-					"code": "ENOTFOUND",
-					"syscall": "getaddrinfo",
-					"hostname": options.host,
-				})),
-			);
+			return Err(PiError::new(format!("getaddrinfo ENOTFOUND {host}")).with_data(json!({
+				"errno": -3008,
+				"code": "ENOTFOUND",
+				"syscall": "getaddrinfo",
+				"hostname": host,
+			})));
 		};
 		let listener = TcpListener::bind(address)
 			.await
@@ -244,25 +375,20 @@ mod native {
 			.map_err(|_| PiError::new("OAuth callback server did not bind to TCP"))?
 			.port();
 		let socket = Rc::new(RefCell::new(Some(listener)));
-		let (handle, registration) = AbortHandle::new_pair();
-		*state.close_listener.borrow_mut() = Some(Box::new({
-			let socket = socket.clone();
-			move || {
-				socket.borrow_mut().take();
-				handle.abort();
+		let connections = Rc::new(RefCell::new(HashMap::new()));
+		let (accepting, registration) = AbortHandle::new_pair();
+		pi_host::spawn_local({
+			let accept = accept_connections(socket.clone(), connections.clone(), handler, on_error);
+			async move {
+				let _ = Abortable::new(accept, registration).await;
 			}
-		}));
-		let route = Rc::new(Route {
-			provider_name: options.provider_name.clone(),
-			path: options.path.clone(),
-			state: options.state.clone(),
-			complete: options.complete.clone(),
-			callback: state,
 		});
-		pi_host::spawn_local(async move {
-			let _ = Abortable::new(accept_connections(socket, route), registration).await;
-		});
-		Ok(port)
+		Ok(LoopbackServer {
+			port,
+			socket,
+			accepting,
+			connections,
+		})
 	}
 
 	fn listen_error(error: &std::io::Error, address: SocketAddr) -> PiError {
@@ -298,7 +424,13 @@ mod native {
 	const ENFILE: i32 = 23;
 	const DESCRIPTOR_RETRY_MS: f64 = 100.0;
 
-	async fn accept_connections<T: 'static>(socket: Rc<RefCell<Option<TcpListener>>>, route: Rc<Route<T>>) {
+	async fn accept_connections(
+		socket: Rc<RefCell<Option<TcpListener>>>,
+		connections: Rc<RefCell<HashMap<u64, AbortHandle>>>,
+		handler: LoopbackHandler,
+		on_error: LoopbackErrorHandler,
+	) {
+		let next_id = Cell::new(0u64);
 		loop {
 			let accepted = poll_fn(|cx| match socket.borrow().as_ref() {
 				Some(listener) => listener.poll_accept(cx).map(Some),
@@ -308,24 +440,30 @@ mod native {
 			match accepted {
 				None => return,
 				Some(Ok((stream, _))) => {
-					let route = route.clone();
-					pi_host::spawn_local(async move { serve(&route, stream).await });
+					let id = next_id.get();
+					next_id.set(id + 1);
+					let (connection, registration) = AbortHandle::new_pair();
+					connections.borrow_mut().insert(id, connection);
+					let handler = handler.clone();
+					let connections = connections.clone();
+					pi_host::spawn_local(async move {
+						let _ = Abortable::new(serve(&handler, stream), registration).await;
+						connections.borrow_mut().remove(&id);
+					});
 				}
 				// libuv retries an aborted connection and waits out descriptor exhaustion without reporting either.
 				Some(Err(error)) if error.kind() == ErrorKind::ConnectionAborted => {}
 				Some(Err(error)) if matches!(error.raw_os_error(), Some(EMFILE | ENFILE)) => {
 					let _ = pi_host::sleep(DESCRIPTOR_RETRY_MS, None).await;
 				}
-				// Node emits `error` on the server, which settles the wait, and keeps listening.
+				// Node emits `error` on the server and keeps listening.
 				Some(Err(error)) => {
 					let (code, _) = uv_error(&error);
-					route
-						.callback
-						.finish(Err(PiError::new(format!("accept {code}")).with_data(json!({
-							"errno": error.raw_os_error().map(|errno| -errno),
-							"code": code,
-							"syscall": "accept",
-						}))));
+					on_error(PiError::new(format!("accept {code}")).with_data(json!({
+						"errno": error.raw_os_error().map(|errno| -errno),
+						"code": code,
+						"syscall": "accept",
+					})));
 				}
 			}
 		}
@@ -410,8 +548,8 @@ mod native {
 		"QUERY",
 	];
 
-	/// Method and target of a request line Node's parser accepts.
-	fn request_line(head: &[u8]) -> Option<(String, String)> {
+	/// The request line, when Node's parser accepts it.
+	fn request_line(head: &[u8]) -> Option<LoopbackRequest> {
 		let line = &head[..head.windows(2).position(|window| window == b"\r\n")?];
 		let mut parts = line.split(|byte| *byte == b' ');
 		let method = std::str::from_utf8(parts.next()?).ok()?;
@@ -425,7 +563,10 @@ mod native {
 		{
 			return None;
 		}
-		Some((method.to_string(), String::from_utf8(target.to_vec()).ok()?))
+		Some(LoopbackRequest {
+			method: method.to_string(),
+			target: String::from_utf8(target.to_vec()).ok()?,
+		})
 	}
 
 	/// The bare response Node's parser sends for a request it rejects.
@@ -436,26 +577,31 @@ mod native {
 		let _ = stream.shutdown().await;
 	}
 
-	async fn send_page(stream: &mut TcpStream, method: &str, status: u16, html: String) {
-		let reason = match status {
+	async fn respond(stream: &mut TcpStream, method: &str, response: LoopbackResponse) {
+		let reason = match response.status {
 			200 => "OK",
 			400 => "Bad Request",
 			404 => "Not Found",
 			409 => "Conflict",
+			500 => "Internal Server Error",
 			_ => "Bad Gateway",
 		};
-		let mut response = format!(
-			"HTTP/1.1 {status} {reason}\r\ncontent-type: text/html; charset=utf-8\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-			html.len()
-		);
-		if method != "HEAD" {
-			response.push_str(&html);
+		let mut bytes = format!("HTTP/1.1 {} {reason}\r\n", response.status);
+		for (name, value) in &response.headers {
+			bytes.push_str(&format!("{name}: {value}\r\n"));
 		}
-		let _ = stream.write_all(response.as_bytes()).await;
+		bytes.push_str(&format!(
+			"content-length: {}\r\nconnection: close\r\n\r\n",
+			response.body.len()
+		));
+		if method != "HEAD" {
+			bytes.push_str(&response.body);
+		}
+		let _ = stream.write_all(bytes.as_bytes()).await;
 		let _ = stream.shutdown().await;
 	}
 
-	async fn serve<T>(route: &Route<T>, mut stream: TcpStream) {
+	async fn serve(handler: &LoopbackHandler, mut stream: TcpStream) {
 		let head = {
 			let read = read_head(&mut stream);
 			let deadline = pi_host::sleep(HEADERS_TIMEOUT_MS, None);
@@ -471,64 +617,12 @@ mod native {
 			RequestHead::TooLarge => return reject(&mut stream, "431 Request Header Fields Too Large").await,
 			RequestHead::Closed => return,
 		};
-		let Some((method, target)) = request_line(&head) else {
+		let Some(request) = request_line(&head) else {
 			return reject(&mut stream, "400 Bad Request").await;
 		};
-		let url = Url::parse("http://localhost").and_then(|base| base.join(&target));
-		let url = match url {
-			Ok(url) if method == "GET" && url.path() == route.path => url,
-			_ => {
-				let html = oauth_error_html("Callback route not found.", None);
-				return send_page(&mut stream, &method, 404, html).await;
-			}
-		};
-		let param = |name: &str| {
-			url.query_pairs()
-				.find(|(key, _)| key == name)
-				.map(|(_, value)| value.into_owned())
-		};
-		if let Some(expected) = &route.state
-			&& param("state").as_ref() != Some(expected)
-		{
-			return send_page(&mut stream, &method, 400, oauth_error_html("State mismatch.", None)).await;
-		}
-		let callback = &route.callback;
-		if callback.claimed.get() || callback.settled.get() {
-			let html = oauth_error_html("This sign-in has already been handled.", None);
-			return send_page(&mut stream, &method, 409, html).await;
-		}
-		let provider_name = &route.provider_name;
-		// TS sends each page and settles the wait in the same tick, so the wait settles before the page is written.
-		if let Some(error) = param("error").filter(|error| !error.is_empty()) {
-			let description = param("error_description").unwrap_or(error);
-			callback.finish(Err(PiError::new(format!(
-				"{provider_name} authorization failed: {description}"
-			))));
-			let html = oauth_error_html(&format!("{provider_name} authorization failed."), Some(&description));
-			return send_page(&mut stream, &method, 400, html).await;
-		}
-		let Some(code) = param("code").filter(|code| !code.is_empty()) else {
-			return send_page(
-				&mut stream,
-				&method,
-				400,
-				oauth_error_html("Missing authorization code.", None),
-			)
-			.await;
-		};
-		callback.claimed.set(true);
-		match (route.complete)(code).await {
-			Ok(value) => {
-				callback.finish(Ok(Some(value)));
-				let html = oauth_success_html(&format!("Signed in to {provider_name}. You may now close this page."));
-				send_page(&mut stream, &method, 200, html).await;
-			}
-			Err(failure) => {
-				let html = oauth_error_html(&format!("{provider_name} sign-in failed."), Some(&failure.message));
-				callback.finish(Err(failure));
-				send_page(&mut stream, &method, 502, html).await;
-			}
-		}
+		let method = request.method.clone();
+		let response = handler(request).await;
+		respond(&mut stream, &method, response).await;
 	}
 }
 
