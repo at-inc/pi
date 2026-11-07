@@ -201,7 +201,7 @@ mod tests {
 	use serde_json::json;
 
 	use super::*;
-	use crate::types::{BaseModel, Context, OnPayload};
+	use crate::types::{AssistantMessage, BaseModel, Context, OnPayload};
 	use crate::utils::transcript::normalize_context;
 
 	#[derive(Default)]
@@ -225,7 +225,7 @@ mod tests {
 			captured.base_urls.push(model.base_url.clone());
 			captured.on_payload = options.and_then(|options| options.on_payload.clone());
 			let stream = AssistantMessageEventStream::new();
-			stream.end(None);
+			stream.end(Some(AssistantMessage::default()));
 			Ok(stream)
 		}
 
@@ -276,7 +276,6 @@ mod tests {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAzureBaseUrl (api/azure-openai-config.ts, w3-openai-responses)"]
 	fn resolves_the_endpoint_when_stream_is_called() {
 		pi_host::testing::run(|host| async move {
 			let (streams, captured) = capturing_azure_streams();
@@ -292,7 +291,6 @@ mod tests {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAzureBaseUrl and resolveDeploymentName (api/azure-openai-config.ts, w3-openai-responses)"]
 	fn a_null_on_payload_result_keeps_the_params() {
 		pi_host::testing::run(|_| async {
 			let (streams, captured) = capturing_azure_streams();
@@ -313,7 +311,6 @@ mod tests {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: resolveAzureBaseUrl and resolveDeploymentName (api/azure-openai-config.ts, w3-openai-responses)"]
 	fn spreads_an_array_payload_into_index_keys() {
 		pi_host::testing::run(|_| async {
 			let (streams, captured) = capturing_azure_streams();
