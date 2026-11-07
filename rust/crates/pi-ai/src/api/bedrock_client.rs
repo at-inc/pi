@@ -2,7 +2,33 @@
 //! `api/bedrock-converse-stream.ts` relies on. See "Provider SDKs" in `rust/PORTING.md`.
 //! PORT-STATUS: ported
 //!
-//! DOC-PLACEHOLDER
+//! It is one client with the `ConverseStream` operation (`BedrockRuntimeClient.send(new ConverseStreamCommand(input))`):
+//! request serialization from the `com.amazonaws.bedrockruntime` schema, endpoint and region resolution, SigV4 or
+//! bearer auth, the user agent headers, the standard retry strategy with clock skew correction, error deserialization
+//! and the binary event stream. Differences from the SDK:
+//! - The command input and the stream items are JSON. A blob (`image.source.bytes`,
+//!   `reasoningContent.redactedContent`, ...) is base64 text where the SDK holds a `Uint8Array`; the serializer
+//!   writes the text as is and the deserializer returns canonical base64.
+//! - User agent: `os/<platform>` has no release, and `lang/js md/nodejs#<version>` is `lang/rust md/rust#<rust-version>`.
+//!   The other sections, the feature letters and `x-amz-user-agent` match the SDK.
+//! - Transport: requests go through the host's fetch instead of the default `NodeHttp2Handler`, so there is no
+//!   `host` header (HTTP/2 sends `:authority`), the abort error is `AbortError: Request aborted` before and while the
+//!   request is in flight, and an abort while the body streams ends the event stream without an error, as the HTTP/2
+//!   handler does. No request timeout or socket options are set, like the SDK defaults.
+//! - Region: `config.region`, `AWS_REGION` or the profile's `region`; the instance metadata (IMDS) fallback is not
+//!   ported, so the error is `Region is missing` where the SDK would ask IMDS first.
+//! - Credentials: `config.credentials`, then `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN` (unless a
+//!   profile is set), then static keys of the shared config and credentials files. Assume role, web identity,
+//!   credential process, SSO and login profiles fail with a `CredentialsProviderError` that names the unsupported kind;
+//!   the ECS container and IMDS providers are not ported (`Could not load credentials from any providers`).
+//! - Retries: the standard strategy (3 attempts, `AWS_MAX_ATTEMPTS`/`max_attempts`, throttling and transient
+//!   classification, `retry-after`/`x-amz-retry-after` hints, `SMITHY_NEW_RETRIES_2026`). The retry quota (500
+//!   capacity tokens per client) is not tracked: pi-ai builds a client per request, which cannot use it up. The
+//!   `clockSkewCorrected` mark is set for SigV4 only, which is the only signer that corrects the clock.
+//! - Errors carry the SDK's own properties in `PiError.data`: `$fault` for a service exception (`is_service_exception`)
+//!   and `$metadata` for an error thrown from a response. The hidden `$response` is not kept.
+//! - Version: the schema and user agent are those of `@aws-sdk/client-bedrock-runtime` 3.1126.0, the version in
+//!   `node_modules`.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -640,7 +666,7 @@ const BASE64_DECODER: GeneralPurpose = GeneralPurpose::new(
 
 /// `fromBase64(input)` of `@smithy/util-base64` (Node).
 fn from_base64(input: &str) -> PiResult<Vec<u8>> {
-	if input.encode_utf16().count() * 3 % 4 != 0 {
+	if !(input.encode_utf16().count() * 3).is_multiple_of(4) {
 		return Err(PiError::type_error("Incorrect padding on base64 string."));
 	}
 	static BASE64: LazyLock<Regex> = LazyLock::new(|| Regex::new("^[A-Za-z0-9+/]*={0,2}$").expect("valid regex"));

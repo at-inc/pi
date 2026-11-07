@@ -7,8 +7,14 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use pi_ai::api::cloudflare_ai_binding::{AiBinding, CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL, create_ai_binding_fetch};
+use pi_ai::api::openai_completions;
+use pi_ai::types::{
+	Context, Message, Model, ProviderRequestOptions, SimpleStreamOptions, StopReason, StreamOptions, UserMessage,
+};
+use pi_ai::utils::transcript::normalize_context;
 use pi_host::testing::run;
 use pi_host::{FetchFunction, HttpRequest, HttpResponse};
+use serde_json::json;
 
 const BINDING_PREFIX: &str = "https://workers-binding.ai/ai-gateway/gateways/my-gateway";
 
@@ -94,11 +100,73 @@ mod create_ai_binding_fetch {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs api/openai_completions.rs (streamSimple) from its shard"]
 	fn keeps_sdk_placeholder_auth_off_the_wire_when_paired_with_null_auth_headers() {
-		// Port once `openai_completions::stream_simple` lands: a 400 from the binding gives `stopReason: "error"`, exactly
-		// one request to `{BINDING_PREFIX}/openai/chat/completions`, and neither an `authorization` nor an `x-api-key`
-		// header on it.
-		todo!("PORT-STUB: needs api/openai_completions.rs")
+		// The full header contract from the module docs, end to end through a real API impl: the
+		// sentinel satisfies pi's request-auth check, and the explicit nulls make the OpenAI SDK
+		// delete its own `Authorization: Bearer unused` placeholder before dispatch.
+		run(|_host| async move {
+			let (binding, requests) = fake_binding(|| {
+				HttpResponse::from_bytes(
+					400,
+					IndexMap::from([("content-type".to_string(), "application/json".to_string())]),
+					r#"{"error":{"type":"bad_request","message":"stubbed"}}"#,
+				)
+			});
+			let model: Model = serde_json::from_value(json!({
+				"id": "test-model",
+				"name": "Test Model",
+				"api": "openai-completions",
+				"provider": "openai",
+				"baseUrl": format!("{BINDING_PREFIX}/openai"),
+				"reasoning": false,
+				"input": ["text"],
+				"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+				"contextWindow": 10_000,
+				"maxTokens": 1_000,
+			}))
+			.unwrap();
+			let context = normalize_context(&Context {
+				messages: vec![Message::User(
+					serde_json::from_value::<UserMessage>(
+						json!({ "role": "user", "content": "hello", "timestamp": 1 }),
+					)
+					.unwrap(),
+				)],
+				..Context::default()
+			});
+			let options = SimpleStreamOptions {
+				base: StreamOptions {
+					base: ProviderRequestOptions {
+						headers: Some(IndexMap::from([
+							(
+								"cf-aig-authorization".to_string(),
+								Some(format!("Bearer {CLOUDFLARE_GATEWAY_BINDING_AUTH_SENTINEL}")),
+							),
+							("Authorization".to_string(), None),
+							("x-api-key".to_string(), None),
+						])),
+						fetch: Some(create_ai_binding_fetch(&binding).unwrap()),
+						max_retries: Some(0.0),
+						..ProviderRequestOptions::default()
+					},
+					..StreamOptions::default()
+				},
+				..SimpleStreamOptions::default()
+			};
+
+			let result = openai_completions::stream_simple(&model, &context, Some(options))
+				.unwrap()
+				.result()
+				.await
+				.unwrap();
+
+			assert_eq!(result.stop_reason, StopReason::Error);
+			let requests = requests.borrow();
+			assert_eq!(requests.len(), 1);
+			assert_eq!(requests[0].url, format!("{BINDING_PREFIX}/openai/chat/completions"));
+			let header_names: Vec<String> = requests[0].headers.keys().map(|name| name.to_lowercase()).collect();
+			assert!(!header_names.contains(&"authorization".to_string()), "{header_names:?}");
+			assert!(!header_names.contains(&"x-api-key".to_string()), "{header_names:?}");
+		});
 	}
 }
