@@ -16,12 +16,11 @@
 //! - `HttpOptions.retryOptions` (p-retry) is not ported: pi-ai never sets it, so requests are sent once, as with the
 //!   SDK default. Callable and MCP tools cannot be JSON, so automatic function calling is always disabled, as the SDK
 //!   decides for plain tool declarations; the `inputSchema` MCP detection and its `mcp_used` header are kept.
-//! - A stream chunk that is not valid JSON fails with serde_json's `SyntaxError` message instead of V8's.
 //! - `tTool` rewrites `functionDeclarations[].parameters` in place in the SDK; here it rewrites the request copy.
 //! - Request headers are sent in insertion order; a `Headers` object iterates them sorted. Header values are trimmed
 //!   like `Headers.append`, but invalid values are not rejected.
 //! - A truthy `config.tools` that is not an array fails in `tTools` ("tools is required and must be an array of
-//!   Tools") instead of with `TypeError: tools.map is not a function`.
+//!   Tools") instead of with the `TypeError` the SDK's `shouldDisableAfc` / `isCallableTool` throw for it.
 //! - A host response always has a body stream, so an ok response without a body yields no chunks instead of failing
 //!   with `Response body is empty`.
 
@@ -36,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::google_auth::{GoogleAuth, GoogleAuthOptions};
+use crate::utils::json_parse::json_parse;
 use crate::utils::text::js_trim;
 
 /// `SDK_VERSION`.
@@ -536,9 +536,10 @@ impl ApiClient {
 		let body = include_extra_body(body, http_options.get("extraBody"));
 		let headers = self.get_headers_internal(&http_options, &url).await?;
 		let timeout = http_options.get("timeout").and_then(Value::as_f64);
-		let response = api_call(&url, body, headers, timeout, signal).await?;
+		let attempt_signal = create_attempt_signal(timeout, signal);
+		let response = api_call(&url, body, headers, attempt_signal.clone()).await?;
 		let response = throw_error_if_not_ok(response).await?;
-		Ok(process_stream_response(response))
+		Ok(process_stream_response(response, attempt_signal))
 	}
 
 	fn should_prepend_vertex_project_path(&self, path: &str, http_options: &Map<String, Value>) -> bool {
@@ -715,13 +716,12 @@ async fn api_call(
 	url: &str,
 	body: String,
 	headers: Headers,
-	timeout: Option<f64>,
-	caller_signal: Option<AbortSignal>,
+	attempt_signal: Option<AbortSignal>,
 ) -> PiResult<HttpResponse> {
 	let mut request = HttpRequest::new("POST", url);
 	request.headers = headers.into_index_map();
 	request.body = Some(body.into());
-	request.signal = create_attempt_signal(timeout, caller_signal);
+	request.signal = attempt_signal;
 	pi_host::fetch(request, None).await
 }
 
@@ -783,6 +783,7 @@ fn api_error(message: String, status: u16) -> PiError {
 /// `processStreamResponse(response)`: yields each `data:` event parsed as JSON, with the response headers.
 fn process_stream_response(
 	response: HttpResponse,
+	attempt_signal: Option<AbortSignal>,
 ) -> LocalBoxStream<'static, PiResult<(Value, IndexMap<String, String>)>> {
 	let headers = response.headers.clone();
 	let mut body = response.body;
@@ -797,6 +798,11 @@ fn process_stream_response(
 					return;
 				}
 				None => {
+					// The host ends an aborted body; `reader.read()` rejects with the signal's reason instead.
+					if let Some(reason) = attempt_signal.as_ref().and_then(AbortSignal::reason) {
+						yield_(Err(reason)).await;
+						return;
+					}
 					if !js_trim(&buffer).is_empty() {
 						yield_(Err(PiError::new("Incomplete JSON segment at the end"))).await;
 					}
@@ -816,12 +822,7 @@ fn process_stream_response(
 				let Some(data) = trimmed.strip_prefix("data:") else {
 					continue;
 				};
-				let parsed = serde_json::from_str::<Value>(js_trim(data))
-					.map_err(PiError::from)
-					.map(|mut json| {
-						js_key_order(&mut json);
-						(json, headers.clone())
-					});
+				let parsed = json_parse(js_trim(data)).map(|json| (json, headers.clone()));
 				let failed = parsed.is_err();
 				yield_(parsed).await;
 				if failed {

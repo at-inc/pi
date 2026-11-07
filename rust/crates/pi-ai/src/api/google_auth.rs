@@ -10,11 +10,13 @@
 //! Differences from the library:
 //! - `impersonated_service_account`, `external_account` and `external_account_authorized_user` credential files fail
 //!   with `Unsupported credential type: <type>`, also as a `keyFilename`.
-//! - ADC does not look up the project id (`gcloud config config-helper`, metadata `project-id`): the genai client never
-//!   reads it, so the request headers are the same. The library runs that lookup before the token request on GCE when
-//!   neither `GCLOUD_PROJECT` nor `GOOGLE_CLOUD_PROJECT` is set, so there it sends one more metadata request first.
+//! - ADC does not look up the project id: the genai client never reads it, so the request headers are the same. The
+//!   library runs `findAndCacheProjectId` on every ADC resolution before the token request: the project env vars, the
+//!   credential's `project_id`, a `gcloud config config-helper` subprocess, then the metadata `project/project-id`
+//!   (3 s timeout, up to 3 retries), so on a machine without a configured project it can wait seconds first.
 //! - Token and metadata requests go through `pi_host::fetch`; gaxios uses `node-fetch`, so a stubbed
-//!   `globalThis.fetch` never sees them in Node.
+//!   `globalThis.fetch` never sees them in Node. A network failure reports the host's `fetch failed` without a
+//!   `code`, where node-fetch reports `request to <url> failed, reason: <cause>` with the system error code.
 //! - Concurrent first uses of one client are not de-duplicated (`#pendingAuthClient`, `refreshTokenPromises`,
 //!   gtoken's `inFlightRequest`, the cached `isAvailable` promise): two racing calls can send two token or metadata
 //!   requests. pi-ai builds one client per request.
@@ -42,6 +44,8 @@ use serde_json::{Map, Value, json};
 use sha2::Sha256;
 
 use super::google_client;
+use super::google_client::js_truthy;
+use crate::utils::text::js_trim;
 
 /// `REQUIRED_VERTEX_AI_SCOPE` of the genai client.
 pub const REQUIRED_VERTEX_AI_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
@@ -401,7 +405,7 @@ impl AuthClient {
 			pi_error
 		})?;
 		let data = response.data;
-		let expires_in = data.get("expires_in").and_then(Value::as_f64).unwrap_or(0.0);
+		let expires_in = data.get("expires_in").map_or(0.0, js_number);
 		Ok(Tokens {
 			access_token: data.get("access_token").and_then(Value::as_str).map(str::to_string),
 			token_type: Some("Bearer".into()),
@@ -530,10 +534,7 @@ async fn refresh_user_token(refresh_token: &str, client_id: &str, client_secret:
 
 /// The token response: `expires_in` becomes `expiry_date`.
 fn tokens_from_response(data: &Value) -> Tokens {
-	let expires_in = data
-		.get("expires_in")
-		.and_then(Value::as_f64)
-		.filter(|value| *value != 0.0);
+	let expires_in = data.get("expires_in").filter(|value| js_truthy(value)).map(js_number);
 	Tokens {
 		access_token: data.get("access_token").and_then(Value::as_str).map(str::to_string),
 		token_type: data.get("token_type").and_then(Value::as_str).map(str::to_string),
@@ -566,13 +567,14 @@ fn form_urlencoded(pairs: &[(&str, &str)]) -> String {
 		.finish()
 }
 
-fn js_truthy(value: &Value) -> bool {
+/// `value * 1000`'s numeric coercion of a JSON value.
+fn js_number(value: &Value) -> f64 {
 	match value {
-		Value::Null => false,
-		Value::Bool(value) => *value,
-		Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
-		Value::String(value) => !value.is_empty(),
-		Value::Array(_) | Value::Object(_) => true,
+		Value::Number(number) => number.as_f64().unwrap_or(f64::NAN),
+		Value::String(text) => string_to_number(text),
+		Value::Bool(value) => f64::from(u8::from(*value)),
+		Value::Null => 0.0,
+		Value::Array(_) | Value::Object(_) => string_to_number(&google_client::js_string(value)),
 	}
 }
 
@@ -616,13 +618,16 @@ async fn gcp_residency() -> bool {
 	residency
 }
 
-/// `detectGCPAvailableRetries()`: `Number(DETECT_GCP_RETRIES)` when set, else 0. gaxios retries while the attempt count
-/// is below it, so a fraction rounds up and NaN or a negative value means no retries.
+/// `detectGCPAvailableRetries()`: `Number(DETECT_GCP_RETRIES)` when set, else 0. gaxios stops a no-response retry once
+/// the attempt count reaches it, so a fraction rounds up, a negative value means no retries, and NaN never stops it (the
+/// 3-retry cap still applies).
 fn detect_gcp_available_retries() -> u32 {
 	let retries = pi_host::env("DETECT_GCP_RETRIES")
 		.filter(|value| !value.is_empty())
 		.map_or(0.0, |value| string_to_number(&value));
-	if retries > 0.0 {
+	if retries.is_nan() {
+		u32::MAX
+	} else if retries > 0.0 {
 		retries.ceil().min(f64::from(u32::MAX)) as u32
 	} else {
 		0
@@ -632,7 +637,7 @@ fn detect_gcp_available_retries() -> u32 {
 /// `isAvailable()`.
 async fn is_available() -> PiResult<bool> {
 	if let Some(value) = pi_host::env("METADATA_SERVER_DETECTION").filter(|value| !value.is_empty()) {
-		let value = value.trim().to_lowercase();
+		let value = js_trim(&value).to_lowercase();
 		match value.as_str() {
 			"assume-present" => return Ok(true),
 			"none" => return Ok(false),
@@ -836,11 +841,19 @@ fn should_retry(options: &GaxiosOptions, error: &GaxiosError, attempt: i32) -> b
 }
 
 async fn gaxios_send(options: &GaxiosOptions) -> Result<GaxiosResponse, GaxiosError> {
-	let failed = |error: PiError| GaxiosError {
-		aborted: error.is_abort(),
-		message: error.message,
-		status: None,
-		data: None,
+	// node-fetch rejects any aborted request, the timeout included, with `AbortError: The operation was aborted.`.
+	let failed = |error: PiError| {
+		let aborted = error.is_abort() || error.name == "TimeoutError";
+		GaxiosError {
+			aborted,
+			message: if aborted {
+				"The operation was aborted.".into()
+			} else {
+				error.message
+			},
+			status: None,
+			data: None,
+		}
 	};
 	let mut request = HttpRequest::new(options.method, options.url.clone());
 	for (name, value) in &options.headers {
