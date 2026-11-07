@@ -675,6 +675,7 @@ pub struct ImageContent {
 pub struct ToolCall {
 	pub id: String,
 	pub name: String,
+	#[serde(default)]
 	pub arguments: JsonObject,
 	/// Google-specific: opaque signature for reusing thought context
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1376,11 +1377,24 @@ impl DerefMut for Model {
 	}
 }
 
-/// `compat` read as `T`; the default (every field absent) when `compat` is absent or does not have `T`'s shape.
+/// `compat` read as `T`, field by field like the TS property reads: a field whose value does not fit `T` reads as
+/// absent and leaves the other fields intact.
 fn compat_as<T: DeserializeOwned + Default>(compat: Option<&JsonObject>) -> T {
-	compat
-		.and_then(|compat| serde_json::from_value(Value::Object(compat.clone())).ok())
-		.unwrap_or_default()
+	let Some(compat) = compat else {
+		return T::default();
+	};
+	if let Ok(value) = serde_json::from_value(Value::Object(compat.clone())) {
+		return value;
+	}
+	let fitting: JsonObject = compat
+		.iter()
+		.filter(|(key, value)| {
+			let field = JsonObject::from_iter([((*key).clone(), (*value).clone())]);
+			serde_json::from_value::<T>(Value::Object(field)).is_ok()
+		})
+		.map(|(key, value)| (key.clone(), value.clone()))
+		.collect();
+	serde_json::from_value(Value::Object(fitting)).unwrap_or_default()
 }
 
 impl Model {
@@ -1499,7 +1513,7 @@ impl<'de> Deserialize<'de> for AnyModel {
 	fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
 		let value = Value::deserialize(deserializer)?;
 		let model_type = match value.get("type") {
-			None => ModelType::Chat,
+			None | Some(Value::Null) => ModelType::Chat,
 			Some(model_type) => ModelType::deserialize(model_type).map_err(serde::de::Error::custom)?,
 		};
 		let model = match model_type {
@@ -1603,5 +1617,14 @@ mod tests {
 		assert_eq!(chat.id, "m");
 		assert_eq!(chat.openai_completions_compat().supports_store, Some(false));
 		assert_eq!(json_stringify(&chat), json_stringify(&model));
+
+		let mut untyped = model.clone();
+		untyped["type"] = Value::Null;
+		untyped["compat"] = json!({ "supportsStore": false, "thinkingFormat": "future-format" });
+		let AnyModel::Chat(chat) = serde_json::from_value::<AnyModel>(untyped).unwrap() else {
+			panic!("expected a chat model");
+		};
+		assert_eq!(chat.openai_completions_compat().supports_store, Some(false));
+		assert_eq!(chat.openai_completions_compat().thinking_format, None);
 	}
 }
