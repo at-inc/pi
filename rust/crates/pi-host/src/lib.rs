@@ -15,6 +15,7 @@ pub mod host;
 pub mod http;
 pub mod js;
 pub mod sse;
+pub mod websocket;
 
 #[cfg(feature = "native")]
 pub mod native;

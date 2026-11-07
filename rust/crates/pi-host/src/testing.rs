@@ -1,11 +1,11 @@
-//! Scripted host for tests: a programmable `fetch`, a virtual clock, an in-memory environment, and a
-//! single-threaded executor. Ported vitest suites that stub `globalThis.fetch` or use fake timers use this.
+//! Scripted host for tests: a programmable `fetch`, scripted WebSockets, a virtual clock, an in-memory environment,
+//! and a single-threaded executor. Ported vitest suites that stub `globalThis.fetch` or use fake timers use this.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::{Pin, pin};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
@@ -13,11 +13,13 @@ use std::thread::Thread;
 
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
+use indexmap::IndexMap;
 
 use crate::LocalBoxFuture;
 use crate::error::{PiError, PiResult};
 use crate::host::{Host, set_host};
 use crate::http::{HttpRequest, HttpResponse};
+use crate::websocket::{WebSocket, WebSocketEvent, WebSocketListener, WebSocketListenerId, WebSocketListeners};
 
 type Handler = Rc<dyn Fn(HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>>>;
 
@@ -27,6 +29,7 @@ type Handler = Rc<dyn Fn(HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpRe
 /// resolve in due-time order (then in the order they were started), like `setTimeout`.
 pub struct TestHost {
 	handler: RefCell<Option<Handler>>,
+	websocket_handler: RefCell<Option<WebSocketHandler>>,
 	env: RefCell<HashMap<String, String>>,
 	clock_ms: RefCell<f64>,
 	requests: RefCell<Vec<RecordedRequest>>,
@@ -114,6 +117,15 @@ impl TestHost {
 			let headers = headers.clone();
 			Box::pin(async move { Ok(HttpResponse::from_bytes(status, headers, body)) })
 		});
+	}
+
+	/// Installs `globalThis.WebSocket`: `handler` plays the constructor, receiving the URL and the `headers` option.
+	/// Without a handler the host has no WebSocket.
+	pub fn on_websocket(
+		&self,
+		handler: impl Fn(&str, &IndexMap<String, String>) -> PiResult<Rc<FakeWebSocket>> + 'static,
+	) {
+		*self.websocket_handler.borrow_mut() = Some(Rc::new(handler));
 	}
 
 	/// Sets `process.env[key]`.
@@ -226,6 +238,126 @@ impl Host for TestHost {
 	fn home_dir(&self) -> Option<String> {
 		self.home_dir.borrow().clone()
 	}
+
+	fn websocket(&self, url: &str, headers: &IndexMap<String, String>) -> Option<PiResult<Rc<dyn WebSocket>>> {
+		let handler = self.websocket_handler.borrow().clone()?;
+		Some(handler(url, headers).map(|socket| socket as Rc<dyn WebSocket>))
+	}
+}
+
+type WebSocketHandler = Rc<dyn Fn(&str, &IndexMap<String, String>) -> PiResult<Rc<FakeWebSocket>>>;
+type SendHandler = Rc<dyn Fn(&Rc<FakeWebSocket>, &str) -> PiResult<()>>;
+type CloseHandler = Rc<dyn Fn(&Rc<FakeWebSocket>, u16, &str)>;
+
+/// A scripted WebSocket for tests, the counterpart of the `MockWebSocket` classes vitest suites stub
+/// `globalThis.WebSocket` with. Tests dispatch its events with `emit` (synchronously) or `emit_later` (from a task,
+/// like `queueMicrotask`) and react to `send` and `close` through `on_send` and `on_close`. Its `readyState` is
+/// absent until `set_ready_state` sets one.
+pub struct FakeWebSocket {
+	pub url: String,
+	pub headers: IndexMap<String, String>,
+	this: Weak<FakeWebSocket>,
+	ready_state: Cell<Option<u16>>,
+	listeners: WebSocketListeners,
+	sent: RefCell<Vec<String>>,
+	closes: RefCell<Vec<(u16, String)>>,
+	on_send: RefCell<Option<SendHandler>>,
+	on_close: RefCell<Option<CloseHandler>>,
+}
+
+impl FakeWebSocket {
+	/// A socket for `url` opened with `headers`, without listeners, handlers or `readyState`.
+	pub fn new(url: &str, headers: &IndexMap<String, String>) -> Rc<Self> {
+		Rc::new_cyclic(|this| Self {
+			url: url.to_string(),
+			headers: headers.clone(),
+			this: this.clone(),
+			ready_state: Cell::new(None),
+			listeners: WebSocketListeners::default(),
+			sent: RefCell::new(Vec::new()),
+			closes: RefCell::new(Vec::new()),
+			on_send: RefCell::new(None),
+			on_close: RefCell::new(None),
+		})
+	}
+
+	/// Sets `readyState`; `None` removes it.
+	pub fn set_ready_state(&self, state: Option<u16>) {
+		self.ready_state.set(state);
+	}
+
+	/// Handles `send`; an `Err` is a throw from `send`.
+	pub fn on_send(&self, handler: impl Fn(&Rc<FakeWebSocket>, &str) -> PiResult<()> + 'static) {
+		*self.on_send.borrow_mut() = Some(Rc::new(handler));
+	}
+
+	/// Handles `close`.
+	pub fn on_close(&self, handler: impl Fn(&Rc<FakeWebSocket>, u16, &str) + 'static) {
+		*self.on_close.borrow_mut() = Some(Rc::new(handler));
+	}
+
+	/// Dispatches `event` to the listeners registered now.
+	pub fn emit(&self, event: WebSocketEvent) {
+		self.listeners.dispatch(&event);
+	}
+
+	/// Dispatches `events` in order from a spawned task, after the current task yields.
+	pub fn emit_later(self: &Rc<Self>, events: Vec<WebSocketEvent>) {
+		let socket = self.clone();
+		crate::host::spawn_local(async move {
+			for event in events {
+				socket.emit(event);
+			}
+		});
+	}
+
+	/// Every text frame sent so far.
+	pub fn sent(&self) -> Vec<String> {
+		self.sent.borrow().clone()
+	}
+
+	/// Every `close(code, reason)` call so far.
+	pub fn closes(&self) -> Vec<(u16, String)> {
+		self.closes.borrow().clone()
+	}
+
+	fn rc(&self) -> Rc<FakeWebSocket> {
+		self.this
+			.upgrade()
+			.expect("FakeWebSocket is alive while one of its methods runs")
+	}
+}
+
+impl WebSocket for FakeWebSocket {
+	fn ready_state(&self) -> Option<u16> {
+		self.ready_state.get()
+	}
+
+	fn send(&self, data: &str) -> PiResult<()> {
+		self.sent.borrow_mut().push(data.to_string());
+		let handler = self.on_send.borrow().clone();
+		match handler {
+			Some(handler) => handler(&self.rc(), data),
+			None => Ok(()),
+		}
+	}
+
+	fn close(&self, code: u16, reason: &str) -> PiResult<()> {
+		self.closes.borrow_mut().push((code, reason.to_string()));
+		let handler = self.on_close.borrow().clone();
+		if let Some(handler) = handler {
+			handler(&self.rc(), code, reason);
+		}
+		Ok(())
+	}
+
+	fn add_event_listener(&self, listener: WebSocketListener) -> WebSocketListenerId {
+		self.listeners.add(listener)
+	}
+
+	fn remove_event_listener(&self, id: WebSocketListenerId) {
+		self.listeners.remove(id);
+	}
 }
 
 /// Wakes the test future: sets its flag and unparks the thread that runs it.
@@ -256,6 +388,7 @@ where
 	let mut pool = LocalPool::new();
 	let host = Rc::new(TestHost {
 		handler: RefCell::new(None),
+		websocket_handler: RefCell::new(None),
 		env: RefCell::new(HashMap::new()),
 		clock_ms: RefCell::new(1_700_000_000_000.0),
 		requests: RefCell::new(Vec::new()),
