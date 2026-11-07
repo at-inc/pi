@@ -27,21 +27,24 @@ pub fn race_with_abort_signal<T: 'static>(
 	operation: impl Future<Output = PiResult<T>> + 'static,
 	signal: &AbortSignal,
 ) -> impl Future<Output = PiResult<T>> + 'static {
+	// TS checks the signal when the race starts, not when it is first awaited.
+	let aborted_at_start = signal.aborted().then(|| abort_reason(signal));
 	let (sender, receiver) = oneshot::channel();
 	pi_host::spawn_local(async move {
 		let _ = sender.send(operation.await);
 	});
 	let signal = signal.clone();
 	async move {
-		if signal.aborted() {
-			return Err(abort_reason(&signal));
+		if let Some(reason) = aborted_at_start {
+			return Err(reason);
 		}
 		let aborted = signal.aborted_future();
 		futures::pin_mut!(aborted);
-		match select(aborted, receiver).await {
-			Either::Left((reason, _)) => Err(reason),
-			Either::Right((Ok(result), _)) => result,
-			Either::Right((Err(_), _)) => futures::future::pending().await,
+		// The operation first: one that settled before the abort wins, as its TS `then` ran first.
+		match select(receiver, aborted).await {
+			Either::Left((Ok(result), _)) => result,
+			Either::Left((Err(_), _)) => futures::future::pending().await,
+			Either::Right((reason, _)) => Err(reason),
 		}
 	}
 }
@@ -76,5 +79,31 @@ mod tests {
 			assert_eq!(race_with_abort_signal(async { Ok(2) }, &signal).await.unwrap(), 2);
 		});
 		assert!(finished.get());
+	}
+
+	#[test]
+	fn keeps_a_result_that_settled_before_a_late_abort() {
+		pi_host::testing::run(|_| async {
+			let controller = AbortController::new();
+			let race = race_with_abort_signal(async { Ok(1) }, &controller.signal());
+			// Yield once so the spawned operation settles, as its TS promise would before the abort.
+			let mut yielded = false;
+			futures::future::poll_fn(|context| {
+				if yielded {
+					return std::task::Poll::Ready(());
+				}
+				yielded = true;
+				context.waker().wake_by_ref();
+				std::task::Poll::Pending
+			})
+			.await;
+			controller.abort_with(PiError::new("late abort"));
+			assert_eq!(race.await.unwrap(), 1);
+
+			let aborted = AbortController::new();
+			aborted.abort_with(PiError::new("early"));
+			let race = race_with_abort_signal(async { Ok(1) }, &aborted.signal());
+			assert_eq!(race.await.unwrap_err().message, "early");
+		});
 	}
 }

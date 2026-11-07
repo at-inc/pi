@@ -2,7 +2,11 @@
 //! PORT-STATUS: ported
 //!
 //! `contentText` takes a string or any content block array in TS; in Rust it takes anything that implements
-//! [`ContentText`]. `js_trim` is Rust-only: `String.prototype.trim`, which other ports in this crate need.
+//! [`ContentText`]. `js_trim` and `js_entries` are Rust-only: `String.prototype.trim` and `Object.entries` order, which
+//! other ports in this crate need.
+
+use indexmap::IndexMap;
+use serde_json::Value;
 
 use crate::types::{
 	AssistantContent, SystemMessage, SystemMessageContent, TextContent, UserContent, UserMessageContent,
@@ -85,8 +89,10 @@ pub fn content_text<C: ContentText + ?Sized>(content: &C, separator: &str) -> St
 /// Render a system message as a complete prompt: its content followed by its sections.
 pub fn get_system_message_text(message: &SystemMessage) -> String {
 	let mut parts = vec![message.content.content_text("\n")];
-	for text in message.sections.iter().flat_map(|sections| sections.values()).flatten() {
-		parts.push(text.clone());
+	for (_, text) in message.sections.iter().flat_map(js_entries) {
+		if let Some(text) = text {
+			parts.push(text.clone());
+		}
 	}
 	parts.retain(|part| !part.is_empty());
 	parts.join("\n\n")
@@ -101,7 +107,7 @@ pub fn render_system_message_update(message: &SystemMessage) -> String {
 	if !text.is_empty() {
 		parts.push(text);
 	}
-	for (name, value) in message.sections.iter().flatten() {
+	for (name, value) in message.sections.iter().flat_map(js_entries) {
 		parts.push(match value {
 			None => format!("Removed system prompt section \"{name}\"."),
 			Some(value) => format!("Updated system prompt section \"{name}\":\n\n{value}"),
@@ -132,4 +138,30 @@ pub fn owned_slice(text: &str, start: usize, end: Option<usize>) -> String {
 /// `text.trim()`: removes JavaScript white space and line terminators, which include U+FEFF but not U+0085.
 pub fn js_trim(text: &str) -> &str {
 	text.trim_matches(|ch: char| (ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}')
+}
+
+/// The entries of a map in JS property order, as `Object.entries` lists them: array-index keys such as `"1"` first in
+/// ascending order, then the other keys in insertion order. The rule is `pi_host::js::js_key_order`'s.
+pub fn js_entries<V>(map: &IndexMap<String, V>) -> Vec<(&String, &V)> {
+	if !map
+		.keys()
+		.any(|key| key.starts_with(|first: char| first.is_ascii_digit()))
+	{
+		return map.iter().collect();
+	}
+	let mut order = Value::Object(
+		map.keys()
+			.enumerate()
+			.map(|(index, key)| (key.clone(), Value::from(index)))
+			.collect(),
+	);
+	pi_host::js::js_key_order(&mut order);
+	let Value::Object(order) = order else {
+		unreachable!("js_key_order keeps an object an object");
+	};
+	order
+		.values()
+		.filter_map(Value::as_u64)
+		.filter_map(|index| map.get_index(index as usize))
+		.collect()
 }
