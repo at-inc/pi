@@ -1,19 +1,13 @@
 //! Port of `packages/ai/src/api/pi-messages.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
 
-// PORT-STUB: w3-bedrock-misc
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::PiError;
-
+use super::pi_messages::pi_messages_streams;
 use crate::api::lazy::lazy_api;
 use crate::types::ProviderStreams;
 
-/// `piMessagesApi()`: every stream ends with an `API not ported` error event.
+/// `piMessagesApi()`: streams through the `pi-messages` module.
 pub fn pi_messages_api() -> Rc<dyn ProviderStreams> {
-	lazy_api(
-		Rc::new(|| Box::pin(async { Err(PiError::new("API not ported")) })),
-		None,
-	)
+	lazy_api(Rc::new(|| Box::pin(async { Ok(pi_messages_streams()) })), None)
 }
