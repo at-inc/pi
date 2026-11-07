@@ -479,8 +479,8 @@ fn api_key_auth(api_key: &JsValue) -> Option<ApiKeyAuth> {
 	if !api_key.is_object() {
 		return None;
 	}
-	let method = |name: &str| Reflect::get(&api_key, &name.into()).ok()?.dyn_into::<Function>().ok();
-	let name = Reflect::get(&api_key, &"name".into())
+	let method = |name: &str| Reflect::get(api_key, &name.into()).ok()?.dyn_into::<Function>().ok();
+	let name = Reflect::get(api_key, &"name".into())
 		.ok()
 		.and_then(|name| name.as_string())
 		.unwrap_or_default();
@@ -603,7 +603,8 @@ impl ProviderHandle {
 			("classify", provider.classify.is_some()),
 		]
 		.into_iter()
-		.filter_map(|(name, present)| present.then(|| name.to_string()))
+		.filter(|(_, present)| *present)
+		.map(|(name, _)| name.to_string())
 		.collect()
 	}
 
@@ -1187,17 +1188,16 @@ impl ModelsHandle {
 
 /// The fields a model of another type lacks for each `Models` entry point (see `entry_model`); a model without `type`
 /// is a chat model.
-const CHAT_FILL: &[(&str, fn() -> Value)] = &[
+const CHAT_FILL: super::ModelFill = &[
 	("reasoning", || Value::Bool(false)),
 	("contextWindow", || Value::from(0)),
 	("maxTokens", || Value::from(0)),
 ];
-const IMAGE_FILL: &[(&str, fn() -> Value)] = &[
+const IMAGE_FILL: super::ModelFill = &[
 	("type", || Value::from("chat")),
 	("output", || Value::Array(Vec::new())),
 ];
-const CLASSIFIER_FILL: &[(&str, fn() -> Value)] =
-	&[("type", || Value::from("chat")), ("contextWindow", || Value::from(0))];
+const CLASSIFIER_FILL: super::ModelFill = &[("type", || Value::from("chat")), ("contextWindow", || Value::from(0))];
 
 /// The options of a `Models` request: the provider options plus `transformHeaders`; `None` when the caller passed none.
 fn models_request<T>(options: JsValue, read: impl FnOnce(JsOptions) -> T) -> Option<T> {

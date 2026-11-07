@@ -48,13 +48,13 @@ fn model(value: &JsValue) -> Result<Model, JsValue> {
 	arg(value.clone())
 }
 
+/// The fields `entry_model` supplies when a model lacks them, each with its default.
+type ModelFill = &'static [(&'static str, fn() -> serde_json::Value)];
+
 /// A model at a `Models` entry point that takes one model type. The TS checks the type at run time and reports a model of
 /// another type as an error result; such a model lacks fields of this type, so it is read with `fill` supplying them,
 /// and the core's own type check rejects it as the TS does.
-fn entry_model<T: serde::de::DeserializeOwned>(
-	value: &JsValue,
-	fill: &[(&str, fn() -> serde_json::Value)],
-) -> Result<T, JsValue> {
+fn entry_model<T: serde::de::DeserializeOwned>(value: &JsValue, fill: ModelFill) -> Result<T, JsValue> {
 	let error = match arg::<T>(value.clone()) {
 		Ok(model) => return Ok(model),
 		Err(error) => error,

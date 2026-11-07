@@ -43,17 +43,33 @@
   `processResponsesStream`.
 - `./api/openai-prompt-cache`, `./api/azure-openai-config`, `./api/constrained-sampling`: every runtime export.
 
+- `.` and `./models` (models slice): `createProvider` with every input (auth, model callbacks, `api`, `images`,
+  `classifiers`), `createModels` with `credentials`, `modelsStore` and `authContext` and every `Models` method but
+  `login`/`logout`, `calculateCost`, `clampThinkingLevel`, `getSupportedThinkingLevels`, `getModelType`,
+  `isModelType`, `hasApi`, `modelsAreEqual`, `ModelsError`, `AI_TELEMETRY_SCHEMA`, `lazyStream`, `lazyApi`,
+  `InMemoryModelsStore` and the faux provider (`fauxProvider`, `createFauxCore`, `fauxText`, `fauxThinking`,
+  `fauxToolCall`, `fauxAssistantMessage`).
+- `./compat`: also `getModels`, `getProviders`, the api registry (`registerApiProvider`, `getApiProvider(s)`,
+  `unregisterApiProviders`, `registerBuiltInApiProviders`, `resetApiProviders`), `registerFauxProvider`,
+  `findEnvKeys`, `getEnvApiKey` and the env names, the image models and registry (`getImageModel(s)`,
+  `getImageProviders`, `generateImages`, `registerImagesApiProvider`, `getImagesApiProvider`,
+  `registerBuiltInImagesApiProviders`, `generateImagesOpenAICodex`, `generateImagesOpenRouter`) and the legacy
+  `stream<Api>`/`streamSimple<Api>` aliases.
+- `./providers/*`: every built-in provider factory and its `*.models` catalogs, `./providers/all` (catalog reads and
+  collections), `./providers/radius` and `radius-config`, `./providers/openrouter` (`personalizeOpenRouterCatalog`),
+  `./providers/faux`, `./providers/cloudflare-stream`, `./providers/opencode-headers`.
+- `./api/openrouter-images`, `./api/openai-codex-images`: `generateImages`; `./api/typesafe-system-one`,
+  `./api/openai-decisions`, `./api/cloudflare-workers-ai-system-one`: `classify`; `./api/llama-cpp-classify`:
+  `classify` and its helpers; their `.lazy` modules; `./api/cloudflare` and `./api/cloudflare-ai-binding`.
+
 ## Not bridged yet
 
-These throw `<name> is not bridged to the Rust core yet`:
+These throw `<name> is not bridged to the Rust core yet`; they belong to the auth facade:
 
-- `createProvider({ images, classifiers })`
-- `createProvider({ fetchModels, filterModels, filterAllModels })`
-- `createModels({ credentials, modelsStore, authContext })`
-- `Models.setProvider` of a provider not made by `createProvider`
-- These `Models` methods: `getModelsOfType`, `getModelOfType`, `getAllModels`, `refresh`, `checkAuth`, `getAvailable`,
-  `getAvailableOfType`, `getAllAvailable`, `getAuth`, `login`, `logout`, `streamDeferred`, `fetchDeferred`,
-  `cancelDeferred`, `generateImages`, `classify`
+- `Models.login`, `Models.logout`
+- `login` of a Rust provider's `auth.apiKey` and `auth.oauth`
+
+`options.telemetry` is not passed to the core yet: a JS `TelemetrySpan` does not reach implementations.
 
 The other modules and exports of `@at-inc/pi-ai` are not in this package yet. No runtime value comes from the TS
 package. `getModel` reads the Rust catalog, which is built from the same catalog data.
@@ -83,3 +99,16 @@ package. `getModel` reads the Rust catalog, which is built from the same catalog
   modeled exception. The client always sends through the host's fetch, so HTTP(S) proxies and
   `AWS_BEDROCK_FORCE_HTTP1` do not apply, and it resolves credentials and the region before it sends (see
   `rust/crates/pi-ai/src/api/bedrock_client.rs` for the SDK differences).
+- Faux provider: `state` is a live view of the core's counters (`cancelledDeferred` is a new array on each read),
+  queued messages are copied into the core, and `createFauxCore()`'s `stream` and `streamSimple` both go through
+  the provider's `streamSimple`. See `rust/crates/pi-ai/src/providers/faux.rs` for the core's own differences (event
+  partials, deferred options, option keys a factory sees).
+- `personalizeOpenRouterCatalog` returns the caller's object for a model the key leaves unchanged and the caller's
+  array when nothing changes; the TS returns new objects for every kept chat model.
+- `options.fetch === globalThis.fetch` is the host fetch, so the Google adapters accept it as in the TS. Any other
+  JS fetch is called through JS.
+- A classifier result's `answers` keeps every question id as an own property, `__proto__` included.
+- With an already aborted signal the image APIs make no request; the TS hands the signal to the SDK, which rejects.
+  Both report the same aborted result.
+- `createAiBindingFetch` is written in the facade: the Rust module only checks that the binding has `fetch` and returns
+  it, which is what the facade does with the JS binding.
