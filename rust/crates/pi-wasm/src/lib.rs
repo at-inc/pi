@@ -11,8 +11,11 @@ mod error;
 mod events;
 mod fetch;
 mod host;
+mod http_server;
 mod json;
+mod mcp;
 mod options;
+mod process;
 mod websocket;
 
 pub use host::init;

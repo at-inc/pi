@@ -1,6 +1,6 @@
-// Workers host: fetch and WebSocket, timers and `process.env` when nodejs_compat provides it; no file system and no
-// processes, like the TS packages on Workers. The wasm is imported as a compiled WebAssembly.Module, which wrangler
-// and workerd provide for .wasm imports.
+// Workers host: fetch and WebSocket, timers and `process.env` when nodejs_compat provides it; no file system, no
+// processes and no HTTP servers, like the TS packages on Workers. The wasm is imported as a compiled
+// WebAssembly.Module, which wrangler and workerd provide for .wasm imports.
 
 import wasmModule from "../wasm/pi_wasm_bg.wasm";
 import { initCore, type PiHost } from "./core.ts";
@@ -31,6 +31,8 @@ export const host: PiHost = {
 		typeof globalThis.WebSocket === "function"
 			? new globalThis.WebSocket(url, { headers } as unknown as string[])
 			: undefined,
+	spawnProcess: () => undefined,
+	listenHttp: () => undefined,
 };
 
 /** The initialized wasm exports. */
