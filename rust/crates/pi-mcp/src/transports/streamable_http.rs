@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/transports/streamable-http.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `McpHttpError` and its subclasses are `PiError`s with `status` set and `data` holding `status`, `body` and,
 //! for `McpAuthRequiredError`, `wwwAuthenticate`; `McpHttpError::is` also matches the subclasses, like

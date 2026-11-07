@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/oauth/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Re-exports the OAuth API. `OAuthCallbackServer` needs the `native` feature.
 

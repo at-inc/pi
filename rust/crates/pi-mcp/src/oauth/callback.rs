@@ -1,10 +1,13 @@
 //! Port of `packages/mcp/src/oauth/callback.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Behind the `native` feature: the loopback HTTP server is a tokio `TcpListener` that reads one request
 //! head per connection and answers with `connection: close`, instead of `node:http`. `OAuthCallbackPage` is
-//! an enum: `Ok` for `{ ok: true }` and `Failed` for `{ ok: false, message, details }`. `close` stops
-//! accepting at once and does not wait for open connections.
+//! an enum: `Ok` for `{ ok: true }` and `Failed` for `{ ok: false, message, details }`. A request head must
+//! arrive within 60 seconds, like Node's `headersTimeout`. `close` stops accepting and drops open connections
+//! at once instead of waiting for them. A request target that is not a valid URL gets a 404 page, where the
+//! TS handler throws. A bind failure is an `Error` with Node's `listen <code>: <description> <host>:<port>`
+//! message and `data.code`.
 
 #![cfg(feature = "native")]
 
@@ -12,14 +15,17 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use futures::channel::oneshot;
-use futures::future::{AbortHandle, Abortable};
+use futures::future::{AbortHandle, Abortable, Either, select};
 use indexmap::IndexMap;
 use pi_host::{LocalBoxFuture, PiError, PiResult};
+use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use url::Url;
 
 const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
+/// Node's default `headersTimeout`.
+const HEADERS_TIMEOUT_MS: f64 = 60_000.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OAuthCallback {
@@ -58,8 +64,8 @@ fn plain_text(page: &OAuthCallbackPage) -> String {
 	match page {
 		OAuthCallbackPage::Ok => "Authorization complete. You may close this window.".into(),
 		OAuthCallbackPage::Failed { message, details } => match details {
-			Some(details) => format!("{message}\n\n{details}"),
-			None => message.clone(),
+			Some(details) if !details.is_empty() => format!("{message}\n\n{details}"),
+			_ => message.clone(),
 		},
 	}
 }
@@ -77,6 +83,7 @@ struct Inner {
 	render_page: Option<RenderPageFunction>,
 	pending: RefCell<IndexMap<String, Pending>>,
 	listener: AbortHandle,
+	connections: RefCell<Vec<AbortHandle>>,
 }
 
 pub struct OAuthCallbackServer {
@@ -89,9 +96,10 @@ impl OAuthCallbackServer {
 		let host = options.host.unwrap_or_else(|| "127.0.0.1".into());
 		let redirect_host = options.redirect_host.unwrap_or_else(|| host.clone());
 		let path = options.path.unwrap_or_else(|| "/callback".into());
-		let listener = TcpListener::bind((host.as_str(), options.port.unwrap_or(0)))
+		let port = options.port.unwrap_or(0);
+		let listener = TcpListener::bind((host.as_str(), port))
 			.await
-			.map_err(|error| PiError::new(format!("listen {host}: {error}")))?;
+			.map_err(|error| listen_error(&error, &host, port))?;
 		let port = listener
 			.local_addr()
 			.map_err(|_| PiError::new("OAuth callback server did not bind to TCP"))?
@@ -111,6 +119,7 @@ impl OAuthCallbackServer {
 			render_page: options.render_page,
 			pending: RefCell::new(IndexMap::new()),
 			listener: listener_handle,
+			connections: RefCell::new(Vec::new()),
 		});
 		let accepting = Rc::downgrade(&inner);
 		pi_host::spawn_local(async move {
@@ -119,7 +128,16 @@ impl OAuthCallbackServer {
 					let Some(inner) = accepting.upgrade() else {
 						return;
 					};
-					pi_host::spawn_local(async move { serve(&inner, stream).await });
+					let (connection, registration) = AbortHandle::new_pair();
+					inner
+						.connections
+						.borrow_mut()
+						.retain(|connection| !connection.is_aborted());
+					inner.connections.borrow_mut().push(connection.clone());
+					pi_host::spawn_local(async move {
+						let _ = Abortable::new(serve(&inner, stream), registration).await;
+						connection.abort();
+					});
 				}
 			};
 			let _ = Abortable::new(accept, registration).await;
@@ -183,22 +201,48 @@ impl OAuthCallbackServer {
 			let _ = pending.sender.send(Err(PiError::new("OAuth callback server closed")));
 		}
 		self.inner.listener.abort();
+		for connection in std::mem::take(&mut *self.inner.connections.borrow_mut()) {
+			connection.abort();
+		}
 		Ok(())
 	}
 }
 
-async fn serve(inner: &Inner, mut stream: TcpStream) {
+fn listen_error(error: &std::io::Error, host: &str, port: u16) -> PiError {
+	let (code, description) = match error.kind() {
+		std::io::ErrorKind::AddrInUse => ("EADDRINUSE", "address already in use"),
+		std::io::ErrorKind::AddrNotAvailable => ("EADDRNOTAVAIL", "address not available"),
+		std::io::ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
+		_ => ("EIO", "i/o error"),
+	};
+	PiError::new(format!("listen {code}: {description} {host}:{port}")).with_data(json!({ "code": code }))
+}
+
+async fn read_head(stream: &mut TcpStream) -> Option<Vec<u8>> {
 	let mut head = Vec::new();
 	let mut chunk = [0u8; 4096];
 	while !head.windows(4).any(|window| window == b"\r\n\r\n") {
 		match stream.read(&mut chunk).await {
-			Ok(0) | Err(_) => return,
+			Ok(0) | Err(_) => return None,
 			Ok(read) => head.extend_from_slice(&chunk[..read]),
 		}
 		if head.len() > MAX_REQUEST_HEAD_BYTES {
-			return;
+			return None;
 		}
 	}
+	Some(head)
+}
+
+async fn serve(inner: &Inner, mut stream: TcpStream) {
+	let head = {
+		let read = read_head(&mut stream);
+		let deadline = pi_host::sleep(HEADERS_TIMEOUT_MS, None);
+		futures::pin_mut!(read, deadline);
+		match select(read, deadline).await {
+			Either::Left((Some(head), _)) => head,
+			_ => return,
+		}
+	};
 	let head = String::from_utf8_lossy(&head);
 	let target = head
 		.lines()

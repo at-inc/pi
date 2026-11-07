@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/oauth/errors.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Each error class is a unit struct whose constructor returns a `PiError` with the class `name`; the class
 //! fields live in `data` (camelCase, as in TS) and are read through accessors, like the protocol errors.

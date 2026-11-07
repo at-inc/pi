@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use common::{Gate, json, norm, run, sleep};
 use pi_host::{AbortController, LocalBoxFuture, PiError, PiResult};
-use pi_mcp::client::{McpClient, McpClientOptions, McpRequestOptions, McpRoots};
+use pi_mcp::client::{McpClient, McpClientOptions, McpRequestOptions, McpRoots, RequestHandlerContext};
 use pi_mcp::protocol::jsonrpc::{
 	JsonRpcErrorObject, JsonRpcMessage, JsonRpcRequest, McpAbortError, McpError, McpTimeoutError,
 };
@@ -583,6 +583,41 @@ mod mcp_client {
 				r#"{ "jsonrpc": "2.0", "id": "roots", "result": { "roots": [{ "uri": "file:///workspace", "name": "workspace" }] } }"#
 			)));
 			assert_eq!(changed.borrow().clone(), vec![None]);
+			client.close().await.unwrap();
+		});
+	}
+
+	// Not in the TS suite: a request and its cancellation delivered back to back, as one stdio chunk or SSE
+	// read carries them, must abort the handler's signal.
+	#[test]
+	fn aborts_a_server_request_cancelled_right_after_it_arrives() {
+		run(|_| async {
+			let (client, server) = connect().await;
+			let aborted = Rc::new(Cell::new(false));
+			let flag = aborted.clone();
+			let _ = client.set_request_handler(
+				"slow",
+				Rc::new(move |_, context: RequestHandlerContext| {
+					let flag = flag.clone();
+					Box::pin(async move {
+						let reason = context.signal.aborted_future().await;
+						flag.set(true);
+						Err(reason)
+					})
+				}),
+			);
+			let request = send(&server.transport, JsonRpcMessage::request("r1", "slow", None));
+			let cancel = send(
+				&server.transport,
+				JsonRpcMessage::notification(
+					"notifications/cancelled",
+					Some(json!({ "requestId": "r1", "reason": "gone" })),
+				),
+			);
+			request.await.unwrap();
+			cancel.await.unwrap();
+			sleep(10.0).await;
+			assert!(aborted.get());
 			client.close().await.unwrap();
 		});
 	}

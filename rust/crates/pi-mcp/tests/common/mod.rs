@@ -363,7 +363,8 @@ impl FakeNetwork {
 		handler: impl Fn(ServerRequest, ServerResponse) -> LocalBoxFuture<'static, PiResult<()>> + 'static,
 	) -> String {
 		let mut servers = self.servers.borrow_mut();
-		let origin = format!("http://127.0.0.1:{}", 40_000 + servers.len());
+		// Below the ephemeral range, so a real socket of the same test (the OAuth callback server) never shares it.
+		let origin = format!("http://127.0.0.1:{}", 100 + servers.len());
 		servers.insert(origin.clone(), Rc::new(handler));
 		origin
 	}

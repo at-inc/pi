@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/oauth/flow.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Adapted from modelcontextprotocol/typescript-sdk v1.29.0 src/client/auth.ts. Copyright (c) 2024 Anthropic,
 //! PBC. Licensed under MIT; see LICENSES/. Modified to remove SDK/Zod dependencies and use WebCrypto for PKCE.
@@ -10,14 +10,18 @@
 //! `AddClientAuthentication` receives the token request's headers and form parameters by value and returns
 //! them, instead of mutating a `Headers` and a `URLSearchParams`. Both are `IndexMap`s whose insertion keeps
 //! the position of an existing key, like `set`; header names match case-insensitively but keep their casing.
-//! Methods that take `string | URL` take `&str`. Random bytes come from `rand`.
+//! Methods that take `string | URL` take `&str`. Random bytes come from `rand`. The registration body lists
+//! the client metadata in `OAuthClientMetadata` declaration order, then `application_type` and `scope`, instead
+//! of the caller's object key order.
 
 use std::cell::RefCell;
+use std::future::Future;
 use std::rc::Rc;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use futures::FutureExt;
+use futures::channel::oneshot;
 use futures::future::Shared;
 use indexmap::{IndexMap, IndexSet};
 use pi_host::{AbortSignal, HttpRequest, LocalBoxFuture, PiError, PiResult};
@@ -729,7 +733,7 @@ async fn run_flow<P: OAuthClientProvider + ?Sized>(
 			&redirect_url,
 		)
 		.await?;
-		// A response without `scope` grants the requested scope (RFC 6749 `5.1). Recorded so a step-up can
+		// A response without `scope` grants the requested scope (RFC 6749 section 5.1). Recorded so a step-up can
 		// keep it. Callers pass the options of the authorization request, so `scope` is what was requested.
 		provider.save_tokens(with_scope(tokens, scope.as_deref())).await?;
 		return Ok(OAuthFlowResult::Authorized);
@@ -741,14 +745,16 @@ async fn run_flow<P: OAuthClientProvider + ?Sized>(
 	if let Some(existing) = existing
 		&& let Some(refresh_token) = existing.refresh_token.as_deref().filter(|token| !token.is_empty())
 	{
-		match refresh_authorization(authorization_server_url, &token_options, refresh_token).await {
-			Ok(tokens) => {
-				// A refresh without `scope` keeps the scope of the grant (RFC 6749 `6).
-				provider
-					.save_tokens(with_scope(tokens, existing.scope.as_deref()))
-					.await?;
-				return Ok(OAuthFlowResult::Authorized);
-			}
+		let refreshed = async {
+			let tokens = refresh_authorization(authorization_server_url, &token_options, refresh_token).await?;
+			// A refresh without `scope` keeps the scope of the grant (RFC 6749 section 6).
+			provider
+				.save_tokens(with_scope(tokens, existing.scope.as_deref()))
+				.await
+		}
+		.await;
+		match refreshed {
+			Ok(()) => return Ok(OAuthFlowResult::Authorized),
 			Err(error) => {
 				if options.signal.as_ref().is_some_and(AbortSignal::aborted) || OAuthInsecureEndpointError::is(&error) {
 					return Err(error);
@@ -805,6 +811,21 @@ pub async fn authorize_mcp<P: OAuthClientProvider + ?Sized>(
 
 type SharedFlow = Shared<LocalBoxFuture<'static, PiResult<()>>>;
 
+/// Runs `future` to completion on its own, like a JS promise that keeps running when nobody awaits it, and
+/// returns a handle every waiter can await.
+pub(crate) fn run_detached(future: impl Future<Output = PiResult<()>> + 'static) -> SharedFlow {
+	let (sender, receiver) = oneshot::channel();
+	pi_host::spawn_local(async move {
+		let _ = sender.send(future.await);
+	});
+	let settled: LocalBoxFuture<'static, PiResult<()>> = Box::pin(async move {
+		receiver
+			.await
+			.unwrap_or_else(|_| Err(PiError::new("OAuth task was dropped before it settled")))
+	});
+	settled.shared()
+}
+
 /// Auth provider for `StreamableHttpTransport`. After a 401 it refreshes the tokens, or fails with
 /// `McpOAuthAuthorizationRequiredError` when the user has to authorize (again). Concurrent 401s share
 /// one refresh, and a request whose token was already replaced is just retried: with rotating refresh
@@ -833,7 +854,7 @@ pub fn adapt_oauth_provider(provider: Rc<dyn OAuthClientProvider>) -> AuthProvid
 				let flow = match existing {
 					Some(flow) => flow,
 					None => {
-						let flow = recover(provider, in_flight.clone(), context, insufficient_scope).shared();
+						let flow = run_detached(recover(provider, in_flight.clone(), context, insufficient_scope));
 						*in_flight.borrow_mut() = Some(flow.clone());
 						flow
 					}

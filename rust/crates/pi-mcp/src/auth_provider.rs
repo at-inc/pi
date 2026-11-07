@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/auth-provider.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `AuthProvider` is an interface with an optional method in TS; here it is a struct of callbacks, so
 //! `onUnauthorized` can be absent and providers are written the way the TS object literals are.

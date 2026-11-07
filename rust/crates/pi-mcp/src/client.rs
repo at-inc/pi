@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/client.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `McpClient` is a cheap handle (`Clone` shares the client). The methods whose TS body runs synchronously up
 //! to the first `await` (`connect`, `request`, `notify`, `ping`, `callTool`, `readResource`, `close`) do that
@@ -12,7 +12,9 @@
 //! checked like the TS and then deserialized into the protocol types; a value that passes the TS checks but
 //! has a field of the wrong type (for example a tool whose `title` is a number) fails with the same
 //! "Invalid ..." error as an entry that fails the checks. A progress notification whose fields do not have the
-//! `ProgressNotification` types still renews the timeout but is not passed to `onProgress`.
+//! `ProgressNotification` types still renews the timeout but is not passed to `onProgress`. Notification
+//! listeners are called from a snapshot, so a listener added while a notification is dispatched first sees the
+//! next one (a JS `Set` iteration would also call it for the current one).
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -881,11 +883,7 @@ fn require_transport(inner: &Rc<Inner>, allow_connecting: bool) -> PiResult<Rc<d
 fn handle_message(inner: &Rc<Inner>, message: &JsonRpcMessage) {
 	match message {
 		JsonRpcMessage::Response(response) => handle_response(inner, response),
-		JsonRpcMessage::Request(request) => {
-			let inner = inner.clone();
-			let request = request.clone();
-			pi_host::spawn_local(async move { handle_request(inner, request).await });
-		}
+		JsonRpcMessage::Request(request) => handle_request(inner, request.clone()),
 		JsonRpcMessage::Notification(notification) => {
 			handle_notification(inner, &notification.method, notification.params.as_ref())
 		}
@@ -914,7 +912,9 @@ fn handle_response(inner: &Rc<Inner>, message: &JsonRpcResponse) {
 	let _ = entry.sender.send(result);
 }
 
-async fn handle_request(inner: Rc<Inner>, message: JsonRpcRequest) {
+/// Registers the request's controller and starts its handler now, like the TS `handleRequest` does before its
+/// first `await`, so a cancellation or a close handled next finds it; the rest runs as a task.
+fn handle_request(inner: &Rc<Inner>, message: JsonRpcRequest) {
 	let (transport, handler) = {
 		let state = inner.state.borrow();
 		let Some(transport) = state.transport.clone() else {
@@ -931,9 +931,13 @@ async fn handle_request(inner: Rc<Inner>, message: JsonRpcRequest) {
 				data: None,
 			},
 		);
-		if let Err(error) = transport.send(response, McpTransportSendOptions::default()).await {
-			emit_error(&inner, &error);
-		}
+		let send = transport.send(response, McpTransportSendOptions::default());
+		let inner = inner.clone();
+		pi_host::spawn_local(async move {
+			if let Err(error) = send.await {
+				emit_error(&inner, &error);
+			}
+		});
 		return;
 	};
 	let controller = AbortController::new();
@@ -942,14 +946,25 @@ async fn handle_request(inner: Rc<Inner>, message: JsonRpcRequest) {
 		.borrow_mut()
 		.incoming
 		.insert(message.id.clone(), controller.clone());
+	let handled = handler(
+		message.params.clone(),
+		RequestHandlerContext {
+			signal: controller.signal(),
+		},
+	);
+	let inner = inner.clone();
+	pi_host::spawn_local(async move { finish_request(inner, transport, message, handled).await });
+}
+
+/// Sends the handler's result, or its error as a JSON-RPC error, and forgets the request.
+async fn finish_request(
+	inner: Rc<Inner>,
+	transport: Rc<dyn McpTransport>,
+	message: JsonRpcRequest,
+	handled: LocalBoxFuture<'static, PiResult<Value>>,
+) {
 	let outcome = async {
-		let result = handler(
-			message.params.clone(),
-			RequestHandlerContext {
-				signal: controller.signal(),
-			},
-		)
-		.await?;
+		let result = handled.await?;
 		let result = if result.is_null() { json!({}) } else { result };
 		transport
 			.send(

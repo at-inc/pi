@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/testing/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 // <generated-modules>
 

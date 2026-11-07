@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/protocol/content.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `ContentBlock` adds an `Unknown` variant for blocks whose `type` is not one of the five known ones, or whose
 //! fields do not have the TS types: the TS passes such blocks through and `toLlmContent` turns them into a
@@ -198,6 +198,8 @@ impl<'de> Deserialize<'de> for ContentBlock {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallToolResult {
+	/// Defaults to `[]` when absent, like `result.content ?? []`.
+	#[serde(default)]
 	pub content: Vec<ContentBlock>,
 	/// Any JSON value, including arrays and `null` (MCP 2026-07-28; earlier revisions allowed only objects).
 	#[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]

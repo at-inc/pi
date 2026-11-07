@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/transports/stdio.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Behind the `native` feature, on tokio processes. On Unix the server runs in its own process group (like
 //! `detached: true`) and signals go through `nix`. On Windows `cross-spawn` is matched by resolving the
@@ -7,7 +7,8 @@
 //! its own argument escaping, and the tree is killed with `taskkill /T /F`. The `process.on("exit")` hook that
 //! kills live process groups when the host exits is not ported: Rust has no safe process-exit hook, so a host
 //! that exits without closing its transports leaves their servers to notice the closed stdin. Spawn failures
-//! are `Error`s with Node's `spawn <command> <code>` message and `data.code`. JSON parse errors carry
+//! and pipe errors are `Error`s with Node's `<syscall> <code>` message (`spawn npx ENOENT`, `write EPIPE`) and
+//! `data.code`; codes other than `ENOENT`, `EACCES`, `EPIPE` and `ECONNRESET` become `EIO`. JSON parse errors carry
 //! serde_json's message.
 
 #![cfg(feature = "native")]
@@ -166,7 +167,7 @@ impl McpTransport for StdioTransport {
 			};
 			drop(stdin);
 			written.map_err(|error| {
-				let error = io_error(&error, None);
+				let error = io_error(&error, "write");
 				if !inner.closed.get() {
 					inner.events.emit_error(&error);
 				}
@@ -228,7 +229,7 @@ fn start(inner: &Rc<Inner>) -> PiResult<()> {
 	command.creation_flags(CREATE_NO_WINDOW);
 	let mut process = command
 		.spawn()
-		.map_err(|error| io_error(&error, Some(&format!("spawn {}", options.command))))?;
+		.map_err(|error| io_error(&error, &format!("spawn {}", options.command)))?;
 
 	let (close_sender, close_receiver) = oneshot::channel();
 	let child = Rc::new(Child {
@@ -276,7 +277,7 @@ async fn read_stream(inner: &Rc<Inner>, stream: Option<impl AsyncRead + Unpin>, 
 			Ok(0) => return,
 			Ok(read) => handle(inner, &chunk[..read]),
 			Err(error) => {
-				inner.events.emit_error(&io_error(&error, None));
+				inner.events.emit_error(&io_error(&error, "read"));
 				return;
 			}
 		}
@@ -472,17 +473,14 @@ fn handle_stderr(inner: &Inner, chunk: &[u8]) {
 	}
 }
 
-/// A Node system error: `code` in `data`, and for spawn failures the `spawn <command> <code>` message.
-fn io_error(error: &std::io::Error, syscall: Option<&str>) -> PiError {
+/// A Node system error: the `<syscall> <code>` message with `code` in `data`.
+fn io_error(error: &std::io::Error, syscall: &str) -> PiError {
 	let code = match error.kind() {
 		std::io::ErrorKind::NotFound => "ENOENT",
 		std::io::ErrorKind::PermissionDenied => "EACCES",
 		std::io::ErrorKind::BrokenPipe => "EPIPE",
+		std::io::ErrorKind::ConnectionReset => "ECONNRESET",
 		_ => "EIO",
 	};
-	let message = match syscall {
-		Some(syscall) => format!("{syscall} {code}"),
-		None => error.to_string(),
-	};
-	PiError::new(message).with_data(json!({ "code": code }))
+	PiError::new(format!("{syscall} {code}")).with_data(json!({ "code": code }))
 }

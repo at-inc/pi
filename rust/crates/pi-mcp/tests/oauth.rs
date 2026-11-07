@@ -231,17 +231,15 @@ fn flow(server_url: &str) -> OAuthFlowOptions {
 }
 
 #[cfg(feature = "native")]
-mod native {
+mod native_support {
 	use std::cell::Cell;
 
 	use base64::Engine;
 	use pi_host::HttpRequest;
-	use pi_mcp::client::{McpClient, McpClientOptions, McpRequestOptions};
-	use pi_mcp::oauth::{OAuthCallbackPage, OAuthCallbackServer, OAuthCallbackServerOptions};
+	use pi_mcp::client::{McpClient, McpClientOptions};
 	use pi_mcp::transports::streamable_http::{StreamableHttpTransport, StreamableHttpTransportOptions};
 	use sha2::{Digest, Sha256};
 
-	use super::common::run_native;
 	use super::*;
 
 	fn get(url: &str) -> HttpRequest {
@@ -254,11 +252,11 @@ mod native {
 		}
 	}
 
-	async fn fetch(url: &str) -> HttpResponse {
+	pub(super) async fn fetch(url: &str) -> HttpResponse {
 		pi_host::fetch(get(url), None).await.unwrap()
 	}
 
-	fn oauth_client() -> McpClient {
+	pub(super) fn oauth_client() -> McpClient {
 		McpClient::new(McpClientOptions {
 			name: "oauth-test".into(),
 			version: "1.0.0".into(),
@@ -266,7 +264,7 @@ mod native {
 		})
 	}
 
-	fn transport(origin: &str, provider: &Rc<TestOAuthProvider>) -> Rc<StreamableHttpTransport> {
+	pub(super) fn transport(origin: &str, provider: &Rc<TestOAuthProvider>) -> Rc<StreamableHttpTransport> {
 		Rc::new(
 			StreamableHttpTransport::new(StreamableHttpTransportOptions {
 				url: format!("{origin}/mcp"),
@@ -286,7 +284,7 @@ mod native {
 		)
 	}
 
-	fn handle(
+	pub(super) fn handle(
 		request: ServerRequest,
 		response: ServerResponse,
 		expected_challenge: &RefCell<Option<String>>,
@@ -414,7 +412,24 @@ mod native {
 			_ => not_found(&response),
 		}
 	}
+}
 
+mod mcp_oauth {
+	#[cfg(feature = "native")]
+	use std::cell::Cell;
+
+	#[cfg(feature = "native")]
+	use pi_mcp::client::McpRequestOptions;
+	#[cfg(feature = "native")]
+	use pi_mcp::oauth::{OAuthCallbackServer, OAuthCallbackServerOptions};
+
+	#[cfg(feature = "native")]
+	use super::common::run_native;
+	#[cfg(feature = "native")]
+	use super::native_support::{fetch, handle, oauth_client, transport};
+	use super::*;
+
+	#[cfg(feature = "native")]
 	#[test]
 	fn discovers_registers_authorizes_with_pkce_and_refreshes_on_401() {
 		run_native(|host| async move {
@@ -486,102 +501,6 @@ mod native {
 			callback.close().await.unwrap();
 		});
 	}
-
-	#[test]
-	fn renders_plain_text_by_default() {
-		run_native(|_| async {
-			let callback = OAuthCallbackServer::listen(OAuthCallbackServerOptions::default())
-				.await
-				.unwrap();
-			let pending = callback.wait_for_callback("s1", None).unwrap();
-			let response = fetch(&format!("{}?code=abc&state=s1", callback.redirect_url())).await;
-			assert_eq!(response.header("content-type"), Some("text/plain; charset=utf-8"));
-			assert_eq!(
-				response.text().await.unwrap(),
-				"Authorization complete. You may close this window."
-			);
-			assert_eq!(pending.await.unwrap().code, "abc");
-			callback.close().await.unwrap();
-		});
-	}
-
-	// #10302
-	#[test]
-	fn rejects_a_response_on_another_path_than_the_expected_one() {
-		run_native(|_| async {
-			let callback = OAuthCallbackServer::listen(OAuthCallbackServerOptions {
-				extra_paths: Some(vec!["/callback/server-id".into()]),
-				..Default::default()
-			})
-			.await
-			.unwrap();
-			let origin = Url::parse(callback.redirect_url())
-				.unwrap()
-				.origin()
-				.ascii_serialization();
-			let mixed_up = callback.wait_for_callback("s1", Some("/callback/server-id")).unwrap();
-			let wrong = fetch(&format!("{origin}/callback?code=abc&state=s1")).await;
-			assert_eq!(wrong.status, 400);
-			let error = mixed_up.await.unwrap_err();
-			assert!(
-				error.message.contains("arrived on another redirect URI"),
-				"{}",
-				error.message
-			);
-
-			let pending = callback.wait_for_callback("s2", Some("/callback/server-id")).unwrap();
-			let right = fetch(&format!("{origin}/callback/server-id?code=abc&state=s2")).await;
-			assert_eq!(right.status, 200);
-			assert_eq!(pending.await.unwrap().code, "abc");
-			callback.close().await.unwrap();
-		});
-	}
-
-	#[test]
-	fn renders_pages_through_render_page() {
-		run_native(|_| async {
-			let pages = Rc::new(RefCell::new(Vec::<OAuthCallbackPage>::new()));
-			let seen = pages.clone();
-			let callback = OAuthCallbackServer::listen(OAuthCallbackServerOptions {
-				render_page: Some(Rc::new(move |page| {
-					seen.borrow_mut().push(page.clone());
-					match page {
-						OAuthCallbackPage::Ok => "<p>ok</p>".into(),
-						OAuthCallbackPage::Failed { message, .. } => format!("<p>{message}</p>"),
-					}
-				})),
-				..Default::default()
-			})
-			.await
-			.unwrap();
-			let denied = callback.wait_for_callback("s1", None).unwrap();
-			let failure = fetch(&format!(
-				"{}?error=access_denied&error_description=Denied&state=s1",
-				callback.redirect_url()
-			))
-			.await;
-			assert_eq!(failure.header("content-type"), Some("text/html; charset=utf-8"));
-			let error = denied.await.unwrap_err();
-			assert!(error.message.contains("Denied"), "{}", error.message);
-			assert_eq!(
-				pages.borrow().last(),
-				Some(&OAuthCallbackPage::Failed {
-					message: "Authorization failed. You may close this window.".into(),
-					details: Some("Denied".into()),
-				})
-			);
-
-			let pending = callback.wait_for_callback("s2", None).unwrap();
-			let success = fetch(&format!("{}?code=abc&state=s2", callback.redirect_url())).await;
-			assert_eq!(success.text().await.unwrap(), "<p>ok</p>");
-			assert_eq!(pending.await.unwrap().code, "abc");
-			callback.close().await.unwrap();
-		});
-	}
-}
-
-mod mcp_oauth {
-	use super::*;
 
 	#[test]
 	fn shares_one_refresh_between_concurrent_401s_when_refresh_tokens_rotate() {
@@ -1077,6 +996,107 @@ mod mcp_oauth {
 				run_until_stalled(&origin, &stalled, refreshing).await.as_deref(),
 				Some("/token")
 			);
+		});
+	}
+}
+
+#[cfg(feature = "native")]
+mod o_auth_callback_server_pages {
+	use pi_mcp::oauth::{OAuthCallbackPage, OAuthCallbackServer, OAuthCallbackServerOptions};
+
+	use super::common::run_native;
+	use super::native_support::fetch;
+	use super::*;
+
+	#[test]
+	fn renders_plain_text_by_default() {
+		run_native(|_| async {
+			let callback = OAuthCallbackServer::listen(OAuthCallbackServerOptions::default())
+				.await
+				.unwrap();
+			let pending = callback.wait_for_callback("s1", None).unwrap();
+			let response = fetch(&format!("{}?code=abc&state=s1", callback.redirect_url())).await;
+			assert_eq!(response.header("content-type"), Some("text/plain; charset=utf-8"));
+			assert_eq!(
+				response.text().await.unwrap(),
+				"Authorization complete. You may close this window."
+			);
+			assert_eq!(pending.await.unwrap().code, "abc");
+			callback.close().await.unwrap();
+		});
+	}
+
+	// #10302
+	#[test]
+	fn rejects_a_response_on_another_path_than_the_expected_one() {
+		run_native(|_| async {
+			let callback = OAuthCallbackServer::listen(OAuthCallbackServerOptions {
+				extra_paths: Some(vec!["/callback/server-id".into()]),
+				..Default::default()
+			})
+			.await
+			.unwrap();
+			let origin = Url::parse(callback.redirect_url())
+				.unwrap()
+				.origin()
+				.ascii_serialization();
+			let mixed_up = callback.wait_for_callback("s1", Some("/callback/server-id")).unwrap();
+			let wrong = fetch(&format!("{origin}/callback?code=abc&state=s1")).await;
+			assert_eq!(wrong.status, 400);
+			let error = mixed_up.await.unwrap_err();
+			assert!(
+				error.message.contains("arrived on another redirect URI"),
+				"{}",
+				error.message
+			);
+
+			let pending = callback.wait_for_callback("s2", Some("/callback/server-id")).unwrap();
+			let right = fetch(&format!("{origin}/callback/server-id?code=abc&state=s2")).await;
+			assert_eq!(right.status, 200);
+			assert_eq!(pending.await.unwrap().code, "abc");
+			callback.close().await.unwrap();
+		});
+	}
+
+	#[test]
+	fn renders_pages_through_render_page() {
+		run_native(|_| async {
+			let pages = Rc::new(RefCell::new(Vec::<OAuthCallbackPage>::new()));
+			let seen = pages.clone();
+			let callback = OAuthCallbackServer::listen(OAuthCallbackServerOptions {
+				render_page: Some(Rc::new(move |page| {
+					seen.borrow_mut().push(page.clone());
+					match page {
+						OAuthCallbackPage::Ok => "<p>ok</p>".into(),
+						OAuthCallbackPage::Failed { message, .. } => format!("<p>{message}</p>"),
+					}
+				})),
+				..Default::default()
+			})
+			.await
+			.unwrap();
+			let denied = callback.wait_for_callback("s1", None).unwrap();
+			let failure = fetch(&format!(
+				"{}?error=access_denied&error_description=Denied&state=s1",
+				callback.redirect_url()
+			))
+			.await;
+			assert_eq!(failure.header("content-type"), Some("text/html; charset=utf-8"));
+			let error = denied.await.unwrap_err();
+			assert!(error.message.contains("Denied"), "{}", error.message);
+			assert_eq!(
+				pages.borrow().last(),
+				Some(&OAuthCallbackPage::Failed {
+					message: "Authorization failed. You may close this window.".into(),
+					details: Some("Denied".into()),
+				})
+			);
+
+			let pending = callback.wait_for_callback("s2", None).unwrap();
+			let success = fetch(&format!("{}?code=abc&state=s2", callback.redirect_url())).await;
+			assert_eq!(success.text().await.unwrap(), "<p>ok</p>");
+			assert_eq!(pending.await.unwrap().code, "abc");
+			callback.close().await.unwrap();
 		});
 	}
 }

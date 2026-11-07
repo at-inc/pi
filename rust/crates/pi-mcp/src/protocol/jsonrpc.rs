@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/protocol/jsonrpc.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS error classes become `PiError` values with the class name in `name` and their fields in `data`;
 //! each class is a unit struct with a constructor and accessors. `McpAbortError` keeps the TS name

@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/transports/transport.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Transport methods return `'static` futures, so implementations keep their state behind an `Rc` and clone
 //! it into the future. Listener removal returns an `Unsubscribe` closure, the counterpart of the TS

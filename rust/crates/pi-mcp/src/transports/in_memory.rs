@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/transports/in-memory.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `InMemoryTransport` is a cheap handle (`Clone` shares the transport). Each side holds its peer strongly, as
 //! in TS; closing a side drops its reference to the peer, so a closed pair does not keep itself alive.

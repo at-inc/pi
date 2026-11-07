@@ -1,10 +1,11 @@
 //! Port of `packages/mcp/src/oauth/provider.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `McpOAuthStateStore` is a trait. `MemoryOAuthStateStore` clones where TS uses `structuredClone`. The
 //! options' `clientMetadata` is an `OAuthClientMetadata` whose empty `redirect_uris` stands for the absent TS
 //! field, so an explicitly empty list also becomes `[redirectUrl]`. Writes are chained like the TS promise
-//! chain, including its behavior after a failed save: every later load and update fails with that error.
+//! chain and run to completion even when nobody awaits them, including its behavior after a failed save: every
+//! later load and update fails with that error.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::discovery::parse_url;
-use super::flow::{CredentialKind, OAuthClientMetadataDocument, OAuthClientProvider};
+use super::flow::{CredentialKind, OAuthClientMetadataDocument, OAuthClientProvider, run_detached};
 use super::types::{
 	AuthorizationServerMetadata, OAuthClientInformation, OAuthClientInformationMixed, OAuthClientMetadata,
 	OAuthDiscoveryState, OAuthTokens,
@@ -162,13 +163,11 @@ impl McpOAuthProvider {
 		let previous = self.writes.borrow().clone();
 		let store = self.store.clone();
 		let server_url = self.server_url.clone();
-		let next = async move {
+		let next = run_detached(async move {
 			previous.await?;
 			let state = own(&server_url, store.load().await?);
 			store.save(update(state)).await
-		}
-		.boxed_local()
-		.shared();
+		});
 		*self.writes.borrow_mut() = next.clone();
 		next.await
 	}

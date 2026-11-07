@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/oauth/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Adapted from modelcontextprotocol/typescript-sdk v1.29.0. Copyright (c) 2024 Anthropic, PBC. Licensed under
 //! MIT; see LICENSES/. Modified to use dependency-free structural validation.

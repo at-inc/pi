@@ -1,9 +1,11 @@
 //! Port of `packages/mcp/src/protocol/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Types the server sends keep unknown fields in a flattened `extra` map, since the TS passes server objects
 //! through untouched. Serializing one emits the known fields first, then `extra`, so key order can differ
-//! from the server's. `SupportedProtocolVersion` is a `&str`: the TS type is only the union of
+//! from the server's. `ClientCapabilities` likewise carries capabilities beyond the declared ones in `extra`
+//! and sends the declared ones first in declaration order, not in the caller's key order.
+//! `SupportedProtocolVersion` is a `&str`: the TS type is only the union of
 //! `SUPPORTED_PROTOCOL_VERSIONS`.
 
 use serde::{Deserialize, Serialize};
@@ -65,6 +67,8 @@ pub struct ClientCapabilities {
 	pub sampling: Option<Map<String, Value>>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub elicitation: Option<Map<String, Value>>,
+	#[serde(flatten)]
+	pub extra: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

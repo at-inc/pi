@@ -1,5 +1,5 @@
 //! Port of `packages/mcp/src/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Re-exports the public API. TS type-only exports map to the Rust types of the same names; `StdioTransport`
 //! needs the `native` feature.
