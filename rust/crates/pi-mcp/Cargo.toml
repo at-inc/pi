@@ -1,0 +1,31 @@
+[package]
+name = "pi-mcp"
+description = "Rust port of @earendil-works/pi-mcp: Model Context Protocol client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+native = ["pi-host/native", "dep:tokio"]
+
+[dependencies]
+pi-host = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+url = { workspace = true }
+percent-encoding = { workspace = true }
+rand = { workspace = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+pi-host = { workspace = true, features = ["testing"] }
+futures = { workspace = true, features = ["executor"] }
+
+[lints]
+workspace = true
