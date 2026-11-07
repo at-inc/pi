@@ -1,5 +1,5 @@
-import { readdirSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { SyntaxKind } from "typescript/unstable/ast";
 import {
 	isCallExpression,
@@ -67,8 +67,11 @@ try {
 	for (const file of files.sort()) {
 		const sourceFile = program.getSourceFile(resolve(file));
 
+		// A relative .js import of real JavaScript (generated wasm-bindgen glue) has no .ts source to name instead.
 		function checkSpecifier(node) {
 			if (!isRelativeJavaScriptSpecifier(node.text)) return;
+			const target = resolve(dirname(file), node.text.replace(/[?#].*$/, ""));
+			if (!existsSync(target.replace(/\.js$/, ".ts")) && !existsSync(target.replace(/\.js$/, ".tsx"))) return;
 			const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
 			failures.push(`${relative(".", file)}:${line + 1}:${character + 1}: ${node.text}`);
 		}
