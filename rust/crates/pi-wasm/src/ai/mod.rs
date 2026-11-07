@@ -13,6 +13,7 @@ mod openai_codex_responses;
 mod openai_completions;
 mod openai_responses;
 mod pi_messages;
+mod provider_bridge;
 mod transcript;
 
 use pi_ai::{Context, Model, TranscriptContext};
