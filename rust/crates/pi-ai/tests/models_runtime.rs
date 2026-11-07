@@ -724,7 +724,9 @@ mod models_runtime {
 				output: 45.0,
 				cache_read: 1.0,
 				cache_write: 12.5,
+				..ModelCostTier::default()
 			}]),
+			..ModelCost::default()
 		};
 		let create_usage = |cache_write: f64| Usage {
 			input: 200000.0,

@@ -1701,13 +1701,13 @@ mod agent {
 			};
 			let short = UserAgentMode::Named(UserAgentModeName::Short);
 			agent.properties_mut().identity = Some(ClientIdentity {
-				user_agent: Some(short.clone()),
+				user_agent: Some(Some(short.clone())),
 				attribution: Some(Some(acme.clone())),
 				version: None,
 			});
 			agent.prompt("hello again").await.unwrap();
 			agent.properties_mut().identity = Some(ClientIdentity {
-				user_agent: Some(short.clone()),
+				user_agent: Some(Some(short.clone())),
 				..ClientIdentity::default()
 			});
 			agent.prompt("and again").await.unwrap();
@@ -1721,12 +1721,12 @@ mod agent {
 					}),
 					Some(ClientIdentity {
 						attribution: Some(Some(acme)),
-						user_agent: Some(short.clone()),
+						user_agent: Some(Some(short.clone())),
 						version: None,
 					}),
 					Some(ClientIdentity {
 						attribution: Some(Some(PI_ATTRIBUTION.clone())),
-						user_agent: Some(short),
+						user_agent: Some(Some(short)),
 						version: None,
 					}),
 				]

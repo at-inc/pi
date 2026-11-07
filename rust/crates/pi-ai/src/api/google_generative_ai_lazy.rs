@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/google-generative-ai.lazy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 use std::rc::Rc;
 

@@ -17,6 +17,15 @@ mod parse_streaming_json {
 		assert_eq!(parse_streaming_json(Some("nul")), json!({}));
 	}
 
+	// Rust-only regression: partial-json trims with `String.prototype.trim`, so a root `null` after non-JSON white space
+	// (NBSP, BOM, VT, U+2028) is still `null`, which becomes `{}`. Expected values come from running the TS.
+	#[test]
+	fn reads_a_root_null_after_js_white_space_as_empty_arguments() {
+		for text in ["\u{a0}nul", "\u{feff}null", "\u{b}nu", "\u{2028}n"] {
+			assert_eq!(parse_streaming_json(Some(text)), json!({}), "{text:?}");
+		}
+	}
+
 	// #10868
 	#[test]
 	fn keeps_invalid_u_escapes_as_literal_text_without_dropping_fields() {

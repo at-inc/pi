@@ -1,5 +1,15 @@
 //! Port of `packages/ai/src/utils/event-stream.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
+//!
+//! Differences from the TS:
+//! - `result()` resolves with a copy of the final message taken when the stream completed (PORTING.md, "Decisions
+//!   from wave 1 review"); the TS promise resolves with the live object. `AssistantMessageEventStream::end()` takes
+//!   the result by value, so the `durationMs` it sets is not visible on the caller's copy.
+//! - `next()` is the async iterator; clones share one queue, like several `for await` loops over one TS stream. A
+//!   consumer that drops a pending `next()` gives up its place, so the event goes to the next waiting consumer or the
+//!   queue; a TS iterator cannot cancel a pending `next()`.
+//! - An `extractResult` that throws in TS (an `AssistantMessageEventStream` result from a non-terminal event) cannot
+//!   happen here: `isComplete` admits only `done` and `error`.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;

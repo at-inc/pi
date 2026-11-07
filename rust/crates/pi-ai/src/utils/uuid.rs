@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/uuid.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The generator state is per thread, like the per-isolate module state in TS. Random bytes come from `rand`, where
 //! TS calls `crypto.getRandomValues`.

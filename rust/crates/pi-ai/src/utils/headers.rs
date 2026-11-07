@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/headers.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `headersToRecord` takes the header map of a `pi_host::HttpResponse` and reads it the way a `Headers` object built
 //! from it does: names lowercase and sorted, values trimmed of HTTP whitespace, values of names that differ only in

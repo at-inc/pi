@@ -68,6 +68,7 @@ fn model() -> Model {
 				cache_read: 3.0,
 				cache_write: 4.0,
 				tiers: None,
+				..ModelCost::default()
 			},
 			..BaseModel::default()
 		},
