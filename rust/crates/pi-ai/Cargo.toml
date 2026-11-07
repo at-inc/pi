@@ -33,6 +33,7 @@ aws-sigv4 = { workspace = true }
 aws-smithy-eventstream = { workspace = true }
 aws-smithy-types = { workspace = true }
 aws-credential-types = { workspace = true }
+rsa = { workspace = true }
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
