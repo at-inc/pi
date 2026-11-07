@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/compiler.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The compiler: a schema to one check closure, built once. Keywords group by the type they constrain, so a value
 //! is classified once per schema, and the common shapes (closed objects, arrays of one item schema, tagged unions,

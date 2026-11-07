@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/annotations.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Annotation tracking for `unevaluatedProperties` and `unevaluatedItems`: annotating checks record which
 //! properties and items a schema evaluated. Only schemas that use those keywords compile into these closures.

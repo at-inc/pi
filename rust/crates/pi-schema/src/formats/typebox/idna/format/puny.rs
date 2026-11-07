@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/idna/format/puny.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The arithmetic stays in `f64` like the JavaScript numbers it ports. `Decode` walks UTF-16 code units as
 //! `charCodeAt` does. `String.fromCodePoint` builds UTF-16, where two decoded surrogate code points in a row form

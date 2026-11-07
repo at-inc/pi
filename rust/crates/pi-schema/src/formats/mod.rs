@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The format checks of JSON Schema 2020-12, for compile()'s `formats` option. An optional entry point: schemas
 //! compiled without it treat `format` as an annotation and do not bundle these checks.

@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/email.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The pattern has the `i` flag without `u`, so it runs as an ASCII-only byte regex: JavaScript folds no
 //! non-ASCII character to ASCII there (Unicode folding would let U+212A KELVIN SIGN match `k`), and the negated

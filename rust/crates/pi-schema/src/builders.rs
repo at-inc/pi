@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/builders.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Schema builders: short functions that return plain JSON Schema objects. The objects are ordinary data: they
 //! serialize with JSON.stringify and compile with compile() like any other schema.

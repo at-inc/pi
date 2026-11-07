@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/hostname.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 // /*--------------------------------------------------------------------------
 //

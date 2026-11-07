@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Public types: the schema accepted by compile(), its options, and the errors a failed value produces.
 //!

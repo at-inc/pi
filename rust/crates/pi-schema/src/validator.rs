@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/validator.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! compile(): a schema to a Validator, whose `check` is the fast boolean path and whose `errors` explains failures.
 //!

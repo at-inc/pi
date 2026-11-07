@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/coerce.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Coercion: turns a loosely typed value (a model's tool call arguments, form input, query strings) into the value a
 //! schema most likely meant, before it is checked. Only validators compiled with `{ coerce: true }` have it, and they

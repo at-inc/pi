@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/idn_email.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The JavaScript `.` of the pattern (with `u`: any code point but a line terminator) is spelled
 //! `[^\n\r\u{2028}\u{2029}]`; `\u{0080}-\u{10FFFF}` excludes the surrogates, which a Rust string cannot hold. A domain

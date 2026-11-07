@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/checks.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Check factories: each returns a closure that captures only its arguments, never the compiler, so a compiled
 //! schema keeps no compile-time state alive. Leaf checks are module constants (per-thread singletons here, so their

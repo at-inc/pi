@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/explain.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Errors of a failed value: a walk over the schema that reports each failing keyword at the value it failed on.
 //! It runs only for values that failed the check, using the compiler's checks for subschemas.

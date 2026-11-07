@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! JSON Schema validation (drafts 2020-12 and 7) without eval: compile() builds a schema into plain closures once.
 //! The builders return plain JSON Schema objects.

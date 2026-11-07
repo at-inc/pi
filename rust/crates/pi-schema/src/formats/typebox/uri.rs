@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/uri.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The pattern has no `u` flag, so `(?-u)` keeps `\d` and the `i` flag ASCII-only, as in JavaScript (Unicode
 //! case folding would let U+212A KELVIN SIGN match `k`).

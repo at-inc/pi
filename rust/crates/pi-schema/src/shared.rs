@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/shared.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Regular expressions shared across all compiled schemas while one still uses them: tool schemas repeat a few
 //! patterns many times, and a RegExp is large once it has run. The cache holds its values weakly and drops an entry

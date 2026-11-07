@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/resolver.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Reference resolution of one compile: schema resources, anchors and JSON Pointers over the root schema and the
 //! registered documents. A Resolver lives only while a schema compiles (or while its errors are explained).
