@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/google-generative-ai.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The `@google/genai` SDK is `api/google_client.rs`. Differences from the TS:
 //! - `GoogleOptions` read from `ProviderStreamOptions.extra`: `toolChoice` is read when it is a string and
