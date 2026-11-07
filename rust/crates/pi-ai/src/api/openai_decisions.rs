@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-decisions.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `Object.entries` and `Object.fromEntries` follow JS key order through `js_entries`; the parsed probability maps keep
 //! insertion order in memory, and `json_stringify` writes them in JS order.

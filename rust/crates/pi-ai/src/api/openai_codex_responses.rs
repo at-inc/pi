@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-codex-responses.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! - `OpenAICodexResponsesOptions` reaches `ProviderStreams::stream` as `ProviderStreamOptions.extra` keys:
 //!   `reasoningEffort` (a string; another type reads as absent), and `reasoningSummary`, `serviceTier`,

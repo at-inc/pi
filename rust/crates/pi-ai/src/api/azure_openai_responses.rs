@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/azure-openai-responses.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! - `AzureOpenAIResponsesOptions` reaches `ProviderStreams::stream` as `ProviderStreamOptions.extra` keys:
 //!   `reasoningEffort`, `reasoningSummary` and `toolChoice` as in `openai_responses.rs`, and the `azure*` string keys

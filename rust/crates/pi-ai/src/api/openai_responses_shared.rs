@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-responses-shared.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The SDK's request and stream types are plain JSON: input items and tools are `serde_json` values built in the TS
 //! object-literal key order, and stream events are read with JS semantics (truthiness, `String(value)`). A missing
@@ -9,6 +9,9 @@
 //! A tool call `namespace` that is not a string is dropped, and the image callbacks receive the raw `output_index`.
 //! A `function_call` or `custom_tool_call` item without a string `name` gets the name `""`, as `ToolCall.name` is a
 //! `String`; the TS keeps `undefined` and so drops `name` when the call is replayed.
+//! Wire fields typed by the SDK keep those types: a usage token count that is not a number reads as 0, and a
+//! response `status` or `service_tier` or a custom tool call `input` that is not a string reads as absent, where the
+//! TS uses the value as it is (`"5" - 0` is 5, a numeric `status` becomes `rawStopReason`).
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
