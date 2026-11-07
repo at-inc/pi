@@ -3,6 +3,9 @@
 //!
 //! A JS promise runs whether or not anyone awaits it, so `raceWithAbortSignal` spawns the operation with
 //! `pi_host::spawn_local`: it keeps running to completion after the signal aborts, and its result is dropped.
+//! A JS async operation runs its synchronous prefix when it is called; the spawned one first runs when the executor
+//! polls its task. If the host drops that task unfinished, the race settles only when the signal aborts, as TS
+//! rejects on abort whatever the operation does.
 
 use std::future::Future;
 
@@ -47,7 +50,7 @@ pub fn race_with_abort_signal<T: 'static>(
 		match select(receiver, aborted).await {
 			Either::Left((Ok(Some(result)), _)) => result,
 			Either::Left((Ok(None), _)) => Err(abort_reason(&signal)),
-			Either::Left((Err(_), _)) => futures::future::pending().await,
+			Either::Left((Err(_), aborted)) => Err(aborted.await),
 			Either::Right((reason, _)) => Err(reason),
 		}
 	}
@@ -58,7 +61,36 @@ mod tests {
 	use std::cell::Cell;
 	use std::rc::Rc;
 
+	use pi_host::{Host, HttpRequest, HttpResponse, LocalBoxFuture};
+
 	use super::*;
+
+	/// A host whose `spawn_local` drops the task unpolled, as a host shutting down would.
+	struct DroppingHost(Rc<dyn Host>);
+
+	impl Host for DroppingHost {
+		fn fetch(&self, request: HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>> {
+			self.0.fetch(request)
+		}
+
+		fn now_ms(&self) -> f64 {
+			self.0.now_ms()
+		}
+
+		fn monotonic_ms(&self) -> f64 {
+			self.0.monotonic_ms()
+		}
+
+		fn env(&self, key: &str) -> Option<String> {
+			self.0.env(key)
+		}
+
+		fn sleep(&self, ms: f64) -> LocalBoxFuture<'static, ()> {
+			self.0.sleep(ms)
+		}
+
+		fn spawn_local(&self, _future: LocalBoxFuture<'static, ()>) {}
+	}
 
 	#[test]
 	fn rejects_with_the_abort_reason_and_keeps_the_operation_running() {
@@ -124,6 +156,20 @@ mod tests {
 				&controller.signal(),
 			);
 			assert_eq!(race.await.unwrap_err().message, "aborted while running");
+		});
+	}
+
+	#[test]
+	fn rejects_on_abort_when_the_host_drops_the_operation_task() {
+		pi_host::testing::run(|_| async {
+			let controller = AbortController::new();
+			let host = pi_host::current();
+			pi_host::set_host(Rc::new(DroppingHost(host.clone())));
+			let race = race_with_abort_signal(async { Ok(1) }, &controller.signal());
+			pi_host::set_host(host);
+			let aborter = controller.clone();
+			pi_host::spawn_local(async move { aborter.abort_with(PiError::new("stop")) });
+			assert_eq!(race.await.unwrap_err().message, "stop");
 		});
 	}
 }
