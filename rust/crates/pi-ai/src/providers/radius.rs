@@ -29,28 +29,6 @@ pub struct RadiusProviderOptions {
 	pub gateway: Option<String>,
 }
 
-/// Publication of a new gateway catalog: optionally persisted, then swapped into the provider's dynamic list.
-fn publication(
-	dynamic_models: &Rc<RefCell<Option<Vec<Model>>>>,
-	models: Vec<Model>,
-	persist: bool,
-) -> ModelsPublication {
-	let target = dynamic_models.clone();
-	let persist = persist.then(|| {
-		Some(ModelsStoreEntry {
-			models: models.iter().cloned().map(AnyModel::Chat).collect(),
-			checked_at: Some(pi_host::now_ms()),
-			..ModelsStoreEntry::default()
-		})
-	});
-	ModelsPublication {
-		persist,
-		update: Some(Rc::new(move || {
-			*target.borrow_mut() = Some(models.clone());
-		})),
-	}
-}
-
 /// Radius gateway provider with a persisted, dynamically refreshed catalog.
 pub fn radius_provider(options: Option<RadiusProviderOptions>) -> Provider {
 	let options = options.unwrap_or_default();
@@ -102,7 +80,15 @@ pub fn radius_provider(options: Option<RadiusProviderOptions>) -> Provider {
 							_ => None,
 						})
 						.collect();
-					if !(context.publish)(publication(&dynamic_models, restored, false)).await? {
+					let target = dynamic_models.clone();
+					if !(context.publish)(ModelsPublication {
+						persist: None,
+						update: Some(Rc::new(move || {
+							*target.borrow_mut() = Some(restored.clone());
+						})),
+					})
+					.await?
+					{
 						return Ok(());
 					}
 				}
@@ -112,8 +98,22 @@ pub fn radius_provider(options: Option<RadiusProviderOptions>) -> Provider {
 					&& let Some(Credential::OAuth(credential)) = &context.credential
 				{
 					let legacy = get_radius_models(&id, Some(credential));
-					if !legacy.is_empty() && !(context.publish)(publication(&dynamic_models, legacy, true)).await? {
-						return Ok(());
+					if !legacy.is_empty() {
+						let target = dynamic_models.clone();
+						if !(context.publish)(ModelsPublication {
+							persist: Some(Some(ModelsStoreEntry {
+								models: legacy.iter().cloned().map(AnyModel::Chat).collect(),
+								checked_at: Some(pi_host::now_ms()),
+								..ModelsStoreEntry::default()
+							})),
+							update: Some(Rc::new(move || {
+								*target.borrow_mut() = Some(legacy.clone());
+							})),
+						})
+						.await?
+						{
+							return Ok(());
+						}
 					}
 				}
 
@@ -131,7 +131,17 @@ pub fn radius_provider(options: Option<RadiusProviderOptions>) -> Provider {
 					return Ok(());
 				}
 				let refreshed = get_radius_models_from_config(&id, &config);
-				(context.publish)(publication(&dynamic_models, refreshed, true)).await?;
+				(context.publish)(ModelsPublication {
+					persist: Some(Some(ModelsStoreEntry {
+						models: refreshed.iter().cloned().map(AnyModel::Chat).collect(),
+						checked_at: Some(pi_host::now_ms()),
+						..ModelsStoreEntry::default()
+					})),
+					update: Some(Rc::new(move || {
+						*dynamic_models.borrow_mut() = Some(refreshed.clone());
+					})),
+				})
+				.await?;
 				Ok(())
 			}) as _
 		})

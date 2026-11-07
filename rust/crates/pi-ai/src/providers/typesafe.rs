@@ -34,5 +34,5 @@ pub fn typesafe_provider() -> Provider {
 		)])),
 		..CreateProviderOptions::default()
 	})
-	.expect("a provider with an api implementation always builds")
+	.expect("a provider with classifiers always builds")
 }
