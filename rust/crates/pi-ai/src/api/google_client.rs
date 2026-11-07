@@ -18,6 +18,12 @@
 //!   decides for plain tool declarations; the `inputSchema` MCP detection and its `mcp_used` header are kept.
 //! - A stream chunk that is not valid JSON fails with serde_json's `SyntaxError` message instead of V8's.
 //! - `tTool` rewrites `functionDeclarations[].parameters` in place in the SDK; here it rewrites the request copy.
+//! - Request headers are sent in insertion order; a `Headers` object iterates them sorted. Header values are trimmed
+//!   like `Headers.append`, but invalid values are not rejected.
+//! - A truthy `config.tools` that is not an array fails in `tTools` ("tools is required and must be an array of
+//!   Tools") instead of with `TypeError: tools.map is not a function`.
+//! - A host response always has a body stream, so an ok response without a body yields no chunks instead of failing
+//!   with `Response body is empty`.
 
 use std::rc::Rc;
 
@@ -340,6 +346,12 @@ impl GoogleGenAI {
 				} else {
 					generate_content_response_from_mldev(&json)?
 				};
+				// `response.headers.entries()` iterates lowercase names in sorted order.
+				let mut headers: Vec<(String, String)> = headers
+					.into_iter()
+					.map(|(name, value)| (name.to_ascii_lowercase(), value))
+					.collect();
+				headers.sort_by(|(a, _), (b, _)| a.cmp(b));
 				let headers: Map<String, Value> = headers
 					.into_iter()
 					.map(|(name, value)| (name, Value::String(value)))
@@ -447,8 +459,8 @@ impl ApiClient {
 					"Authentication is not set up. Please provide either a project and location, or an API key, or a custom base URL.",
 				));
 			}
-			let has_constructor_auth =
-				(truthy(opts.project.as_deref()) && truthy(opts.location.as_deref())) || opts.api_key.is_some();
+			let has_constructor_auth = (truthy(opts.project.as_deref()) && truthy(opts.location.as_deref()))
+				|| truthy(opts.api_key.as_deref());
 			let regional = truthy(project.as_deref()) && truthy(location.as_deref());
 			if truthy(custom_base_url.as_deref()) && !has_constructor_auth {
 				init.insert("baseUrl".into(), json!(custom_base_url));
@@ -858,6 +870,7 @@ fn next_delimiter(buffer: &str) -> Option<(usize, usize)> {
 #[derive(Default)]
 struct Utf8StreamDecoder {
 	pending: Vec<u8>,
+	started: bool,
 }
 
 impl Utf8StreamDecoder {
@@ -889,6 +902,12 @@ impl Utf8StreamDecoder {
 			}
 		}
 		self.pending = rest.to_vec();
+		if !self.started && !out.is_empty() {
+			self.started = true;
+			if let Some(without_bom) = out.strip_prefix('\u{FEFF}') {
+				return without_bom.to_string();
+			}
+		}
 		out
 	}
 }
@@ -902,6 +921,7 @@ struct Headers {
 impl Headers {
 	fn append(&mut self, name: &str, value: &str) {
 		let name = name.to_ascii_lowercase();
+		let value = value.trim_matches([' ', '\t', '\n', '\r']);
 		match self.entries.iter_mut().find(|(key, _)| *key == name) {
 			Some((_, existing)) => {
 				existing.push_str(", ");
@@ -930,7 +950,7 @@ fn header_value_string(value: &Value) -> String {
 }
 
 /// `String(value)`.
-fn js_string(value: &Value) -> String {
+pub(crate) fn js_string(value: &Value) -> String {
 	match value {
 		Value::String(value) => value.clone(),
 		Value::Number(number) => number_to_string(number.as_f64().unwrap_or(f64::NAN)),

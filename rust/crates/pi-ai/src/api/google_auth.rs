@@ -9,9 +9,16 @@
 //!
 //! Differences from the library:
 //! - `impersonated_service_account`, `external_account` and `external_account_authorized_user` credential files fail
-//!   with `Unsupported credential type: <type>`; a `.p12`/`.pfx` key file fails as in the library.
+//!   with `Unsupported credential type: <type>`, also as a `keyFilename`.
 //! - ADC does not look up the project id (`gcloud config config-helper`, metadata `project-id`): the genai client never
-//!   reads it, so the lookup has no effect on the request.
+//!   reads it, so the request headers are the same. The library runs that lookup before the token request on GCE when
+//!   neither `GCLOUD_PROJECT` nor `GOOGLE_CLOUD_PROJECT` is set, so there it sends one more metadata request first.
+//! - Token and metadata requests go through `pi_host::fetch`; gaxios uses `node-fetch`, so a stubbed
+//!   `globalThis.fetch` never sees them in Node.
+//! - Concurrent first uses of one client are not de-duplicated (`#pendingAuthClient`, `refreshTokenPromises`,
+//!   gtoken's `inFlightRequest`, the cached `isAvailable` promise): two racing calls can send two token or metadata
+//!   requests. pi-ai builds one client per request.
+//! - A credential file that is not valid JSON fails with serde_json's message instead of V8's `SyntaxError` text.
 //! - The GCE residency probe reads the Linux BIOS vendor file and the serverless env vars; the network-interface MAC
 //!   check has no host API and is skipped. Paths are passed to the host as given (no `path.resolve` / `realpath`), and a
 //!   missing ADC file reports the `lstat` of the whole path.
@@ -24,7 +31,7 @@ use std::rc::Rc;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use indexmap::IndexMap;
-use pi_host::js::{js_key_order, json_stringify};
+use pi_host::js::{js_key_order, json_stringify, string_to_number};
 use pi_host::{AbortSignal, HttpRequest, PiError, PiResult};
 use rsa::RsaPrivateKey;
 use rsa::pkcs1::DecodeRsaPrivateKey;
@@ -33,6 +40,8 @@ use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::{SignatureEncoding, Signer};
 use serde_json::{Map, Value, json};
 use sha2::Sha256;
+
+use super::google_client;
 
 /// `REQUIRED_VERTEX_AI_SCOPE` of the genai client.
 pub const REQUIRED_VERTEX_AI_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
@@ -44,6 +53,9 @@ const NO_ADC_FOUND: &str = "Could not load the default credentials. Browse to ht
 const METADATA_HOST_ADDRESS: &str = "http://169.254.169.254";
 const METADATA_SECONDARY_HOST_ADDRESS: &str = "http://metadata.google.internal.";
 const METADATA_BASE_PATH: &str = "/computeMetadata/v1";
+const UNSUPPORTED_CREDENTIAL_TYPE: &str = "Unsupported credential type: ";
+/// `USER_AGENT` of google-auth-library 10.6.2.
+const AUTH_LIBRARY_USER_AGENT: &str = "google-api-nodejs-client/10.6.2";
 
 /// `GoogleAuthOptions` (the fields the genai client passes).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -86,14 +98,11 @@ impl GoogleAuth {
 		let scopes = self.options.scopes.clone().unwrap_or_default();
 		if let Some(key_filename) = &self.options.key_filename {
 			let content = pi_host::read_file(key_filename)?;
-			return match serde_json::from_str::<Value>(&content) {
-				Ok(json) => from_json(&json, scopes),
-				Err(_) => Ok(AuthClient::new(
-					Credential::KeyFile(key_filename.clone()),
-					scopes,
-					None,
-					None,
-				)),
+			// `fromStreamAsync`: any parse or `_cacheClientFromJSON` failure falls back to `new JWT({ keyFile })`.
+			return match serde_json::from_str::<Value>(&content).map(|json| from_json(&json, scopes)) {
+				Ok(Ok(client)) => Ok(client),
+				Ok(Err(error)) if error.message.starts_with(UNSUPPORTED_CREDENTIAL_TYPE) => Err(error),
+				_ => Ok(AuthClient::new(Credential::UnsignedKeyFile, Vec::new(), None, None)),
 			};
 		}
 		self.get_application_default(scopes).await
@@ -192,7 +201,7 @@ fn from_json(json: &Value, scopes: Vec<String>) -> PiResult<AuthClient> {
 			Ok(client)
 		}
 		Some(kind @ ("impersonated_service_account" | "external_account" | "external_account_authorized_user")) => {
-			Err(PiError::new(format!("Unsupported credential type: {kind}")))
+			Err(PiError::new(format!("{UNSUPPORTED_CREDENTIAL_TYPE}{kind}")))
 		}
 		_ => {
 			let email = field("client_email")
@@ -222,8 +231,9 @@ struct ServiceAccount {
 enum Credential {
 	/// `JWT` from a service-account JSON key.
 	ServiceAccount(ServiceAccount),
-	/// `JWT` with a `keyFile` that is not JSON: `gtoken` reads it by extension.
-	KeyFile(String),
+	/// The `keyFilename` fallback `new JWT({ keyFile })`: it has no scopes, so `getRequestMetadataAsync` signs a
+	/// self-signed JWT with an undefined key, which `jws.sign` rejects.
+	UnsignedKeyFile,
 	/// `UserRefreshClient`.
 	AuthorizedUser { client_id: String, client_secret: String },
 	/// `Compute` (GCE metadata server).
@@ -256,7 +266,7 @@ impl AuthClient {
 		universe_domain: Option<String>,
 	) -> Self {
 		let placeholder = match credential {
-			Credential::ServiceAccount(_) | Credential::KeyFile(_) => Some("jwt-placeholder"),
+			Credential::ServiceAccount(_) | Credential::UnsignedKeyFile => Some("jwt-placeholder"),
 			Credential::Compute => Some("compute-placeholder"),
 			Credential::AuthorizedUser { .. } => None,
 		};
@@ -332,10 +342,7 @@ impl AuthClient {
 	async fn refresh_token_no_cache(&self, refresh_token: Option<&str>) -> PiResult<Tokens> {
 		match &self.credential {
 			Credential::ServiceAccount(account) => self.fetch_jwt_token(account).await,
-			Credential::KeyFile(key_file) => {
-				let account = key_file_account(key_file)?;
-				self.fetch_jwt_token(&account).await
-			}
+			Credential::UnsignedKeyFile => Err(PiError::type_error("key must be a string, a buffer or an object")),
 			Credential::AuthorizedUser {
 				client_id,
 				client_secret,
@@ -365,10 +372,10 @@ impl AuthClient {
 		let response = gaxios_request(GaxiosOptions {
 			method: "POST",
 			url: GOOGLE_TOKEN_URL.into(),
-			headers: vec![
+			headers: with_auth_client_headers(vec![
 				("content-type", "application/x-www-form-urlencoded;charset=UTF-8".into()),
 				("accept", "application/json".into()),
-			],
+			]),
 			body: Some(body),
 			response_type: ResponseType::Json,
 			retry: Some(RetryConfig {
@@ -464,46 +471,16 @@ impl AuthClient {
 	}
 }
 
-/// `gtoken`'s `getCredentials(keyFile)` for a key file that is not a JSON credential.
-fn key_file_account(key_file: &str) -> PiResult<ServiceAccount> {
-	let extension = std::path::Path::new(key_file)
-		.extension()
-		.map(|extension| format!(".{}", extension.to_string_lossy()))
-		.unwrap_or_default();
-	match extension.as_str() {
-		".json" => {
-			let content = pi_host::read_file(key_file)?;
-			let body = serde_json::from_str::<Value>(&content)
-				.map_err(|error| PiError::new(format!("Invalid JSON key file: {error}")))?;
-			let key = body
-				.get("private_key")
-				.and_then(Value::as_str)
-				.filter(|value| !value.is_empty());
-			let email = body
-				.get("client_email")
-				.and_then(Value::as_str)
-				.filter(|value| !value.is_empty());
-			let (Some(key), Some(email)) = (key, email) else {
-				return Err(PiError::new("private_key and client_email are required."));
-			};
-			Ok(ServiceAccount {
-				email: Some(email.to_string()),
-				key: key.to_string(),
-				key_id: None,
-			})
-		}
-		".der" | ".crt" | ".pem" => Ok(ServiceAccount {
-			email: None,
-			key: pi_host::read_file(key_file)?,
-			key_id: None,
-		}),
-		".p12" | ".pfx" => Err(PiError::new(
-			"*.p12 certificates are not supported after v6.1.2. Consider utilizing *.json format or converting *.p12 to *.pem using the OpenSSL CLI.",
-		)),
-		_ => Err(PiError::new(
-			"Unknown certificate type. Type is determined based on file extension. Current supported extensions are *.json, and *.pem.",
-		)),
+/// `AuthClient.DEFAULT_REQUEST_INTERCEPTOR` of the client's transporter: `x-goog-api-client` and `User-Agent` when absent.
+fn with_auth_client_headers(mut headers: Vec<(&'static str, String)>) -> Vec<(&'static str, String)> {
+	if !headers.iter().any(|(name, _)| *name == "x-goog-api-client") {
+		headers.push((
+			"x-goog-api-client",
+			format!("gl-rust/{}", env!("CARGO_PKG_RUST_VERSION")),
+		));
 	}
+	headers.push(("user-agent", AUTH_LIBRARY_USER_AGENT.into()));
+	headers
 }
 
 /// `UserRefreshClient.refreshTokenNoCache`: a `refresh_token` grant.
@@ -517,13 +494,13 @@ async fn refresh_user_token(refresh_token: &str, client_id: &str, client_secret:
 	let response = gaxios_request(GaxiosOptions {
 		method: "POST",
 		url: GOOGLE_TOKEN_URL.into(),
-		headers: vec![
+		headers: with_auth_client_headers(vec![
 			("content-type", "application/x-www-form-urlencoded;charset=UTF-8".into()),
 			(
 				"x-goog-api-client",
 				format!("gl-rust/{}", env!("CARGO_PKG_RUST_VERSION")),
 			),
-		],
+		]),
 		body: Some(body),
 		response_type: ResponseType::Unknown,
 		retry: Some(RetryConfig {
@@ -601,12 +578,7 @@ fn js_truthy(value: &Value) -> bool {
 
 /// A template-literal substitution of `value`.
 fn js_string(value: Option<&Value>) -> String {
-	match value {
-		None => "undefined".into(),
-		Some(Value::String(value)) => value.clone(),
-		Some(Value::Object(_)) => "[object Object]".into(),
-		Some(other) => other.to_string(),
-	}
+	value.map_or_else(|| "undefined".into(), google_client::js_string)
 }
 
 // -- gcp-metadata -------------------------------------------------------------------------------------------------
@@ -642,9 +614,22 @@ fn gcp_residency() -> bool {
 	residency
 }
 
+/// `detectGCPAvailableRetries()`: `Number(DETECT_GCP_RETRIES)` when set, else 0. gaxios retries while the attempt count
+/// is below it, so a fraction rounds up and NaN or a negative value means no retries.
+fn detect_gcp_available_retries() -> u32 {
+	let retries = pi_host::env("DETECT_GCP_RETRIES")
+		.filter(|value| !value.is_empty())
+		.map_or(0.0, |value| string_to_number(&value));
+	if retries > 0.0 {
+		retries.ceil().min(f64::from(u32::MAX)) as u32
+	} else {
+		0
+	}
+}
+
 /// `isAvailable()`.
 async fn is_available() -> PiResult<bool> {
-	if let Some(value) = pi_host::env("METADATA_SERVER_DETECTION") {
+	if let Some(value) = pi_host::env("METADATA_SERVER_DETECTION").filter(|value| !value.is_empty()) {
 		let value = value.trim().to_lowercase();
 		match value.as_str() {
 			"assume-present" => return Ok(true),
@@ -665,9 +650,13 @@ async fn is_available() -> PiResult<bool> {
 		return Ok(available);
 	}
 	let fast_fail = !metadata_host_overridden();
-	let available = metadata_accessor(format!("{}/instance", metadata_base_url(None)), 0, fast_fail)
-		.await
-		.is_ok();
+	let available = metadata_accessor(
+		format!("{}/instance", metadata_base_url(None)),
+		detect_gcp_available_retries(),
+		fast_fail,
+	)
+	.await
+	.is_ok();
 	IS_AVAILABLE.with(|cache| *cache.borrow_mut() = Some(available));
 	Ok(available)
 }
@@ -892,23 +881,17 @@ fn api_error_message(data: &Value, status: u16) -> String {
 	match data.get("error") {
 		Some(Value::String(error)) if !error.is_empty() => error.clone(),
 		Some(Value::Object(error)) => {
-			if let Some(Value::String(error_message)) = error.get("message") {
-				message = error_message.clone();
-			}
-			match error.get("errors") {
-				Some(Value::Array(errors)) => {
-					let messages: Vec<&str> = errors
-						.iter()
-						.filter_map(|item| item.get("message").and_then(Value::as_str))
-						.collect();
-					if messages.is_empty() {
-						message
-					} else {
-						messages.join("\n")
-					}
+			if let Some(Value::Array(errors)) = error.get("errors") {
+				let messages: Vec<&str> = errors
+					.iter()
+					.filter_map(|item| item.get("message").and_then(Value::as_str))
+					.collect();
+				if !messages.is_empty() {
+					message = messages.join("\n");
 				}
-				_ => message,
 			}
+			// `Object.assign({ message, ... }, res.data.error)`: the error's own `message` key wins, coerced by `new Error`.
+			error.get("message").map_or(message, google_client::js_string)
 		}
 		_ => message,
 	}
