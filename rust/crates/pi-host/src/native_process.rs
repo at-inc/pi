@@ -238,12 +238,11 @@ mod tests {
 	use crate::native::run;
 	use crate::process::spawn_process;
 
+	/// What a process wrote to stdout and stderr.
+	type Output = Rc<RefCell<(Vec<u8>, Vec<u8>)>>;
+
 	/// Listeners that collect stdout and stderr and resolve `closed` on `close`.
-	fn collecting() -> (
-		ProcessListeners,
-		Rc<RefCell<(Vec<u8>, Vec<u8>)>>,
-		futures::channel::oneshot::Receiver<()>,
-	) {
+	fn collecting() -> (ProcessListeners, Output, futures::channel::oneshot::Receiver<()>) {
 		let output = Rc::new(RefCell::new((Vec::new(), Vec::new())));
 		let (closed, on_closed) = futures::channel::oneshot::channel();
 		let closed = RefCell::new(Some(closed));
