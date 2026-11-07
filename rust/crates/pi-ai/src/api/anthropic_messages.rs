@@ -13,6 +13,15 @@
 //! - The TS `stream` runs its async body synchronously up to the first `await` (the `onPayload` call); here the whole
 //!   body runs on the host executor after `stream` returns.
 //! - The federation client cache is per thread, like every Rust module-level state of the port.
+//! - Hooks get values, not live objects: `onPayload` receives a copy of the params, so a hook that edits them in place
+//!   and returns `undefined` sends the original params (return the edited params instead), and
+//!   `onProviderStreamEvent` edits to its event do not reach the code that reads the event after it.
+//! - `client` is an `Rc<dyn AnthropicClientApi>`, which cannot travel in `ProviderStreamOptions.extra` (JSON); a
+//!   caller that needs an injected client calls this module's `stream` with `AnthropicOptions.client`.
+//! - Wire values the types hold as strings or numbers are converted: a delta event's `delta` is `String(x)` of a
+//!   missing or non-string field (`"undefined"`, `"5"`) where the TS forwards the raw value, a tool call's missing
+//!   `id` is `""` and a non-object `input` is `{}` until the call finishes, non-numeric token counts count as 0, and
+//!   a `redacted_thinking` block with `data: null` has no signature instead of a `null` one.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -588,11 +597,14 @@ struct AnthropicEvents {
 	body_done: bool,
 	saw_message_start: bool,
 	saw_message_end: bool,
+	/// `response.body` is null: a null body status, as `new Response` gives for 101, 103, 204, 205 and 304.
+	no_body: bool,
 }
 
 impl AnthropicEvents {
 	fn new(response: HttpResponse) -> Self {
 		Self {
+			no_body: matches!(response.status, 101 | 103 | 204 | 205 | 304),
 			body: response.body,
 			decoder: StreamingTextDecoder::default(),
 			state: SseDecoderState::default(),
@@ -606,6 +618,11 @@ impl AnthropicEvents {
 
 	/// The next Anthropic event, `None` at the end of the stream.
 	async fn next(&mut self, signal: Option<&AbortSignal>) -> PiResult<Option<Value>> {
+		if self.no_body {
+			return Err(PiError::new(
+				"Attempted to iterate over an Anthropic response with no body",
+			));
+		}
 		loop {
 			if let Some(sse) = self.queued.pop_front() {
 				match self.parse(sse)? {
@@ -703,6 +720,24 @@ fn js_get<'a>(value: Option<&'a Value>, key: &str) -> PiResult<Option<&'a Value>
 		))),
 		Some(Value::Object(object)) => Ok(object.get(key)),
 		Some(_) => Ok(None),
+	}
+}
+
+/// `{ ...value }`: an object's own properties, an array's or string's indices, nothing for other values.
+fn object_spread(value: Value) -> Map<String, Value> {
+	match value {
+		Value::Object(object) => object,
+		Value::Array(items) => items
+			.into_iter()
+			.enumerate()
+			.map(|(index, item)| (index.to_string(), item))
+			.collect(),
+		Value::String(text) => text
+			.encode_utf16()
+			.enumerate()
+			.map(|(index, unit)| (index.to_string(), Value::String(String::from_utf16_lossy(&[unit]))))
+			.collect(),
+		_ => Map::new(),
 	}
 }
 
@@ -860,10 +895,7 @@ async fn run_stream(
 		if let Some(on_payload) = &options.on_payload
 			&& let Some(next_params) = on_payload(params.clone(), model).await?
 		{
-			let mut next_params = match next_params {
-				Value::Object(next_params) => next_params,
-				_ => Map::new(),
-			};
+			let mut next_params = object_spread(next_params);
 			next_params.insert("stream".into(), Value::Bool(true));
 			params = Value::Object(next_params);
 		}
@@ -1035,6 +1067,15 @@ async fn run_stream(
 							|content_index, partial| AssistantMessageEvent::ThinkingStart { content_index, partial },
 						),
 						Some("tool_use") => {
+							if is_oauth && !current_tools.is_empty() {
+								match content_block.get("name") {
+									None | Some(Value::Null) => {
+										js_get(content_block.get("name"), "toLowerCase")?;
+									}
+									Some(Value::String(_)) => {}
+									Some(_) => return Err(PiError::type_error("name.toLowerCase is not a function")),
+								}
+							}
 							let name = content_block.get("name").map(template_string).unwrap_or_default();
 							(
 								AssistantContent::ToolCall(ToolCall {
@@ -1248,18 +1289,17 @@ async fn run_stream(
 		));
 	}
 	if let Some(transformations) = input_transformations.filter(|transformations| !transformations.is_empty()) {
-		let transformations: Vec<Value> = transformations
-			.iter()
-			.map(|transformation| {
-				let mut details = Map::new();
-				for key in ["type", "path", "reason"] {
-					if let Some(value) = transformation.get(key).filter(|value| !value.is_null()) {
-						details.insert(key.to_string(), value.clone());
-					}
+		let mut details_list = Vec::with_capacity(transformations.len());
+		for transformation in transformations.iter() {
+			let mut details = Map::new();
+			for key in ["type", "path", "reason"] {
+				if let Some(value) = js_get(Some(transformation), key)?.filter(|value| !value.is_null()) {
+					details.insert(key.to_string(), value.clone());
 				}
-				Value::Object(details)
-			})
-			.collect();
+			}
+			details_list.push(Value::Object(details));
+		}
+		let transformations = details_list;
 		append_assistant_message_diagnostic(
 			&mut output.borrow_mut(),
 			AssistantMessageDiagnostic {
