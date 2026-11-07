@@ -1,0 +1,20 @@
+[package]
+name = "pi-schema"
+description = "Rust port of @earendil-works/pi-schema: JSON Schema builders, validation, coercion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pi-host = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+regex = { workspace = true }
+fancy-regex = { workspace = true }
+url = { workspace = true }
+idna = { workspace = true }
+unicode-normalization = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,64 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "1.5.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/at-inc/pi"
+rust-version = "1.99"
+
+[workspace.dependencies]
+pi-host = { path = "crates/pi-host" }
+pi-telemetry = { path = "crates/pi-telemetry" }
+pi-schema = { path = "crates/pi-schema" }
+pi-ai = { path = "crates/pi-ai" }
+pi-agent = { path = "crates/pi-agent" }
+pi-mcp = { path = "crates/pi-mcp" }
+
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+indexmap = { version = "2", features = ["serde"] }
+futures = "0.3"
+bytes = "1"
+regex = "1"
+fancy-regex = "0.20"
+base64 = "0.22"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+url = "2"
+percent-encoding = "2"
+ryu-js = "1"
+rand = "0.9"
+unicode-normalization = "0.1"
+idna = "1"
+pin-project-lite = "0.2"
+tokio = { version = "1", features = ["rt", "macros", "time", "process", "io-util", "net", "sync"] }
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+zstd = "0.13"
+aws-sigv4 = "1"
+aws-smithy-eventstream = "0.60"
+aws-smithy-types = "1"
+aws-credential-types = "1"
+rsa = { version = "0.9", default-features = false, features = ["std", "pem", "sha2", "u64_digit"] }
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.dev.package."*"]
+debug = false
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+await_holding_refcell_ref = "deny"
+await_holding_lock = "deny"
+result_large_err = "allow"
+large_enum_variant = "allow"
+module_inception = "allow"

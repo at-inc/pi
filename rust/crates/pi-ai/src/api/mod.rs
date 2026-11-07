@@ -1,0 +1,53 @@
+//! Module `api` (no TS index file).
+
+// <generated-modules>
+pub mod anthropic_client;
+pub mod anthropic_messages;
+pub mod anthropic_messages_lazy;
+pub mod azure_openai_config;
+pub mod azure_openai_responses;
+pub mod azure_openai_responses_lazy;
+pub mod bedrock_converse_stream;
+pub mod bedrock_converse_stream_lazy;
+pub mod classifier_shared;
+pub mod cloudflare;
+pub mod cloudflare_ai_binding;
+pub mod cloudflare_workers_ai_system_one;
+pub mod cloudflare_workers_ai_system_one_lazy;
+pub mod constrained_sampling;
+pub mod github_copilot_headers;
+pub mod google_auth;
+pub mod google_client;
+pub mod google_generative_ai;
+pub mod google_generative_ai_lazy;
+pub mod google_shared;
+pub mod google_vertex;
+pub mod google_vertex_lazy;
+pub mod lazy;
+pub mod llama_cpp_classify;
+pub mod llama_cpp_classify_lazy;
+pub mod mistral_conversations;
+pub mod mistral_conversations_lazy;
+pub mod openai_client;
+pub mod openai_codex_images;
+pub mod openai_codex_images_lazy;
+pub mod openai_codex_responses;
+pub mod openai_codex_responses_lazy;
+pub mod openai_completions;
+pub mod openai_completions_lazy;
+pub mod openai_decisions;
+pub mod openai_decisions_lazy;
+pub mod openai_prompt_cache;
+pub mod openai_responses;
+pub mod openai_responses_lazy;
+pub mod openai_responses_shared;
+pub mod openrouter_images;
+pub mod openrouter_images_lazy;
+pub mod pi_messages;
+pub mod pi_messages_lazy;
+pub mod simple_options;
+pub mod system_one_shared;
+pub mod transform_messages;
+pub mod typesafe_system_one;
+pub mod typesafe_system_one_lazy;
+// </generated-modules>

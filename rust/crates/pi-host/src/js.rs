@@ -1,0 +1,450 @@
+//! JavaScript-compatible helpers: `JSON.stringify`, `String(number)`, and UTF-16 string lengths.
+//!
+//! Ported code must use these wherever TypeScript output is observable (request bodies, tool-call argument
+//! strings, error messages, token estimates), so the Rust port produces the same bytes as the TS original.
+
+use std::io;
+
+use serde::Serialize;
+
+/// `JSON.stringify(value)`: compact, JavaScript key order (see `js_key_order`), and numbers formatted like
+/// JavaScript (`1`, not `1.0`; `1e+21`, not `1e21`).
+pub fn json_stringify<T: Serialize + ?Sized>(value: &T) -> String {
+	let value = js_value(value);
+	let mut out = Vec::new();
+	let mut serializer = serde_json::Serializer::with_formatter(&mut out, JsFormatter::compact());
+	value
+		.serialize(&mut serializer)
+		.expect("JSON.stringify: serialization of in-memory value failed");
+	String::from_utf8(out).expect("serde_json produced invalid UTF-8")
+}
+
+/// `JSON.stringify(value, null, indent)` with an indent of `indent` spaces.
+pub fn json_stringify_pretty<T: Serialize + ?Sized>(value: &T, indent: usize) -> String {
+	let value = js_value(value);
+	let mut out = Vec::new();
+	let indent = " ".repeat(indent);
+	let mut serializer = serde_json::Serializer::with_formatter(&mut out, JsFormatter::pretty(indent.as_bytes()));
+	value
+		.serialize(&mut serializer)
+		.expect("JSON.stringify: serialization of in-memory value failed");
+	String::from_utf8(out).expect("serde_json produced invalid UTF-8")
+}
+
+fn js_value<T: Serialize + ?Sized>(value: &T) -> serde_json::Value {
+	let mut value = serde_json::to_value(value).expect("JSON.stringify: serialization of in-memory value failed");
+	js_key_order(&mut value);
+	value
+}
+
+/// Reorders every object in `value` the way JavaScript orders own property keys: array-index keys (`"0"`,
+/// `"42"`, up to 2^32 - 2, no leading zeros) first in ascending numeric order, then the other keys in insertion
+/// order.
+pub fn js_key_order(value: &mut serde_json::Value) {
+	match value {
+		serde_json::Value::Array(items) => items.iter_mut().for_each(js_key_order),
+		serde_json::Value::Object(map) => {
+			map.values_mut().for_each(js_key_order);
+			if !map.keys().any(|key| array_index(key).is_some()) {
+				return;
+			}
+			let entries: Vec<_> = std::mem::take(map).into_iter().collect();
+			let (mut indices, others): (Vec<_>, Vec<_>) =
+				entries.into_iter().partition(|(key, _)| array_index(key).is_some());
+			indices.sort_by_key(|(key, _)| array_index(key));
+			map.extend(indices);
+			map.extend(others);
+		}
+		_ => {}
+	}
+}
+
+fn array_index(key: &str) -> Option<u32> {
+	if key.is_empty() || (key.len() > 1 && key.starts_with('0')) || !key.bytes().all(|byte| byte.is_ascii_digit()) {
+		return None;
+	}
+	key.parse::<u32>().ok().filter(|index| *index != u32::MAX)
+}
+
+/// JS `Math.max(a, b)`: NaN when either is NaN.
+pub fn math_max(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
+}
+
+/// JS `Math.min(a, b)`: NaN when either is NaN.
+pub fn math_min(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
+}
+
+/// `String(n)` / template-literal interpolation of a number.
+pub fn number_to_string(value: f64) -> String {
+	if value.is_nan() {
+		return "NaN".into();
+	}
+	if value.is_infinite() {
+		return if value > 0.0 {
+			"Infinity".into()
+		} else {
+			"-Infinity".into()
+		};
+	}
+	let mut buffer = ryu_js::Buffer::new();
+	buffer.format(value).to_string()
+}
+
+/// JavaScript `StrWhiteSpaceChar`: white space and line terminators, which include U+FEFF but not U+0085.
+fn is_js_whitespace(ch: char) -> bool {
+	(ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}'
+}
+
+/// Length of the longest prefix of `value` that is a `StrDecimalLiteral` without its sign (`Infinity`, `1.5e3`,
+/// `.5`, `5.`), or 0.
+fn unsigned_decimal_prefix(value: &str) -> usize {
+	if value.starts_with("Infinity") {
+		return "Infinity".len();
+	}
+	let bytes = value.as_bytes();
+	let digits = |from: usize| bytes[from..].iter().take_while(|byte| byte.is_ascii_digit()).count();
+	let integer = digits(0);
+	let mut end = integer;
+	if bytes.get(end) == Some(&b'.') {
+		let fraction = digits(end + 1);
+		if integer == 0 && fraction == 0 {
+			return 0;
+		}
+		end += 1 + fraction;
+	} else if integer == 0 {
+		return 0;
+	}
+	if matches!(bytes.get(end), Some(b'e' | b'E')) {
+		let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+		let exponent = digits(end + 1 + sign);
+		if exponent > 0 {
+			end += 1 + sign + exponent;
+		}
+	}
+	end
+}
+
+fn parse_signed_decimal(value: &str) -> f64 {
+	let (negative, unsigned) = match value.as_bytes().first() {
+		Some(b'-') => (true, &value[1..]),
+		Some(b'+') => (false, &value[1..]),
+		_ => (false, value),
+	};
+	let magnitude = if unsigned == "Infinity" {
+		f64::INFINITY
+	} else {
+		unsigned.parse::<f64>().unwrap_or(f64::NAN)
+	};
+	if negative { -magnitude } else { magnitude }
+}
+
+/// `Number.parseFloat(value)`: the longest decimal prefix after leading white space, or `NaN`.
+pub fn parse_float(value: &str) -> f64 {
+	let value = value.trim_start_matches(is_js_whitespace);
+	let sign = usize::from(value.starts_with(['+', '-']));
+	let length = unsigned_decimal_prefix(&value[sign..]);
+	if length == 0 {
+		return f64::NAN;
+	}
+	parse_signed_decimal(&value[..sign + length])
+}
+
+/// `Number(value)` of a string: `0` for blank, `0x`/`0o`/`0b` integers, decimal literals, else `NaN`.
+pub fn string_to_number(value: &str) -> f64 {
+	let value = value.trim_matches(is_js_whitespace);
+	if value.is_empty() {
+		return 0.0;
+	}
+	let radix = match value.get(..2) {
+		Some("0x" | "0X") => Some(16),
+		Some("0o" | "0O") => Some(8),
+		Some("0b" | "0B") => Some(2),
+		_ => None,
+	};
+	if let Some(radix) = radix {
+		let digits = &value[2..];
+		if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
+			return f64::NAN;
+		}
+		return digits.chars().fold(0.0, |total, ch| {
+			total * f64::from(radix) + f64::from(ch.to_digit(radix).unwrap_or(0))
+		});
+	}
+	let sign = usize::from(value.starts_with(['+', '-']));
+	if unsigned_decimal_prefix(&value[sign..]) != value.len() - sign {
+		return f64::NAN;
+	}
+	parse_signed_decimal(value)
+}
+
+/// `Date.parse(text)` for the forms HTTP and pi exchange: the ECMAScript date-time format (`YYYY-MM-DD` as UTC, or
+/// `YYYY-MM-DDTHH:mm[:ss[.sss]]` with `Z` or `±HH:mm`) and the IMF-fixdate / RFC 2822 form (`[Wdy,] DD Mon YYYY
+/// HH:MM[:SS] zone` with `GMT`, `UTC`, `UT`, `Z` or `±HHMM`). Returns NaN for any other string, which V8's lenient
+/// parser may still read. Same algorithm as w2-ai-core's local copy in `pi-ai/src/utils/provider_retry.rs`.
+pub fn date_parse(text: &str) -> f64 {
+	let text = text.trim_matches(is_js_whitespace);
+	parse_iso_date(text)
+		.or_else(|| parse_http_date(text))
+		.unwrap_or(f64::NAN)
+}
+
+const MONTHS: [&str; 12] = [
+	"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+];
+const MS_PER_DAY: f64 = 86_400_000.0;
+
+fn parse_iso_date(text: &str) -> Option<f64> {
+	let (date, time) = match text.split_once('T') {
+		Some((date, time)) => (date, Some(time)),
+		None => (text, None),
+	};
+	let mut parts = date.split('-');
+	let year = fixed_number(parts.next()?, 4)?;
+	let month = fixed_number(parts.next()?, 2)?;
+	let day = fixed_number(parts.next()?, 2)?;
+	if parts.next().is_some() || !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
+		return None;
+	}
+	let Some(time) = time else {
+		return Some(days_from_civil(year, month, day) * MS_PER_DAY);
+	};
+	let (clock, offset_ms) = if let Some(clock) = time.strip_suffix('Z') {
+		(clock, 0.0)
+	} else {
+		let sign_index = time.rfind(['+', '-'])?;
+		let (clock, offset) = time.split_at(sign_index);
+		let (hours, minutes) = offset[1..].split_once(':')?;
+		let offset_ms = (fixed_number(hours, 2)? * 60.0 + fixed_number(minutes, 2)?) * 60_000.0;
+		(clock, if offset.starts_with('-') { -offset_ms } else { offset_ms })
+	};
+	let (clock, millis) = match clock.split_once('.') {
+		Some((clock, fraction)) if !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit()) => {
+			(clock, fixed_number(&format!("{fraction:0<3}")[..3], 3)?)
+		}
+		Some(_) => return None,
+		None => (clock, 0.0),
+	};
+	let mut fields = clock.split(':');
+	let hour = fixed_number(fields.next()?, 2)?;
+	let minute = fixed_number(fields.next()?, 2)?;
+	let second = fields.next().map_or(Some(0.0), |second| fixed_number(second, 2))?;
+	if fields.next().is_some() {
+		return None;
+	}
+	Some(utc_ms(year, month, day, hour, minute, second)? + millis - offset_ms)
+}
+
+fn month_number(word: &str) -> Option<f64> {
+	let prefix = word.get(..3)?;
+	MONTHS
+		.iter()
+		.position(|name| prefix.eq_ignore_ascii_case(name))
+		.map(|index| index as f64 + 1.0)
+}
+
+fn parse_http_date(text: &str) -> Option<f64> {
+	let mut words: Vec<&str> = text.split([' ', ',']).filter(|word| !word.is_empty()).collect();
+	if words.first().is_some_and(|word| {
+		word.len() >= 3 && word.bytes().all(|byte| byte.is_ascii_alphabetic()) && month_number(word).is_none()
+	}) {
+		words.remove(0);
+	}
+	let [day, month, year, clock, zone] = words.as_slice() else {
+		return None;
+	};
+	let day = digits_number(day)?;
+	let month = month_number(month)?;
+	let year = digits_number(year)?;
+	let mut fields = clock.split(':');
+	let hour = digits_number(fields.next()?)?;
+	let minute = digits_number(fields.next()?)?;
+	let second = fields.next().map_or(Some(0.0), digits_number)?;
+	if fields.next().is_some() {
+		return None;
+	}
+	let offset_ms = match zone.to_ascii_uppercase().as_str() {
+		"GMT" | "UTC" | "UT" | "Z" => 0.0,
+		zone if zone.len() == 5 && zone.starts_with(['+', '-']) => {
+			let minutes = fixed_number(&zone[1..3], 2)? * 60.0 + fixed_number(&zone[3..], 2)?;
+			if zone.starts_with('-') {
+				-minutes * 60_000.0
+			} else {
+				minutes * 60_000.0
+			}
+		}
+		_ => return None,
+	};
+	if !(1.0..=31.0).contains(&day) {
+		return None;
+	}
+	Some(utc_ms(year, month, day, hour, minute, second)? - offset_ms)
+}
+
+fn fixed_number(text: &str, width: usize) -> Option<f64> {
+	if text.len() != width {
+		return None;
+	}
+	digits_number(text)
+}
+
+fn digits_number(text: &str) -> Option<f64> {
+	if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+		return None;
+	}
+	text.parse().ok()
+}
+
+fn utc_ms(year: f64, month: f64, day: f64, hour: f64, minute: f64, second: f64) -> Option<f64> {
+	if hour > 24.0 || minute > 59.0 || second > 59.0 || (hour == 24.0 && (minute > 0.0 || second > 0.0)) {
+		return None;
+	}
+	Some(days_from_civil(year, month, day) * MS_PER_DAY + ((hour * 60.0 + minute) * 60.0 + second) * 1000.0)
+}
+
+/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
+fn days_from_civil(year: f64, month: f64, day: f64) -> f64 {
+	let year = if month <= 2.0 { year - 1.0 } else { year };
+	let era = (year / 400.0).floor();
+	let year_of_era = year - era * 400.0;
+	let month_index = if month > 2.0 { month - 3.0 } else { month + 9.0 };
+	let day_of_year = ((153.0 * month_index + 2.0) / 5.0).floor() + day - 1.0;
+	let day_of_era = year_of_era * 365.0 + (year_of_era / 4.0).floor() - (year_of_era / 100.0).floor() + day_of_year;
+	era * 146_097.0 + day_of_era - 719_468.0
+}
+
+/// `str.length`: the number of UTF-16 code units.
+pub fn utf16_len(value: &str) -> usize {
+	value.encode_utf16().count()
+}
+
+/// `str.slice(0, n)` in UTF-16 code units. A cut inside a surrogate pair drops the lone half, since Rust
+/// strings cannot hold it (JavaScript would keep a lone surrogate).
+pub fn utf16_prefix(value: &str, units: usize) -> &str {
+	let mut seen = 0;
+	for (index, ch) in value.char_indices() {
+		let width = ch.len_utf16();
+		if seen + width > units {
+			return &value[..index];
+		}
+		seen += width;
+	}
+	value
+}
+
+/// Deserializes `x?: T | null` into `Option<Option<T>>`: absent -> `None`, `null` -> `Some(None)`. Use with
+/// `#[serde(default, deserialize_with = "pi_host::js::double_option", skip_serializing_if = "Option::is_none")]`.
+pub fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+	T: serde::Deserialize<'de>,
+{
+	<Option<T> as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+/// JSON number formatting that matches JavaScript.
+struct JsFormatter<'a> {
+	pretty: Option<serde_json::ser::PrettyFormatter<'a>>,
+}
+
+impl<'a> JsFormatter<'a> {
+	fn compact() -> Self {
+		Self { pretty: None }
+	}
+
+	fn pretty(indent: &'a [u8]) -> Self {
+		Self {
+			pretty: Some(serde_json::ser::PrettyFormatter::with_indent(indent)),
+		}
+	}
+}
+
+macro_rules! delegate {
+	($($name:ident($($arg:ident: $ty:ty),*);)*) => {
+		$(fn $name<W: ?Sized + io::Write>(&mut self, writer: &mut W $(, $arg: $ty)*) -> io::Result<()> {
+			match &mut self.pretty {
+				Some(pretty) => serde_json::ser::Formatter::$name(pretty, writer $(, $arg)*),
+				None => serde_json::ser::Formatter::$name(&mut serde_json::ser::CompactFormatter, writer $(, $arg)*),
+			}
+		})*
+	};
+}
+
+impl serde_json::ser::Formatter for JsFormatter<'_> {
+	fn write_f64<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: f64) -> io::Result<()> {
+		if !value.is_finite() {
+			return writer.write_all(b"null");
+		}
+		writer.write_all(number_to_string(value).as_bytes())
+	}
+
+	fn write_f32<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: f32) -> io::Result<()> {
+		self.write_f64(writer, f64::from(value))
+	}
+
+	delegate! {
+		begin_array();
+		end_array();
+		begin_array_value(first: bool);
+		end_array_value();
+		begin_object();
+		end_object();
+		begin_object_key(first: bool);
+		end_object_key();
+		begin_object_value();
+		end_object_value();
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn stringify_matches_javascript_numbers_and_order() {
+		let value = serde_json::json!({ "b": 1.0, "a": [0.5, 1e21, 3], "c": "é" });
+		assert_eq!(json_stringify(&value), r#"{"b":1,"a":[0.5,1e+21,3],"c":"é"}"#);
+		assert_eq!(
+			json_stringify_pretty(&serde_json::json!({ "a": 1.0 }), 2),
+			"{\n  \"a\": 1\n}"
+		);
+	}
+
+	#[test]
+	fn number_parsing_matches_javascript() {
+		assert_eq!(parse_float(" 1.5s"), 1.5);
+		assert_eq!(parse_float("-.5e1x"), -5.0);
+		assert_eq!(parse_float("1e"), 1.0);
+		assert_eq!(parse_float("Infinityx"), f64::INFINITY);
+		assert!(parse_float("x1").is_nan());
+		assert!(parse_float(".").is_nan());
+		assert_eq!(string_to_number(" 12 "), 12.0);
+		assert_eq!(string_to_number(""), 0.0);
+		assert_eq!(string_to_number("0x1f"), 31.0);
+		assert_eq!(string_to_number("5."), 5.0);
+		assert_eq!(string_to_number("-Infinity"), f64::NEG_INFINITY);
+		assert!(string_to_number("1e").is_nan());
+		assert!(string_to_number("inf").is_nan());
+		assert!(string_to_number("-0x1").is_nan());
+	}
+
+	#[test]
+	fn utf16_helpers() {
+		assert_eq!(utf16_len("a😀"), 3);
+		assert_eq!(utf16_prefix("a😀b", 2), "a");
+		assert_eq!(utf16_prefix("a😀b", 3), "a😀");
+		assert_eq!(number_to_string(0.1 + 0.2), "0.30000000000000004");
+	}
+	#[test]
+	fn date_parse_reads_http_and_iso_dates() {
+		assert_eq!(date_parse("Wed, 21 Oct 2015 07:28:00 GMT"), 1_445_412_480_000.0);
+		assert_eq!(date_parse("21 Oct 2015 07:28:00 +0100"), 1_445_408_880_000.0);
+		assert_eq!(date_parse("2015-10-21T07:28:00.5Z"), 1_445_412_480_500.0);
+		assert_eq!(date_parse("2015-10-21T07:28:00+01:00"), 1_445_408_880_000.0);
+		assert_eq!(date_parse("2015-10-21"), 1_445_385_600_000.0);
+		assert_eq!(date_parse("2000-03-01"), 951_868_800_000.0);
+		assert!(date_parse("soon").is_nan());
+		assert!(date_parse("été 21 Oct 2015 07:28:00 GMT").is_nan());
+	}
+}

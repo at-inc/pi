@@ -1,0 +1,22 @@
+[package]
+name = "pi-agent"
+description = "Rust port of @at-inc/pi-agent-core: agent loop and stateful agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pi-host = { workspace = true }
+pi-ai = { workspace = true }
+pi-schema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+pi-host = { workspace = true, features = ["testing"] }
+futures = { workspace = true, features = ["executor"] }
+
+[lints]
+workspace = true
