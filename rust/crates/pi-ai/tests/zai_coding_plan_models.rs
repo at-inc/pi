@@ -9,7 +9,7 @@ fn assert_match_object(actual: &Value, expected: &Value) {
 	match (actual, expected) {
 		(Value::Object(actual), Value::Object(expected)) => {
 			for (key, expected) in expected {
-				assert_match_object(actual.get(key).unwrap_or(&Value::Null), expected);
+				assert_match_object(actual.get(key).unwrap_or_else(|| panic!("missing key {key}")), expected);
 			}
 		}
 		(Value::Array(actual), Value::Array(expected)) => {
