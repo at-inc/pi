@@ -130,6 +130,18 @@ impl Host for NativeHost {
 	fn home_dir(&self) -> Option<String> {
 		std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned())
 	}
+
+	fn read_file(&self, path: &str) -> PiResult<String> {
+		std::fs::read_to_string(path).map_err(|error| {
+			let message = match error.kind() {
+				std::io::ErrorKind::NotFound => format!("ENOENT: no such file or directory, open '{path}'"),
+				std::io::ErrorKind::PermissionDenied => format!("EACCES: permission denied, open '{path}'"),
+				std::io::ErrorKind::IsADirectory => "EISDIR: illegal operation on a directory, read".to_string(),
+				_ => format!("{error}, open '{path}'"),
+			};
+			PiError::new(message)
+		})
+	}
 }
 
 /// Runs `main` on a current-thread tokio runtime inside a `LocalSet`, with a `NativeHost` installed.

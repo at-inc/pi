@@ -32,6 +32,13 @@ pub trait Host {
 	fn home_dir(&self) -> Option<String> {
 		None
 	}
+	/// `fs.readFileSync(path, "utf8")`. Rejects with Node's message (`ENOENT: no such file or directory, open '<path>'`).
+	/// Hosts without a file system (browsers, Workers) reject every path that way.
+	fn read_file(&self, path: &str) -> PiResult<String> {
+		Err(crate::error::PiError::new(format!(
+			"ENOENT: no such file or directory, open '{path}'"
+		)))
+	}
 }
 
 thread_local! {
@@ -99,4 +106,9 @@ pub fn file_exists(path: &str) -> bool {
 /// `os.homedir()`; `None` on hosts without a file system.
 pub fn home_dir() -> Option<String> {
 	current().home_dir()
+}
+
+/// `fs.readFileSync(path, "utf8")`; rejects like `ENOENT` on hosts without a file system.
+pub fn read_file(path: &str) -> PiResult<String> {
+	current().read_file(path)
 }

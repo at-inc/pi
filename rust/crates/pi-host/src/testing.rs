@@ -31,6 +31,7 @@ pub struct TestHost {
 	clock_ms: RefCell<f64>,
 	requests: RefCell<Vec<RecordedRequest>>,
 	files: RefCell<HashSet<String>>,
+	file_contents: RefCell<HashMap<String, String>>,
 	home_dir: RefCell<Option<String>>,
 	spawner: futures::executor::LocalSpawner,
 	timers: RefCell<Vec<Timer>>,
@@ -136,6 +137,12 @@ impl TestHost {
 		self.files.borrow_mut().insert(path.into());
 	}
 
+	/// Makes `file_exists(path)` true and `read_file(path)` return `content`.
+	pub fn add_file_with_content(&self, path: &str, content: &str) {
+		self.add_file(path);
+		self.file_contents.borrow_mut().insert(path.into(), content.into());
+	}
+
 	/// Sets `os.homedir()`. Without it the host has no file system, like a browser.
 	pub fn set_home_dir(&self, dir: &str) {
 		*self.home_dir.borrow_mut() = Some(dir.into());
@@ -226,6 +233,14 @@ impl Host for TestHost {
 	fn home_dir(&self) -> Option<String> {
 		self.home_dir.borrow().clone()
 	}
+
+	fn read_file(&self, path: &str) -> PiResult<String> {
+		self.file_contents
+			.borrow()
+			.get(path)
+			.cloned()
+			.ok_or_else(|| PiError::new(format!("ENOENT: no such file or directory, open '{path}'")))
+	}
 }
 
 /// Wakes the test future: sets its flag and unparks the thread that runs it.
@@ -260,6 +275,7 @@ where
 		clock_ms: RefCell::new(1_700_000_000_000.0),
 		requests: RefCell::new(Vec::new()),
 		files: RefCell::new(HashSet::new()),
+		file_contents: RefCell::new(HashMap::new()),
 		home_dir: RefCell::new(None),
 		spawner: pool.spawner(),
 		timers: RefCell::new(Vec::new()),
