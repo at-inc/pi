@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/system-one-shared.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `SystemOneWireRequest` is built as a JSON object in the TS insertion order (`state`, `questions`, then `assets` or
 //! `images`), because it is sent as-is. Questions serialize from the typed `ClassifierQuestion`, so their keys follow

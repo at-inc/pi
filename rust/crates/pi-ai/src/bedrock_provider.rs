@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/bedrock-provider.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 use std::rc::Rc;
 

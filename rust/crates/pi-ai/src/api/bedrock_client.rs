@@ -1,6 +1,6 @@
 //! Rust-only replacement for the parts of `@aws-sdk/client-bedrock-runtime` 3.1126.0 that
 //! `api/bedrock-converse-stream.ts` relies on. See "Provider SDKs" in `rust/PORTING.md`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! It is one client with the `ConverseStream` operation (`BedrockRuntimeClient.send(new ConverseStreamCommand(input))`):
 //! request serialization from the `com.amazonaws.bedrockruntime` schema, endpoint and region resolution, SigV4 or

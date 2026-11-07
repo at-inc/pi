@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/cloudflare-workers-ai-system-one.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `String(result.state)` is ported for JSON values: `undefined` for a missing key, otherwise the JS string
 //! conversion of the value.

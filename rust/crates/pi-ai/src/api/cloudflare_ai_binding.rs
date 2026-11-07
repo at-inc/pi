@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/cloudflare-ai-binding.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! AI Gateway transport over the Workers AI binding.
 //!

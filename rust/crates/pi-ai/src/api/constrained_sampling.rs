@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/constrained-sampling.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS `UnsupportedStrictJsonSchemaError` (a plain `Error` subclass, `name` `"Error"`) is the internal
 //! `StrictSchemaError::Unsupported` marker, so `resolve_json_schema_strict_sampling` can tell it from other errors

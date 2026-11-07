@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/bedrock-converse-stream.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The AWS SDK client is `api::bedrock_client` (see its header for the SDK differences). Differences from the TS:
 //! - The command input is JSON, so `onPayload` gets and returns a `Value` and blob members hold base64 text: an image's

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/classifier-shared.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! A TS `ClassifierHttpError` is an `Error` with own `status`, `headers` and `body` properties. The Rust port keeps
 //! `status` in `PiError.status` and the rest in `PiError.data` as `{ headers, body }`, where `headers` is the

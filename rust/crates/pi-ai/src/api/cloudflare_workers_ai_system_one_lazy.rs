@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/cloudflare-workers-ai-system-one.lazy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 use std::rc::Rc;
 

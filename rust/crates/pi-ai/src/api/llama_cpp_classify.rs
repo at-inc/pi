@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/llama-cpp-classify.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The module-level `labelTokenCache` is a thread-local map of shared futures. Each lookup starts at once on the host
 //! executor, like the TS promise, and a failed lookup evicts its entry when it settles. The TS `HttpError` is a
