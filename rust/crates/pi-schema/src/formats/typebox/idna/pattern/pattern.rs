@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/idna/pattern/pattern.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Rust strings hold Unicode scalar values only, so `RE_HIGH_SURROGATE` can never match, and a pattern without the
 //! `u` flag sees an astral character as one character where JavaScript sees two UTF-16 units: `RE_RULE_NOT_RESERVED_ACE`

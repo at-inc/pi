@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/coerce.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Coercion: turns a loosely typed value (a model's tool call arguments, form input, query strings) into the value a
 //! schema most likely meant, before it is checked. Only validators compiled with `{ coerce: true }` have it, and they
@@ -37,7 +37,7 @@ use pi_host::PiResult;
 use pi_host::js::{json_stringify, number_to_string};
 use serde_json::{Map, Value};
 
-use crate::checks::{PrimitiveKey, is_integer, strict_equals};
+use crate::checks::{PrimitiveKey, catching, is_integer, strict_equals};
 use crate::compiler::Compiler;
 use crate::shared::{JsRegex, shared_regex};
 use crate::types::{Node, SchemaObject};
@@ -153,12 +153,11 @@ impl Coercer {
 		Ok(result)
 	}
 
-	/// Whether `value` passes the schema `node`; `None` when `node` cannot be compiled.
+	/// Whether `value` passes the schema `node`; `None` when `node` cannot be compiled or its check throws (the
+	/// TypeScript catches both).
 	fn passes(&self, node: &Node, base: &str, value: &Value) -> Option<bool> {
-		self.c
-			.check(node, &self.base_of(node, base))
-			.ok()
-			.map(|check| check(value))
+		let check = self.c.check(node, &self.base_of(node, base)).ok()?;
+		catching(|| check(value)).ok()
 	}
 
 	fn base_of(&self, node: &Node, base: &str) -> String {

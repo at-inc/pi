@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/checks.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Check factories: each returns a closure that captures only its arguments, never the compiler, so a compiled
 //! schema keeps no compile-time state alive. Leaf checks are module constants (per-thread singletons here, so their
@@ -9,12 +9,25 @@
 //! `bytes` type matches no value), no `undefined` property, and no inherited `Object.prototype` member to guard
 //! against (`INHERITED` is kept as a flag but every lookup is an own lookup). Numbers compare as `f64`, like `===`.
 //! The JavaScript helpers the factories need (`===` on values, `String(x)` of a schema value) are at the end.
+//!
+//! Rust-only: checks return a bool, but two TypeScript checks throw out of the whole call: a reference that recurses
+//! without end (`{"$ref": "#"}`) runs out of stack (a RangeError), and the indirection of a subschema that failed to
+//! compile calls its empty slot (a TypeError). Here such a check fails and records the error, and [`catching`] returns
+//! it to the callers that can throw.
+//!
+//! Accepted differences:
+//! - [`js_string`] gives "[object Object]" for every object. In JavaScript, converting an object with an own `toString`
+//!   key from JSON throws a TypeError, so `{"dependentRequired": {"a": [{"toString": 1}]}}` (not a valid schema: the
+//!   entries must be strings) throws on `{"a": 1}` there and fails here.
+//! - A throw does not skip the `$dynamicRef` scope pop. In TypeScript, a RangeError inside a scoped check leaves that
+//!   resource's URI on the scope for good, so later checks on the same validator can resolve `$dynamicRef` to it.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 
 use pi_host::js::number_to_string;
+use pi_host::{PiError, PiResult};
 use serde_json::{Map, Value};
 
 use crate::shared::JsRegex;
@@ -172,32 +185,59 @@ pub type Slot = Rc<RefCell<Option<Check>>>;
 
 /// A check whose implementation is set later: the indirection a recursive reference goes through. It holds its slot
 /// weakly, so a recursive schema forms no reference cycle; the compiler keeps the slot (see `Compiler::root`). A slot
-/// whose schema failed to compile stays empty, and its check fails (the TypeScript one throws a TypeError).
+/// whose schema failed to compile stays empty, and its check fails with the TypeScript's TypeError (see the file header).
 pub fn indirect(slot: &Slot) -> Check {
 	let slot: Weak<RefCell<Option<Check>>> = Rc::downgrade(slot);
 	Rc::new(move |v| {
-		let check = slot.upgrade().and_then(|slot| slot.borrow().clone());
+		let Some(check) = slot.upgrade().and_then(|slot| slot.borrow().clone()) else {
+			throw(empty_slot());
+			return false;
+		};
 		let key = Weak::as_ptr(&slot) as *const () as usize;
-		check.is_some_and(|check| reentering(key, v, || check(v)).unwrap_or(false))
+		reentering(key, v, || check(v)).unwrap_or(false)
 	})
+}
+
+/// The TypeError of calling the empty slot of a subschema that failed to compile.
+pub fn empty_slot() -> PiError {
+	PiError::named("TypeError", "slot.check is not a function")
 }
 
 thread_local! {
 	static ENTERED: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+	static THROWN: RefCell<Option<PiError>> = const { RefCell::new(None) };
 }
 
 /// `f()` with the indirection `key` marked as checking `v`, or `None` when it already is: the check would recurse
 /// without end (a schema such as `{"$ref": "#"}`), where the TypeScript runs out of stack and throws a RangeError.
-/// The check fails instead of overflowing the stack.
+/// The check fails instead of overflowing the stack, and records the RangeError (see the file header).
 pub fn reentering<T>(key: usize, v: &Value, f: impl FnOnce() -> T) -> Option<T> {
 	let entry = (key, v as *const Value as usize);
 	if ENTERED.with(|entered| entered.borrow().contains(&entry)) {
+		throw(PiError::named("RangeError", "Maximum call stack size exceeded"));
 		return None;
 	}
 	ENTERED.with(|entered| entered.borrow_mut().push(entry));
 	let result = f();
 	ENTERED.with(|entered| entered.borrow_mut().pop());
 	Some(result)
+}
+
+/// Records the error a running check throws in the TypeScript; the first one counts, as the throw ends the call.
+pub fn throw(error: PiError) {
+	THROWN.with(|thrown| {
+		thrown.borrow_mut().get_or_insert(error);
+	});
+}
+
+/// `f()`, or the error a check inside it threw in the TypeScript (see the file header).
+pub fn catching<T>(f: impl FnOnce() -> T) -> PiResult<T> {
+	let outer = THROWN.take();
+	let result = f();
+	match THROWN.replace(outer) {
+		Some(error) => Err(error),
+		None => Ok(result),
+	}
 }
 
 /// `check` with `uri` pushed onto the dynamic scope while it runs (only for schemas with `$dynamicRef`).

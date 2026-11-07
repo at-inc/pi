@@ -1,9 +1,10 @@
 //! Port of `packages/schema/src/formats/typebox/iri.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `URL.canParse` is the `url` crate's WHATWG parser; it can differ from V8's where rust-url lags the URL Standard.
 //! Known: rust-url rejects hosts V8 accepts, namely invalid `xn--` labels (`http://xn--a/`) and hosts failing the IDNA
 //! bidi rule.
+//! It accepts an empty host after `@` (`mailto://@`), which V8 rejects.
 
 // /*--------------------------------------------------------------------------
 //
@@ -44,7 +45,11 @@ static IPV_FUTURE_MATCH: LazyLock<Regex> =
 static INVALID_IRI_CHARS: LazyLock<Regex> =
 	LazyLock::new(|| Regex::new(r"[\x00-\x20<>^`{|}\\]").expect("INVALID_IRI_CHARS is a valid pattern"));
 static INVALID_PERCENT_ENCODING: LazyLock<fancy_regex::Regex> = LazyLock::new(|| {
-	fancy_regex::Regex::new(r"%(?![0-9a-fA-F]{2})").expect("INVALID_PERCENT_ENCODING is a valid pattern")
+	// V8 never gives up on a match; each `%` costs backtracking steps, so long values pass fancy_regex's default limit.
+	fancy_regex::RegexBuilder::new(r"%(?![0-9a-fA-F]{2})")
+		.backtrack_limit(usize::MAX)
+		.build()
+		.expect("INVALID_PERCENT_ENCODING is a valid pattern")
 });
 
 // ------------------------------------------------------------------

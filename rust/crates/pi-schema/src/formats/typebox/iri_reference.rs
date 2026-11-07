@@ -1,9 +1,10 @@
 //! Port of `packages/schema/src/formats/typebox/iri_reference.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `URL.canParse` is the `url` crate's WHATWG parser; it can differ from V8's where rust-url lags the URL Standard.
 //! Known: rust-url rejects hosts V8 accepts, namely invalid `xn--` labels (`http://xn--a/`) and hosts failing the IDNA
 //! bidi rule.
+//! It accepts an empty host after `@` (`mailto://@`), which V8 rejects.
 //! rust-url rejects a reference with three or more leading slashes, which the URL Standard reads against the `http`
 //! base as `//` (its special authority ignore slashes state), so the reference is passed with two.
 
@@ -40,7 +41,11 @@ use ::regex::Regex;
 
 // Rejects unencoded spaces (0x20), backslashes, control characters (0x00-0x1F, 0x7F), or malformed percent-encodings
 static INVALID_IRI_CHARS: LazyLock<fancy_regex::Regex> = LazyLock::new(|| {
-	fancy_regex::Regex::new(r"[\x00-\x20\x7F\\]|%(?![0-9a-fA-F]{2})").expect("INVALID_IRI_CHARS is a valid pattern")
+	// V8 never gives up on a match; each `%` costs backtracking steps, so long values pass fancy_regex's default limit.
+	fancy_regex::RegexBuilder::new(r"[\x00-\x20\x7F\\]|%(?![0-9a-fA-F]{2})")
+		.backtrack_limit(usize::MAX)
+		.build()
+		.expect("INVALID_IRI_CHARS is a valid pattern")
 });
 // Detects malformed scheme/authority patterns lacking a colon (e.g. "httpx//example.com")
 static MALFORMED_SCHEME: LazyLock<Regex> =

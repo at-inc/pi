@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/compiler.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The compiler: a schema to one check closure, built once. Keywords group by the type they constrain, so a value
 //! is classified once per schema, and the common shapes (closed objects, arrays of one item schema, tagged unions,
@@ -12,6 +12,11 @@
 //! or a dynamic lookup exists, so a check stays valid while anything holds it. A schema that a `$dynamicRef` reaches
 //! at run time and that fails to compile there makes that check fail, where the TypeScript throws from the check.
 //! `RESTART` is a `PiError` named `"RESTART"` instead of a thrown symbol.
+//!
+//! Accepted difference: below `unevaluatedProperties`/`unevaluatedItems` the TypeScript copies a schema's other
+//! keywords with `rest[k] = node[k]`, so an own `"__proto__"` key holding an object (from `JSON.parse`) becomes the
+//! copy's prototype and its keywords apply: `{"unevaluatedProperties": true, "__proto__": {"required": ["a"]}}` rejects
+//! `{}` there. Here `__proto__` is an unknown keyword on every path, as it is in the TypeScript without `unevaluated*`.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -146,13 +151,8 @@ impl Compiler {
 			.insert(object.id(), (object.clone(), indirect(&slot)));
 		self.0.slots.borrow_mut().push(slot.clone());
 		let base = self.0.r.base_for(object, base);
-		let check = match self.build(object, &base) {
-			Ok(check) => check,
-			Err(error) => {
-				self.0.cache.borrow_mut().remove(&object.id());
-				return Err(error);
-			}
-		};
+		// A schema that fails to compile keeps its empty indirection in the cache, as in the TypeScript.
+		let check = self.build(object, &base)?;
 		*slot.borrow_mut() = Some(check.clone());
 		self.0
 			.cache
@@ -668,13 +668,7 @@ impl Compiler {
 			.insert(object.id(), (object.clone(), indirect_annotating(&slot)));
 		self.0.annotating_slots.borrow_mut().push(slot.clone());
 		let base = self.0.r.base_for(object, base);
-		let check = match self.build_annotating(object, &base) {
-			Ok(check) => check,
-			Err(error) => {
-				self.0.annotating_cache.borrow_mut().remove(&object.id());
-				return Err(error);
-			}
-		};
+		let check = self.build_annotating(object, &base)?;
 		*slot.borrow_mut() = Some(check.clone());
 		self.0
 			.annotating_cache

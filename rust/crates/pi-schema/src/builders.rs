@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/builders.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Schema builders: short functions that return plain JSON Schema objects. The objects are ordinary data: they
 //! serialize with JSON.stringify and compile with compile() like any other schema.
@@ -9,7 +9,12 @@
 //! `NumberBounds` and each builder's extra keys) are JSON objects spread into the schema as
 //! `{ type: "string", ...options }` spreads them, so the schema's keys come in JavaScript order (array-index keys
 //! first, ascending); a value that is not an object spreads nothing (as `undefined` and `null` do). `Properties` is a
-//! list of named `Property` values, iterated in the same order `Object.entries` gives.
+//! list of named `Property` values, iterated in the same order `Object.entries` gives. A property named `__proto__`
+//! is left out of `properties` (the TypeScript assignment sets the prototype of `props`, which no keyword reads) but
+//! stays in `required`, as there.
+//!
+//! Accepted difference: TypeScript's types allow only objects as option bags; a string or array spreads its indices
+//! there, and nothing here.
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
@@ -167,14 +172,16 @@ pub fn obj<K: Into<String>>(properties: impl IntoIterator<Item = (K, Property)>,
 	let mut props = Map::new();
 	let mut required = Vec::new();
 	for (name, property) in js_order(properties.iter()) {
-		match property {
-			Property::Optional(optional) => {
-				props.insert(name.clone(), optional.schema.clone());
-			}
+		let schema = match property {
+			Property::Optional(optional) => &optional.schema,
 			Property::Schema(schema) => {
-				props.insert(name.clone(), schema.clone());
 				required.push(Value::String(name.clone()));
+				schema
 			}
+		};
+		// `props[name] = schema` on a plain object sets its prototype for "__proto__" instead of a property.
+		if name != "__proto__" {
+			props.insert(name.clone(), schema.clone());
 		}
 	}
 	let mut out = Map::new();

@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/shared.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Regular expressions shared across all compiled schemas while one still uses them: tool schemas repeat a few
 //! patterns many times, and a RegExp is large once it has run. The cache holds its values weakly and drops an entry
@@ -18,7 +18,15 @@
 //!   (Unicode 16); `Changes_When_NFKC_Casefolded` is not in them, so a pattern using it does not compile.
 //! - With `i`, `\P{...}` is the complement of the case-closed property, where JavaScript case-closes the complement:
 //!   `/^\P{Lu}$/ui` does not match `"A"`.
-//! - Case-insensitive matching uses Unicode simple case folding in both modes.
+//! - The Rust engines have limits V8 does not: a pattern nested more than 64 groups deep (fewer with quantified
+//!   groups, which the translation wraps once more) and a counted repetition whose expansion passes
+//!   `DELEGATE_SIZE_LIMIT` (`a{1,50000000}`) do not compile.
+//! - Case-insensitive matching uses Unicode simple case folding in both modes; without `u` JavaScript compares by
+//!   `toUpperCase` instead, so `/k/i` and `/\w/i` match "\u{212a}" and `/ß/i` matches "ẞ" here but not there.
+//! - Where V8 departs from the specification, the port follows the specification: V8 accepts a group name repeated
+//!   inside the first alternative of a group of that name (`(?<n>(?<n>x)|y)`), and with `u` an earlier
+//!   `(?i:...)` group makes a later `\w` case-insensitive (`/(?i:)\w/u` matches "\u{212a}"); with `iu` an earlier
+//!   `(?-i:...)` group makes a later `\W` match "k", "K", "s" and "S" (`/(?-i:)\W/iu` matches "k").
 //!
 //! Error messages follow V8's `Invalid regular expression: /source/flags: reason` form; a pattern the Rust engine
 //! cannot build reports the engine's reason.
@@ -260,35 +268,56 @@ struct Translator {
 	/// The number of capturing groups and the named ones with their numbers, from a scan before parsing.
 	groups: usize,
 	named: Vec<(String, usize)>,
+	/// Whether the pattern has a `(?<` group, even one with an invalid name: V8 then reads `\k` as a reference.
+	named_groups: bool,
 	dot_all: Vec<bool>,
 	multiline: Vec<bool>,
-	/// The names of the named groups parsed so far.
+	/// The names of the named groups closed so far.
 	defined: Vec<String>,
+	/// The number of capturing groups opened so far, the ones still open, and the lookbehinds around the position.
+	opened: usize,
+	open: Vec<usize>,
+	lookbehinds: usize,
+	/// The number of groups around the position.
+	depth: usize,
+	/// A `\k<name>` without a group of that name: V8 reports it only once the whole pattern parsed.
+	unknown_reference: bool,
 	out: String,
 }
 
+// fancy_regex's `MAX_RECURSION`.
+const MAX_GROUP_DEPTH: usize = 64;
+
 /// What a term was: an assertion that may not be quantified, a lookbehind (an assertion V8 reports differently), a
-/// lookahead (quantifiable without `u`), or an atom.
+/// lookahead (quantifiable without `u`), an atom that never consumes a character (a group of assertions, an empty
+/// group, a reference that is always empty), or an atom.
 enum Term {
 	Assertion,
 	Lookbehind,
 	Lookahead,
+	ZeroWidth,
 	Atom,
 }
 
 impl Translator {
 	fn run(source: &str, unicode: bool, dot_all: bool, multiline: bool) -> Result<String, String> {
 		let chars: Vec<char> = source.chars().collect();
-		let (groups, named) = scan_groups(&chars);
+		let (groups, named, named_groups) = scan_groups(&chars);
 		let mut t = Translator {
 			chars,
 			pos: 0,
 			unicode,
 			groups,
 			named,
+			named_groups,
 			dot_all: vec![dot_all],
 			multiline: vec![multiline],
 			defined: Vec::new(),
+			opened: 0,
+			open: Vec::new(),
+			lookbehinds: 0,
+			depth: 0,
+			unknown_reference: false,
 			out: String::new(),
 		};
 		t.disjunction()?;
@@ -298,6 +327,9 @@ impl Translator {
 			} else {
 				"Unexpected character".into()
 			});
+		}
+		if t.unknown_reference {
+			return Err("Invalid named capture referenced".into());
 		}
 		Ok(t.out)
 	}
@@ -320,12 +352,13 @@ impl Translator {
 	}
 
 	// Each alternative sees only the names defined before the disjunction: a name may repeat in another alternative,
-	// since both groups can never participate in one match.
-	fn disjunction(&mut self) -> Result<(), String> {
+	// since both groups can never participate in one match. Returns whether no alternative can consume a character.
+	fn disjunction(&mut self) -> Result<bool, String> {
 		let before = self.defined.len();
 		let mut added = Vec::new();
+		let mut zero_width = true;
 		loop {
-			self.alternative()?;
+			zero_width &= self.alternative()?;
 			added.extend(self.defined.drain(before..));
 			if !self.eat('|') {
 				break;
@@ -333,19 +366,22 @@ impl Translator {
 			self.out.push('|');
 		}
 		self.defined.extend(added);
-		Ok(())
+		Ok(zero_width)
 	}
 
-	fn alternative(&mut self) -> Result<(), String> {
+	// Returns whether the alternative cannot consume a character.
+	fn alternative(&mut self) -> Result<bool, String> {
+		let mut zero_width = true;
 		while let Some(c) = self.peek() {
 			if c == '|' || c == ')' {
 				break;
 			}
 			let start = self.out.len();
 			let term = self.term()?;
+			zero_width &= !matches!(term, Term::Atom);
 			self.quantifier(term, start)?;
 		}
-		Ok(())
+		Ok(zero_width)
 	}
 
 	fn term(&mut self) -> Result<Term, String> {
@@ -362,7 +398,17 @@ impl Translator {
 				}
 				Ok(Term::Assertion)
 			}
-			'(' => self.group(),
+			'(' => {
+				// The translated pattern nests at least as deep, and fancy_regex rejects it past MAX_GROUP_DEPTH; stopping
+				// here keeps this recursive parser from overflowing the stack on deeper patterns.
+				if self.depth == MAX_GROUP_DEPTH {
+					return Err("Pattern too deeply nested".into());
+				}
+				self.depth += 1;
+				let term = self.group();
+				self.depth -= 1;
+				term
+			}
 			'.' => {
 				self.pos += 1;
 				if *self.dot_all.last().expect("the dotAll stack is never empty") {
@@ -450,6 +496,7 @@ impl Translator {
 			Some('+') => (1, "+".to_string()),
 			Some('?') => (0, "?".to_string()),
 			Some('{') => match self.braced_quantifier() {
+				Some(_) if matches!(term, Term::Assertion) => return Err("Nothing to repeat".into()),
 				Some((min, max, len)) => {
 					if max.is_some_and(|max| max < min) {
 						return Err("numbers out of order in {} quantifier".into());
@@ -476,17 +523,13 @@ impl Translator {
 			Term::Assertion => return Err("Nothing to repeat".into()),
 			Term::Lookbehind => return Err("Invalid quantifier".into()),
 			Term::Lookahead if self.unicode => return Err("Invalid quantifier".into()),
-			// A repeated assertion is the assertion once, or an optional one when it may repeat zero times (its
-			// groups stay, so later group numbers do not change).
-			Term::Lookahead => {
+			// JavaScript rejects an iteration that matched the empty string once the minimum is met, so an atom that
+			// never consumes runs once when it must repeat and not at all otherwise (fancy_regex cannot repeat it).
+			// The atom stays for its group numbers.
+			Term::Lookahead | Term::ZeroWidth => {
 				if min == 0 {
 					let atom = self.out.split_off(start);
-					// fancy_regex does not repeat a lookaround: an alternation with the empty pattern is the same choice.
-					self.out.push_str(&if lazy {
-						format!("(?:|{atom})")
-					} else {
-						format!("(?:{atom}|)")
-					});
+					self.out.push_str(&format!("(?:|{NOTHING}{atom})"));
 				}
 				return Ok(());
 			}
@@ -511,18 +554,13 @@ impl Translator {
 	fn group(&mut self) -> Result<Term, String> {
 		self.pos += 1;
 		if !self.eat('?') {
-			self.out.push('(');
-			self.disjunction()?;
-			self.close_group()?;
-			return Ok(Term::Atom);
+			return self.capturing_group();
 		}
 		match self.peek() {
 			Some(':') => {
 				self.pos += 1;
 				self.out.push_str("(?:");
-				self.disjunction()?;
-				self.close_group()?;
-				Ok(Term::Atom)
+				self.group_body()
 			}
 			Some('=') | Some('!') => {
 				let c = self.peek().expect("matched above");
@@ -536,25 +574,43 @@ impl Translator {
 				let c = self.peek_at(1).expect("matched above");
 				self.pos += 2;
 				self.out.push_str(if c == '=' { "(?<=" } else { "(?<!" });
+				self.lookbehinds += 1;
 				self.disjunction()?;
 				self.close_group()?;
+				self.lookbehinds -= 1;
 				Ok(Term::Lookbehind)
 			}
 			Some('<') => {
 				self.pos += 1;
 				let name = self.group_name()?;
+				// A plain group: `\k<name>` becomes its number (see atom_escape). Like V8, the name counts once the
+				// group closes.
+				let term = self.capturing_group()?;
 				if self.defined.contains(&name) {
 					return Err("Duplicate capture group name".into());
 				}
 				self.defined.push(name);
-				// A plain group: `\k<name>` becomes its number (see atom_escape).
-				self.out.push('(');
-				self.disjunction()?;
-				self.close_group()?;
-				Ok(Term::Atom)
+				Ok(term)
 			}
 			_ => self.modifiers(),
 		}
+	}
+
+	// A capturing group after its opening, through the closing parenthesis.
+	fn capturing_group(&mut self) -> Result<Term, String> {
+		self.opened += 1;
+		self.open.push(self.opened);
+		self.out.push('(');
+		let term = self.group_body()?;
+		self.open.pop();
+		Ok(term)
+	}
+
+	// The disjunction of a group and its closing parenthesis: an atom, or a zero-width one when it cannot consume.
+	fn group_body(&mut self) -> Result<Term, String> {
+		let zero_width = self.disjunction()?;
+		self.close_group()?;
+		Ok(if zero_width { Term::ZeroWidth } else { Term::Atom })
 	}
 
 	// `(?ims-ims:...)`: inline modifiers.
@@ -621,11 +677,10 @@ impl Translator {
 		} else {
 			self.out.push_str(&format!("(?{flags}:"));
 		}
-		self.disjunction()?;
-		self.close_group()?;
+		let term = self.group_body()?;
 		self.dot_all.pop();
 		self.multiline.pop();
-		Ok(Term::Atom)
+		Ok(term)
 	}
 
 	fn close_group(&mut self) -> Result<(), String> {
@@ -665,6 +720,9 @@ impl Translator {
 					self.pos += 1;
 				}
 				if n <= self.groups {
+					if !self.participated(n) {
+						return Ok(Term::ZeroWidth);
+					}
 					self.out.push_str(&backreference(n));
 					return Ok(Term::Atom);
 				}
@@ -676,24 +734,33 @@ impl Translator {
 				self.literal(value);
 				return Ok(Term::Atom);
 			}
-			'k' if self.unicode || !self.named.is_empty() => {
+			'k' if self.unicode || self.named_groups => {
 				self.pos += 1;
 				if !self.eat('<') {
 					return Err("Invalid named reference".into());
 				}
-				let name = self.group_name().map_err(|_| "Invalid named reference".to_string())?;
+				let name = self.group_name()?;
 				// By number, so a reference may precede its group; a name used in several alternatives refers to
 				// whichever group participated.
-				let numbers: Vec<String> = self
+				let numbers: Vec<usize> = self
 					.named
 					.iter()
 					.filter(|(known, _)| *known == name)
-					.map(|(_, number)| backreference(*number))
+					.map(|(_, number)| *number)
 					.collect();
 				if numbers.is_empty() {
-					return Err("Invalid named capture referenced".into());
+					self.unknown_reference = true;
+					return Ok(Term::Atom);
 				}
-				self.out.push_str(&format!("(?:{})", numbers.concat()));
+				let references: Vec<String> = numbers
+					.into_iter()
+					.filter(|n| self.participated(*n))
+					.map(backreference)
+					.collect();
+				if references.is_empty() {
+					return Ok(Term::ZeroWidth);
+				}
+				self.out.push_str(&format!("(?:{})", references.concat()));
 				return Ok(Term::Atom);
 			}
 			_ => {}
@@ -712,6 +779,13 @@ impl Translator {
 		let value = self.character_escape(false)?;
 		self.literal(value);
 		Ok(Term::Atom)
+	}
+
+	// Whether group `n` can have participated when a reference at the current position runs. A reference inside its own
+	// group or before it is always empty in JavaScript, since a quantifier clears the captures of its atom on each
+	// iteration; in a lookbehind, which matches backwards, the reference stays.
+	fn participated(&self, n: usize) -> bool {
+		self.lookbehinds > 0 || (n <= self.opened && !self.open.contains(&n))
 	}
 
 	// A legacy octal escape (Annex B): up to three octal digits, at most \377; an 8 or 9 is itself.
@@ -809,8 +883,8 @@ impl Translator {
 			'0' if !self.peek().is_some_and(|d| d.is_ascii_digit()) => Ok(0),
 			'0'..='9' => {
 				if self.unicode {
-					return Err(if in_class {
-						"Invalid class escape".into()
+					return Err(if c >= '8' {
+						"Invalid escape".into()
 					} else {
 						"Invalid decimal escape".into()
 					});
@@ -844,7 +918,7 @@ impl Translator {
 					}
 					return Err("Invalid escape".into());
 				}
-				if c == 'k' && !self.named.is_empty() {
+				if c == 'k' && self.named_groups {
 					return Err("Invalid named reference".into());
 				}
 				Ok(u32::from(c))
@@ -955,13 +1029,20 @@ impl Translator {
 			return Ok(ClassAtom::Char(0x08));
 		}
 		if !self.unicode && self.peek() == Some('k') {
-			if !self.named.is_empty() {
+			if self.named_groups {
 				return Err("Invalid escape".into());
 			}
 			self.pos += 1;
 			return Ok(ClassAtom::Char(u32::from('k')));
 		}
-		if let Some(escape) = self.class_escape()? {
+		let escape = self.class_escape().map_err(|error| {
+			if error == "Invalid property name" {
+				"Invalid property name in character class".into()
+			} else {
+				error
+			}
+		})?;
+		if let Some(escape) = escape {
 			return Ok(ClassAtom::Escape(escape));
 		}
 		Ok(ClassAtom::Char(self.character_escape(true)?))
@@ -997,11 +1078,12 @@ const NOTHING: &str = "[^\\x{0}-\\x{10FFFF}]";
 const WORD_BOUNDARY: &str = "(?:(?<=[0-9A-Za-z_])(?![0-9A-Za-z_])|(?<![0-9A-Za-z_])(?=[0-9A-Za-z_]))";
 const NOT_WORD_BOUNDARY: &str = "(?:(?<=[0-9A-Za-z_])(?=[0-9A-Za-z_])|(?<![0-9A-Za-z_])(?![0-9A-Za-z_]))";
 
-// The number of capturing groups and the named ones with their numbers, counted before parsing (a backreference may
-// precede its group).
-fn scan_groups(chars: &[char]) -> (usize, Vec<(String, usize)>) {
+// The number of capturing groups, the named ones with their numbers, and whether any `(?<` group occurs, counted
+// before parsing (a backreference may precede its group).
+fn scan_groups(chars: &[char]) -> (usize, Vec<(String, usize)>, bool) {
 	let mut groups = 0;
 	let mut named = Vec::new();
+	let mut named_groups = false;
 	let mut i = 0;
 	let mut in_class = false;
 	while i < chars.len() {
@@ -1014,6 +1096,7 @@ fn scan_groups(chars: &[char]) -> (usize, Vec<(String, usize)>) {
 					groups += 1;
 				} else if chars.get(i + 2) == Some(&'<') && !matches!(chars.get(i + 3), Some('=') | Some('!')) {
 					groups += 1;
+					named_groups = true;
 					let mut end = i + 3;
 					if let Some(name) = read_group_name(chars, &mut end) {
 						named.push((name, groups));
@@ -1024,7 +1107,7 @@ fn scan_groups(chars: &[char]) -> (usize, Vec<(String, usize)>) {
 		}
 		i += 1;
 	}
-	(groups, named)
+	(groups, named, named_groups)
 }
 
 // The group name at `pos` through its closing `>` (consumed), with its `\u` escapes decoded, or `None` when it is not

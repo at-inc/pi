@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/idna/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 // /*--------------------------------------------------------------------------
 //

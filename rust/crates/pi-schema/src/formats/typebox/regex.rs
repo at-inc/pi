@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/regex.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `new RegExp(value, "u")` is [`crate::shared::JsRegex`], which accepts and rejects what V8 does except for the
 //! gaps listed in its file header.

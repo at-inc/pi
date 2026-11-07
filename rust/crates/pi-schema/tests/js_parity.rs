@@ -45,6 +45,24 @@ fn regex_backreferences_follow_javascript() {
 }
 
 #[test]
+fn regex_zero_width_repeats_follow_javascript() {
+	assert_eq!(test("(?:)*?", "u", "a"), Ok(true));
+	assert_eq!(test("^(?i:)+a$", "", "a"), Ok(true));
+	assert_eq!(test("^(?:(?<=a))*b$", "u", "b"), Ok(true));
+	assert_eq!(test("^(?:^)*a", "u", "a"), Ok(true));
+	assert_eq!(test(r"^(?=(a))?\1b", "", "ab"), Ok(false));
+	assert_eq!(test(r"^(?:(?=(a)))*\1b", "u", "ab"), Ok(false));
+	assert_eq!(test(r"^(?:(?=(a)))+\1b$", "u", "ab"), Ok(true));
+}
+
+#[test]
+fn regex_references_inside_or_before_their_group_match_empty() {
+	assert_eq!(test(r"^(\1a)$", "u", "a"), Ok(true));
+	assert_eq!(test(r"^(?<n>a\k<n>)$", "u", "a"), Ok(true));
+	assert_eq!(test(r"^(?:\1(b))+$", "u", "bb"), Ok(true));
+}
+
+#[test]
 fn regex_group_names_follow_javascript() {
 	assert_eq!(test(r"(?<\u0061>x)\k<a>", "u", "xx"), Ok(true));
 	assert_eq!(test("(?<a\u{301}>x)", "u", "x"), Ok(true));
@@ -108,6 +126,52 @@ fn regex_errors_use_v8_wording() {
 		message(r"(?<a>x)[\k]", ""),
 		"Invalid regular expression: /(?<a>x)[\\k]/: Invalid escape"
 	);
+	assert_eq!(
+		message(r"[\1]", "u"),
+		"Invalid regular expression: /[\\1]/u: Invalid decimal escape"
+	);
+	assert_eq!(
+		message(r"[\8]", "u"),
+		"Invalid regular expression: /[\\8]/u: Invalid escape"
+	);
+	assert_eq!(
+		message(r"[\p{L]", "u"),
+		"Invalid regular expression: /[\\p{L]/u: Invalid property name in character class"
+	);
+	assert_eq!(
+		message(r"\b{2,1}", ""),
+		"Invalid regular expression: /\\b{2,1}/: Nothing to repeat"
+	);
+	assert_eq!(
+		message(r"(?<a>x)\k<a", "u"),
+		"Invalid regular expression: /(?<a>x)\\k<a/u: Invalid capture group name"
+	);
+}
+
+// V8 checks named references after the whole pattern parsed, and a group's name when the group closes.
+#[test]
+fn regex_errors_come_in_v8_order() {
+	let message = |source: &str, flags: &str| test(source, flags, "").unwrap_err();
+	assert_eq!(
+		message(r"\k<m>(?<n>)(", "u"),
+		"Invalid regular expression: /\\k<m>(?<n>)(/u: Unterminated group"
+	);
+	assert_eq!(
+		message(r"(?<a>x)\k<b>[\k]", ""),
+		"Invalid regular expression: /(?<a>x)\\k<b>[\\k]/: Invalid escape"
+	);
+	assert_eq!(
+		message("(?<a>(?<a>x)(?x:))", "u"),
+		"Invalid regular expression: /(?<a>(?<a>x)(?x:))/u: Invalid group"
+	);
+	assert_eq!(
+		message(r"[\k](?<1>)", ""),
+		"Invalid regular expression: /[\\k](?<1>)/: Invalid escape"
+	);
+	assert_eq!(
+		message("(?<a>(?<a>x))", "u"),
+		"Invalid regular expression: /(?<a>(?<a>x))/u: Duplicate capture group name"
+	);
 }
 
 #[test]
@@ -165,6 +229,90 @@ fn large_integers_round_like_javascript_numbers() {
 }
 
 #[test]
+fn references_resolve_like_the_url_standard() {
+	use pi_schema::resolver::resolve_uri;
+	assert_eq!(resolve_uri("////x?y", "http://example.com/root.json"), "http://x/?y");
+	assert_eq!(resolve_uri(r"/\/x", "http://a/"), "http://x/");
+	assert_eq!(resolve_uri("a^b?^#^", "tag:/x/y"), "tag:/x/a%5Eb?^#^");
+	assert_eq!(resolve_uri("a^b", "http://ex.com/^/c"), "http://ex.com/%5E/a%5Eb");
+	assert_eq!(resolve_uri("#a", "tag:x^y"), "tag:x^y#a");
+}
+
+// Where the TypeScript runs out of stack, check() fails and errors() and parse() throw the RangeError, even when the
+// recursion sits in a branch the check could pass without; coerce() treats the branch as failing, as its try does.
+#[test]
+fn an_endless_reference_throws_out_of_errors_and_parse() {
+	let validator = compile_coercing(
+		&json!({"anyOf": [{"$ref": "#"}, {"type": "number"}]}),
+		&CompileOptions::default(),
+	)
+	.unwrap();
+	assert!(!validator.check(&json!(1)));
+	assert_eq!(validator.errors(&json!(1)).unwrap_err().name, "RangeError");
+	assert_eq!(
+		validator.parse(&json!(".5")).err().map(|error| error.name),
+		Some("RangeError".into())
+	);
+	assert_eq!(*validator.coerce(&json!(".5")).unwrap(), json!(0.5));
+	let negated = compile(
+		&json!({"type": "number", "not": {"$ref": "#"}}),
+		&CompileOptions::default(),
+	)
+	.unwrap();
+	assert_eq!(negated.errors(&json!(1)).unwrap_err().name, "RangeError");
+}
+
+// A subschema that failed to compile stays in the compiler's cache as an empty indirection, as in the TypeScript, so a
+// later branch that only references it compiles; calling the empty one throws the TypeScript's TypeError.
+#[test]
+fn a_subschema_that_failed_to_compile_stays_cached() {
+	let schema = json!({
+		"$ref": "#/definitions/ok",
+		"definitions": {"ok": {}, "bad": {"$ref": "other.json"}},
+		"anyOf": [{"$ref": "#/definitions/bad"}, {"type": "number", "properties": {"a": {"$ref": "#/definitions/bad"}}}]
+	});
+	let options = CompileOptions {
+		draft: Some(pi_schema::Draft::V7),
+		..CompileOptions::default()
+	};
+	let validator = compile_coercing(&schema, &options).unwrap();
+	assert_eq!(*validator.coerce(&json!(".5")).unwrap(), json!(0.5));
+}
+
+// JSON.parse rounds every decimal correctly; serde_json does only with its float_roundtrip feature (without it,
+// "9.727837981879871e+26" parses one unit in the last place off).
+#[test]
+fn an_obj_property_named_proto_sets_the_prototype_and_stays_required() {
+	let schema = obj(
+		[("__proto__", str(json!({})).into()), ("a", opt(str(json!({}))).into())],
+		json!({}),
+	);
+	assert_eq!(
+		schema,
+		json!({"type": "object", "properties": {"a": {"type": "string"}}, "required": ["__proto__"], "additionalProperties": false})
+	);
+	assert_eq!(paths(schema.clone(), json!({"a": "x"})), ["/__proto__"]);
+	assert_eq!(paths(schema, json!({"__proto__": "x"})), ["/__proto__"]);
+	let schema = obj([("__proto__", opt(str(json!({}))).into())], json!({}));
+	assert_eq!(
+		schema,
+		json!({"type": "object", "properties": {}, "additionalProperties": false})
+	);
+	assert_eq!(paths(schema, json!({"__proto__": "x"})), ["/__proto__"]);
+}
+
+#[test]
+fn long_decimals_parse_like_json_parse() {
+	let schema: Value = serde_json::from_str(r#"{"exclusiveMaximum": 972783798187987123879878123.18878137}"#).unwrap();
+	let value: Value = serde_json::from_str("972783798187987123879878123.18878137").unwrap();
+	let short: Value = serde_json::from_str("9.727837981879871e+26").unwrap();
+	assert_eq!(value.as_f64(), short.as_f64());
+	let validator = compile(&schema, &CompileOptions::default()).unwrap();
+	let errors = validator.errors(&value).unwrap();
+	assert_eq!(errors[0].message, "expected < 9.727837981879871e+26");
+}
+
+#[test]
 fn a_reference_cycle_fails_instead_of_overflowing_the_stack() {
 	let validator = compile(&json!({"$ref": "#"}), &CompileOptions::default()).unwrap();
 	assert!(!validator.check(&json!(1)));
@@ -185,4 +333,19 @@ fn formats_follow_javascript() {
 	assert!(!format("iri-reference", "///"));
 	assert!(format("idn-email", &format!("\"{}\"@b", "a".repeat(500_000))));
 	assert!(!format("idn-email", "a@b-"));
+	assert!(!format("iri", &format!("http://a/{}%zz", "%41".repeat(600_000))));
+	assert!(!format("iri-reference", &format!("{} ", "%41".repeat(600_000))));
+}
+
+#[test]
+fn deeply_nested_patterns_fail_instead_of_overflowing_the_stack() {
+	let deep = |n: usize| format!("{}a{}", "(".repeat(n), ")".repeat(n));
+	assert_eq!(test(&deep(63), "u", "a"), Ok(true));
+	assert_eq!(
+		test(&deep(10_000), "u", "a"),
+		Err(format!(
+			"Invalid regular expression: /{}/u: Pattern too deeply nested",
+			deep(10_000)
+		))
+	);
 }

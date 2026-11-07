@@ -1,5 +1,5 @@
 //! Port of `packages/schema/src/formats/typebox/date_time.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 // /*--------------------------------------------------------------------------
 //

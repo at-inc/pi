@@ -1,11 +1,11 @@
 //! Port of `packages/schema/src/formats/typebox/idn_email.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The JavaScript `.` of the pattern (with `u`: any code point but a line terminator) is spelled
 //! `[^\n\r\u{2028}\u{2029}]`; `\u{0080}-\u{10FFFF}` excludes the surrogates, which a Rust string cannot hold. A domain
 //! label's `(?:[\p{L}\p{N}-]{0,62})(?<!-)` is spelled `(?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?`, the same labels without
 //! a lookbehind, so the pattern runs on the `regex` crate, which has no backtracking limit to give up at on a long
-//! value.
+//! value. `normalize("NFC")` is `unicode-normalization`, on Unicode 18 data where Node 24 has Unicode 17.
 
 // /*--------------------------------------------------------------------------
 //
