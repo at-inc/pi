@@ -11,11 +11,13 @@
 //! invalidation, and the `oauth-2025-04-20` beta appended to token-authenticated requests.
 //!
 //! Differences from the SDK, none of which pi-ai reaches:
-//! - Credentials are explicit. The client never reads `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` or runs the default
+//! - Credentials and the base URL are explicit. The client never reads `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/
+//!   `ANTHROPIC_BASE_URL` (pi-ai always passes `model.baseUrl`) or runs the default
 //!   credential chain (profiles, config files): pi-ai's `PiAnthropic` passes `apiKey: null, authToken: null` and
 //!   disables the chain. Only `oidc_federation` configs without `credentials_path` or `base_url` are supported, which
 //!   is the config pi-ai builds; `user_oauth`, `credentials`, `profile`, an `apiKey` function, middleware,
 //!   OpenTelemetry tracing, logging, `fetchOptions`, `defaultQuery` and the `x-stainless-helper` tagging are not.
+//!   `betas`, `user_profile_id` and `workspace_id` are header strings (`String(value)`); the SDK's array form is not.
 //! - The deprecated-model and thinking-type `console.warn` calls of `messages.create` are not ported.
 //! - Request headers reach `fetch` as a `Headers` object would list them: lowercase names in sorted order, values of
 //!   repeated names joined with `", "` and trimmed of HTTP whitespace. Header values are not validated.
@@ -161,36 +163,50 @@ impl NullableHeaders {
 	}
 
 	/// The entries as a header source for [`build_headers`]: values, then nulls.
-	fn as_source(&self) -> Vec<(String, Option<String>)> {
-		let mut source: Vec<(String, Option<String>)> = self
+	fn as_source(&self) -> HeaderSource {
+		let mut entries: Vec<(String, Option<String>)> = self
 			.entries()
 			.into_iter()
 			.map(|(name, value)| (name, Some(value)))
 			.collect();
-		source.extend(self.nulls.iter().map(|name| (name.clone(), None)));
-		source
+		entries.extend(self.nulls.iter().map(|name| (name.clone(), None)));
+		HeaderSource { record: false, entries }
 	}
 }
 
-/// A header record in property order.
-type HeaderSource = Vec<(String, Option<String>)>;
+/// One `buildHeaders` source in iteration order. `record` marks a plain object, whose every key replaces the
+/// headers of that name set so far, where an already-built `NullableHeaders` appends repeated names.
+struct HeaderSource {
+	record: bool,
+	entries: Vec<(String, Option<String>)>,
+}
+
+impl HeaderSource {
+	fn record(entries: Vec<(String, Option<String>)>) -> Self {
+		Self { record: true, entries }
+	}
+}
 
 fn record_source<V: AsRef<str>>(headers: &IndexMap<String, V>) -> HeaderSource {
-	headers
-		.iter()
-		.map(|(name, value)| (name.clone(), Some(value.as_ref().to_string())))
-		.collect()
+	HeaderSource::record(
+		headers
+			.iter()
+			.map(|(name, value)| (name.clone(), Some(value.as_ref().to_string())))
+			.collect(),
+	)
 }
 
 fn nullable_source(headers: Option<&ProviderHeaders>) -> HeaderSource {
-	headers
-		.map(|headers| {
-			headers
-				.iter()
-				.map(|(name, value)| (name.clone(), value.clone()))
-				.collect()
-		})
-		.unwrap_or_default()
+	HeaderSource::record(
+		headers
+			.map(|headers| {
+				headers
+					.iter()
+					.map(|(name, value)| (name.clone(), value.clone()))
+					.collect()
+			})
+			.unwrap_or_default(),
+	)
 }
 
 /// `Headers` value normalization: leading and trailing HTTP whitespace removed.
@@ -198,15 +214,15 @@ fn normalize_header_value(value: &str) -> String {
 	value.trim_matches([' ', '\t', '\r', '\n']).to_string()
 }
 
-/// `buildHeaders(newHeaders)`: later sources replace a header of an earlier one, a header repeated within one source
-/// is appended, and `null` removes a header and records the removal.
+/// `buildHeaders(newHeaders)`: later sources replace a header of an earlier one, a header repeated within one built
+/// source is appended (a record key always replaces), and `null` removes a header and records the removal.
 fn build_headers(new_headers: Vec<HeaderSource>) -> NullableHeaders {
 	let mut target = NullableHeaders::default();
 	for headers in new_headers {
 		let mut seen_headers: IndexSet<String> = IndexSet::new();
-		for (name, value) in headers {
+		for (name, value) in headers.entries {
 			let lower_name = name.to_ascii_lowercase();
-			if !seen_headers.contains(&lower_name) {
+			if headers.record || !seen_headers.contains(&lower_name) {
 				target.values.shift_remove(&lower_name);
 				seen_headers.insert(lower_name.clone());
 			}
@@ -342,7 +358,7 @@ fn validate_positive_integer(name: &str, n: f64) -> PiResult<f64> {
 /// `readEnv(env)`: trimmed, empty as unset.
 fn read_env(name: &str) -> Option<String> {
 	pi_host::env(name)
-		.map(|value| value.trim().to_string())
+		.map(|value| js_trim(&value).to_string())
 		.filter(|value| !value.is_empty())
 }
 
@@ -359,11 +375,52 @@ fn now_as_seconds() -> f64 {
 	(pi_host::now_ms() / 1000.0).floor()
 }
 
+/// `String.prototype.trim`: JS white space and line terminators, which include U+FEFF but not U+0085.
+fn js_trim(value: &str) -> &str {
+	value.trim_matches(|ch: char| (ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}')
+}
+
+/// `qs`'s RFC 3986 encoder: every UTF-8 byte except `A-Za-z0-9-_.~` percent-encoded.
+fn qs_encode(value: &str) -> String {
+	value
+		.bytes()
+		.map(|byte| match byte {
+			b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (byte as char).to_string(),
+			_ => format!("%{byte:02X}"),
+		})
+		.collect()
+}
+
+/// `transformOutputFormat(params)`: the deprecated `output_format` moves to `output_config.format`.
+fn transform_output_format(params: &mut Map<String, Value>) -> PiResult<()> {
+	if !params.get("output_format").is_some_and(truthy) {
+		return Ok(());
+	}
+	let output_config = params.get("output_config");
+	if output_config
+		.and_then(|config| config.get("format"))
+		.is_some_and(truthy)
+	{
+		return Err(anthropic_error(
+			"Both output_format and output_config.format were provided. Please use only output_config.format (output_format is deprecated).",
+		));
+	}
+	let mut config = match output_config {
+		Some(Value::Object(config)) => config.clone(),
+		_ => Map::new(),
+	};
+	let output_format = params.shift_remove("output_format").expect("output_format is truthy");
+	config.insert("format".into(), output_format);
+	params.insert("output_config".into(), Value::Object(config));
+	Ok(())
+}
+
 /// `normalizePlatform(process.platform)` for the Rust target.
 fn platform_name() -> String {
 	let platform = match std::env::consts::OS {
 		"macos" => "darwin",
 		"windows" => "win32",
+		"solaris" | "illumos" => "sunos",
 		other => other,
 	}
 	.to_lowercase();
@@ -382,9 +439,16 @@ fn platform_name() -> String {
 	}
 }
 
-/// `normalizeArch(process.arch)` for the Rust target.
+/// `normalizeArch(process.arch)` for the Rust target, named as Node names it.
 fn arch_name() -> String {
-	match std::env::consts::ARCH {
+	let arch = match std::env::consts::ARCH {
+		"x86" => "ia32",
+		"powerpc" => "ppc",
+		"powerpc64" => "ppc64",
+		"loongarch64" => "loong64",
+		other => other,
+	};
+	match arch {
 		"x86_64" => "x64".into(),
 		"arm" => "arm".into(),
 		"aarch64" => "arm64".into(),
@@ -587,7 +651,7 @@ pub fn identity_token_from_file(path: &str) -> PiResult<IdentityTokenProvider> {
 					error_string(&error)
 				))
 			})?;
-			let token = content.trim();
+			let token = js_trim(&content);
 			if token.is_empty() {
 				return Err(anthropic_error(format!("Identity token file at {path} is empty")));
 			}
@@ -850,7 +914,10 @@ pub fn oidc_federation_provider(config: OidcFederationConfig) -> AccessTokenProv
 				)
 			})?;
 
-			let request_id = response.header("Request-Id").map(str::to_string);
+			let request_id = response
+				.header("Request-Id")
+				.filter(|request_id| !request_id.is_empty())
+				.map(str::to_string);
 
 			if !response.ok() {
 				let status = response.status;
@@ -1119,8 +1186,8 @@ impl AnthropicClient {
 			for line in custom_headers_env.split('\n') {
 				if let Some(colon) = line.find(':') {
 					parsed.insert(
-						line[..colon].trim().to_string(),
-						Some(line[colon + 1..].trim().to_string()),
+						js_trim(&line[..colon]).to_string(),
+						Some(js_trim(&line[colon + 1..]).to_string()),
 					);
 				}
 			}
@@ -1185,13 +1252,14 @@ impl AnthropicClient {
 	/// fields.
 	pub async fn beta_messages_create(&self, params: &Value, options: RequestOptions) -> PiResult<HttpResponse> {
 		let mut body = params.as_object().cloned().unwrap_or_default();
+		transform_output_format(&mut body)?;
 		let betas = body.shift_remove("betas");
 		let user_profile_id = body.shift_remove("user_profile_id");
 		let workspace_id = body.shift_remove("workspace_id");
 
 		let timeout = options.timeout.or(self.options.timeout).unwrap_or(DEFAULT_TIMEOUT);
 
-		let mut create_headers: HeaderSource = Vec::new();
+		let mut create_headers = Vec::new();
 		if let Some(betas) = betas.as_ref().filter(|betas| !betas.is_null()) {
 			create_headers.push(("anthropic-beta".into(), Some(template_string(betas))));
 		}
@@ -1204,7 +1272,10 @@ impl AnthropicClient {
 		if let Some(workspace_id) = workspace_id.as_ref().filter(|id| !id.is_null()) {
 			create_headers.push(("anthropic-workspace-id".into(), Some(template_string(workspace_id))));
 		}
-		let headers = build_headers(vec![create_headers, nullable_source(options.headers.as_ref())]);
+		let headers = build_headers(vec![
+			HeaderSource::record(create_headers),
+			nullable_source(options.headers.as_ref()),
+		]);
 
 		self.make_request(
 			"post",
@@ -1250,15 +1321,22 @@ impl AnthropicClient {
 			}
 
 			let controller = AbortController::new();
-			if let Some(signal) = &options.signal {
+			let mut listener = options.signal.as_ref().map(|signal| {
 				let controller = controller.clone();
-				signal.add_listener(move |_| controller.abort());
-			}
+				(signal.clone(), signal.add_listener(move |_| controller.abort()))
+			});
+			// `releaseRequestSignal(controller)`: a failed or retried attempt stops listening to the caller's signal.
+			let mut release = move || {
+				if let Some((signal, id)) = listener.take() {
+					signal.remove_listener(id);
+				}
+			};
 			request.signal = Some(controller.signal());
 			let response = self.fetch_with_timeout(request, timeout, &controller).await;
 
 			let response = match response {
 				Err(error) => {
+					release();
 					if options.signal.as_ref().is_some_and(AbortSignal::aborted) {
 						return Err(user_abort_error());
 					}
@@ -1290,6 +1368,7 @@ impl AnthropicClient {
 			};
 
 			if !response.ok() {
+				release();
 				let should_retry = self.should_retry(&response, &flags);
 				if retries_remaining > 0.0 && should_retry {
 					let delay = self.retry_delay(&response.headers, retries_remaining, &options);
@@ -1426,7 +1505,16 @@ impl AnthropicClient {
 		} else {
 			format!("{base_url}{path}")
 		};
-		let url = url::Url::parse(&joined).map_err(|_| PiError::type_error("Invalid URL"))?;
+		let mut url = url::Url::parse(&joined).map_err(|_| PiError::type_error("Invalid URL"))?;
+		// `Object.fromEntries(url.searchParams)` re-encoded by `qs.stringify` (RFC 3986).
+		let path_query: IndexMap<String, String> = url.query_pairs().into_owned().collect();
+		if !path_query.is_empty() {
+			let query: Vec<String> = path_query
+				.iter()
+				.map(|(key, value)| format!("{}={}", qs_encode(key), qs_encode(value)))
+				.collect();
+			url.set_query(Some(&query.join("&")));
+		}
 		Ok(url.to_string())
 	}
 
@@ -1464,7 +1552,7 @@ impl AnthropicClient {
 			record_source(&defaults),
 			self.auth_headers(flags).await?,
 			nullable_source(self.options.default_headers.as_ref()),
-			vec![("content-type".into(), Some("application/json".into()))],
+			HeaderSource::record(vec![("content-type".into(), Some("application/json".into()))]),
 			headers.as_source(),
 		]);
 
@@ -1484,18 +1572,24 @@ impl AnthropicClient {
 		{
 			let token = token_cache.get_token().await?;
 			flags.used_token_cache.set(true);
-			return Ok(vec![("Authorization".into(), Some(format!("Bearer {token}")))]);
+			return Ok(build_headers(vec![HeaderSource::record(vec![(
+				"Authorization".into(),
+				Some(format!("Bearer {token}")),
+			)])])
+			.as_source());
 		}
 		let bearer = self
 			.auth_token
 			.as_ref()
 			.map(|auth_token| vec![("Authorization".to_string(), Some(format!("Bearer {auth_token}")))])
 			.unwrap_or_default();
+		let bearer = HeaderSource::record(bearer);
 		let api_key = self
 			.api_key
 			.as_ref()
 			.map(|api_key| vec![("Authorization".to_string(), Some(format!("Bearer {api_key}")))])
 			.unwrap_or_default();
+		let api_key = HeaderSource::record(api_key);
 		Ok(build_headers(vec![bearer, api_key]).as_source())
 	}
 
@@ -1554,4 +1648,79 @@ fn timed_out_pattern(text: &str) -> bool {
 /// The SDK's `sleep(ms, signal)`: resolves after `ms`, or early when `signal` aborts.
 async fn sdk_sleep(ms: f64, signal: Option<&AbortSignal>) {
 	let _ = pi_host::sleep(ms, signal).await;
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn record(entries: &[(&str, &str)]) -> HeaderSource {
+		HeaderSource::record(
+			entries
+				.iter()
+				.map(|(name, value)| (name.to_string(), Some(value.to_string())))
+				.collect(),
+		)
+	}
+
+	#[test]
+	fn record_keys_replace_and_built_sources_append() {
+		let headers = build_headers(vec![
+			record(&[("accept", "application/json")]),
+			record(&[("Accept", "text/plain")]),
+		]);
+		assert_eq!(headers.get("accept").as_deref(), Some("text/plain"));
+		let headers = build_headers(vec![record(&[("X-A", "1"), ("x-a", "2")])]);
+		assert_eq!(headers.get("x-a").as_deref(), Some("2"));
+		let built = HeaderSource {
+			record: false,
+			entries: vec![("x-a".into(), Some("1".into())), ("x-a".into(), Some("2".into()))],
+		};
+		assert_eq!(build_headers(vec![built]).get("x-a").as_deref(), Some("1, 2"));
+	}
+
+	#[test]
+	fn moves_output_format_into_output_config() {
+		let mut params = json!({ "model": "m", "output_format": { "type": "json_schema" }, "max_tokens": 1 })
+			.as_object()
+			.unwrap()
+			.clone();
+		transform_output_format(&mut params).unwrap();
+		assert_eq!(
+			json_stringify(&Value::Object(params)),
+			r#"{"model":"m","max_tokens":1,"output_config":{"format":{"type":"json_schema"}}}"#
+		);
+		let mut both = json!({ "output_format": { "type": "x" }, "output_config": { "format": { "type": "y" } } })
+			.as_object()
+			.unwrap()
+			.clone();
+		assert!(
+			transform_output_format(&mut both)
+				.unwrap_err()
+				.message
+				.starts_with("Both output_format")
+		);
+	}
+
+	#[test]
+	fn re_encodes_the_query_of_a_base_url_with_a_query() {
+		pi_host::testing::run(|_| async {
+			let client = AnthropicClient::new(ClientOptions {
+				api_key: Some("key".into()),
+				base_url: Some("https://proxy.test/x?k=v".into()),
+				..ClientOptions::default()
+			})
+			.unwrap();
+			assert_eq!(
+				client.build_url("/v1/messages?beta=true").unwrap(),
+				"https://proxy.test/x?k=v%2Fv1%2Fmessages%3Fbeta%3Dtrue"
+			);
+		});
+	}
+
+	#[test]
+	fn trims_like_javascript() {
+		assert_eq!(js_trim("\u{feff} token\n"), "token");
+		assert_eq!(js_trim("\u{85}token"), "\u{85}token");
+	}
 }
