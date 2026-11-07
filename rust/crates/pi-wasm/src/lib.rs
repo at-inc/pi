@@ -15,4 +15,6 @@ mod json;
 mod options;
 mod websocket;
 
+mod agent;
+
 pub use host::init;

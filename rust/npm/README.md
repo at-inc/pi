@@ -8,6 +8,8 @@ These packages ship the pi Rust core (`rust/crates`) behind the npm API of the T
 - `pi-ai` (`@at-inc/pi-ai-rs`): the facade of `@at-inc/pi-ai`. It has the same `exports` map and module layout. Its
   types come from `@at-inc/pi-ai` and its runtime from wasm. It covers the first slice:
   `createProvider`, `createModels`, `openAICompletionsApi`, `stream`/`complete` (see [pi-ai/README.md](pi-ai/README.md)).
+- `pi-agent-core` (`@at-inc/pi-agent-core-rs`): the facade of `@at-inc/pi-agent-core`, every export bridged (see
+  [pi-agent-core/README.md](pi-agent-core/README.md)).
 
 `rust/npm` is its own npm workspace root with its own `package-lock.json`, outside the root workspaces. The root
 lockfile does not change when a facade is added.

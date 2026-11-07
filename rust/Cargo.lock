@@ -1169,6 +1169,7 @@ dependencies = [
  "futures",
  "indexmap",
  "js-sys",
+ "pi-agent",
  "pi-ai",
  "pi-host",
  "serde",
