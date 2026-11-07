@@ -1135,10 +1135,20 @@ pub fn stream_simple(
 
 	let api_key = options.as_ref().and_then(|options| options.api_key.clone());
 	let base = build_base_options(model, context, options.as_ref(), api_key.as_deref());
-	let tool_choice = options
-		.as_ref()
-		.and_then(|options| options.tool_choice)
-		.map(|tool_choice| Value::String(tool_choice_name(tool_choice).into()));
+	// The TS forwards `options.toolChoice` unchecked, so a value outside `ToolChoice` (`"required"`) arrives as an
+	// extra key.
+	let tool_choice = options.as_ref().and_then(|options| {
+		options
+			.tool_choice
+			.map(|tool_choice| Value::String(tool_choice_name(tool_choice).into()))
+			.or_else(|| {
+				options
+					.extra
+					.get("toolChoice")
+					.filter(|value| !value.is_null())
+					.cloned()
+			})
+	});
 	let clamped_reasoning = options
 		.as_ref()
 		.and_then(|options| options.reasoning)

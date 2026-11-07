@@ -274,6 +274,23 @@ mod openai_completions_tool_choice {
 		});
 	}
 
+	// The same call through `streamSimple`, as the wasm boundary passes it: the unchecked value rides in `extra`.
+	#[test]
+	fn forwards_untyped_tool_choice_from_simple_options_to_payload() {
+		run(|host| async move {
+			let mut options = simple(None);
+			options.extra.insert("toolChoice".into(), json!("required"));
+			let params = capture(
+				&host,
+				&builtin_model("openai", "gpt-4o-mini"),
+				with_tools(vec![user("Call ping with ok=true")], vec![ping_tool()]),
+				options,
+			)
+			.await;
+			assert_eq!(params["tool_choice"], json!("required"));
+		});
+	}
+
 	#[test]
 	fn includes_tool_choice_when_no_tools_are_provided() {
 		run(|host| async move {
