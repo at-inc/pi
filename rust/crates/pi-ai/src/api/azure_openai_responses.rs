@@ -3,7 +3,7 @@
 //!
 //! - `AzureOpenAIResponsesOptions` reaches `ProviderStreams::stream` as `ProviderStreamOptions.extra` keys:
 //!   `reasoningEffort`, `reasoningSummary` and `toolChoice` as in `openai_responses.rs`, and the `azure*` string keys
-//!   of `AzureEndpointOptions`.
+//!   of `AzureEndpointOptions`. A `reasoningSummary` that is not a string reads as `null`, as there.
 //! - `model.compat` is read through `openai_responses_compat()`: a field of the wrong type reads as absent.
 //! - The async body runs on the host executor from the first step; the output timestamp is taken in `stream()`.
 //! - `onPayload` receives a copy of the params, so a hook that mutates them in place and returns `undefined` loses

@@ -7,6 +7,8 @@
 //! addressed by their index in the shared output message instead of by object reference. Output slots are keyed by
 //! the event's raw `output_index`, so events without one share a slot, as the TS `Map` keyed by `undefined` does.
 //! A tool call `namespace` that is not a string is dropped, and the image callbacks receive the raw `output_index`.
+//! A `function_call` or `custom_tool_call` item without a string `name` gets the name `""`, as `ToolCall.name` is a
+//! `String`; the TS keeps `undefined` and so drops `name` when the call is replayed.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;

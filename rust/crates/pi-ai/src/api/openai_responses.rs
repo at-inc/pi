@@ -3,11 +3,14 @@
 //!
 //! - `OpenAIResponsesOptions` reaches `ProviderStreams::stream` as `ProviderStreamOptions.extra` keys:
 //!   `reasoningEffort` (a thinking level string), `reasoningSummary` (string or `null`), `serviceTier` and
-//!   `toolChoice` (any JSON). An unknown `reasoningEffort` string reads as absent.
+//!   `toolChoice` (any JSON). An unknown `reasoningEffort` string reads as absent, and a `reasoningSummary` that is
+//!   not a string reads as `null` (the TS sends a truthy non-string, such as `true`, as the summary).
 //! - `getCompat` reads `model.compat` through `openai_responses_compat()`: a field of the wrong type reads as absent
 //!   and gets its default, where the TS uses the value as it is.
 //! - The async body runs on the host executor from the first step, so a setup failure (a missing API key) is pushed
 //!   when the task runs, not before `stream()` returns; the output timestamp is still taken in `stream()`.
+//! - `onPayload` receives a copy of the params, so a hook that mutates them in place and returns `undefined` loses
+//!   the mutation; the TS sends it.
 
 use std::rc::Rc;
 
