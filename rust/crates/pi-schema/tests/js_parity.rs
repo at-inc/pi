@@ -238,6 +238,47 @@ fn references_resolve_like_the_url_standard() {
 	assert_eq!(resolve_uri("#a", "tag:x^y"), "tag:x^y#a");
 }
 
+// Where the TypeScript runs out of stack, check() fails and errors() and parse() throw the RangeError, even when the
+// recursion sits in a branch the check could pass without; coerce() treats the branch as failing, as its try does.
+#[test]
+fn an_endless_reference_throws_out_of_errors_and_parse() {
+	let validator = compile_coercing(
+		&json!({"anyOf": [{"$ref": "#"}, {"type": "number"}]}),
+		&CompileOptions::default(),
+	)
+	.unwrap();
+	assert!(!validator.check(&json!(1)));
+	assert_eq!(validator.errors(&json!(1)).unwrap_err().name, "RangeError");
+	assert_eq!(
+		validator.parse(&json!(".5")).err().map(|error| error.name),
+		Some("RangeError".into())
+	);
+	assert_eq!(*validator.coerce(&json!(".5")).unwrap(), json!(0.5));
+	let negated = compile(
+		&json!({"type": "number", "not": {"$ref": "#"}}),
+		&CompileOptions::default(),
+	)
+	.unwrap();
+	assert_eq!(negated.errors(&json!(1)).unwrap_err().name, "RangeError");
+}
+
+// A subschema that failed to compile stays in the compiler's cache as an empty indirection, as in the TypeScript, so a
+// later branch that only references it compiles; calling the empty one throws the TypeScript's TypeError.
+#[test]
+fn a_subschema_that_failed_to_compile_stays_cached() {
+	let schema = json!({
+		"$ref": "#/definitions/ok",
+		"definitions": {"ok": {}, "bad": {"$ref": "other.json"}},
+		"anyOf": [{"$ref": "#/definitions/bad"}, {"type": "number", "properties": {"a": {"$ref": "#/definitions/bad"}}}]
+	});
+	let options = CompileOptions {
+		draft: Some(pi_schema::Draft::V7),
+		..CompileOptions::default()
+	};
+	let validator = compile_coercing(&schema, &options).unwrap();
+	assert_eq!(*validator.coerce(&json!(".5")).unwrap(), json!(0.5));
+}
+
 // JSON.parse rounds every decimal correctly; serde_json does only with its float_roundtrip feature (without it,
 // "9.727837981879871e+26" parses one unit in the last place off).
 #[test]

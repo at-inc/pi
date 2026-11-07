@@ -146,13 +146,8 @@ impl Compiler {
 			.insert(object.id(), (object.clone(), indirect(&slot)));
 		self.0.slots.borrow_mut().push(slot.clone());
 		let base = self.0.r.base_for(object, base);
-		let check = match self.build(object, &base) {
-			Ok(check) => check,
-			Err(error) => {
-				self.0.cache.borrow_mut().remove(&object.id());
-				return Err(error);
-			}
-		};
+		// A schema that fails to compile keeps its empty indirection in the cache, as in the TypeScript.
+		let check = self.build(object, &base)?;
 		*slot.borrow_mut() = Some(check.clone());
 		self.0
 			.cache
@@ -668,13 +663,7 @@ impl Compiler {
 			.insert(object.id(), (object.clone(), indirect_annotating(&slot)));
 		self.0.annotating_slots.borrow_mut().push(slot.clone());
 		let base = self.0.r.base_for(object, base);
-		let check = match self.build_annotating(object, &base) {
-			Ok(check) => check,
-			Err(error) => {
-				self.0.annotating_cache.borrow_mut().remove(&object.id());
-				return Err(error);
-			}
-		};
+		let check = self.build_annotating(object, &base)?;
 		*slot.borrow_mut() = Some(check.clone());
 		self.0
 			.annotating_cache

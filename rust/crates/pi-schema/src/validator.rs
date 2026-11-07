@@ -7,7 +7,9 @@
 //! `coerce`), `compile_coercing()` is the `coerce: true` overload and returns a `CoercingValidator`. The type parameter
 //! `T` (the static type of valid values) has no runtime effect and is dropped. errors(), coerce() and parse() return
 //! `PiResult` where the TypeScript can throw (an explainer or coercer whose schema fails to compile, an invalid
-//! pattern).
+//! pattern). Where the TypeScript check throws (a reference that recurses without end, a subschema that failed to
+//! compile; see `checks.rs`), errors() and parse() throw the same error and check() returns false (the raw `check`
+//! function may return either).
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -17,6 +19,7 @@ use std::rc::Rc;
 use pi_host::PiResult;
 use serde_json::Value;
 
+use crate::checks::catching;
 use crate::coerce::Coercer;
 use crate::compiler::{Compiler, is_restart};
 use crate::explain::Explainer;
@@ -64,13 +67,13 @@ impl Validator {
 
 	/// Whether `value` is valid (`validator.check(value)`).
 	pub fn check(&self, value: &Value) -> bool {
-		(self.check)(value)
+		catching(|| (self.check)(value)).unwrap_or(false)
 	}
 
 	/// Why `value` is invalid: one error per failing keyword, `[]` when it is valid. Built on the first failure and
 	/// kept, so a validator whose values always pass never pays for it.
 	pub fn errors(&self, value: &Value) -> PiResult<Vec<ValidationError>> {
-		if (self.check)(value) {
+		if catching(|| (self.check)(value))? {
 			return Ok(Vec::new());
 		}
 		let explainer = self.explainer.borrow().clone();
@@ -85,7 +88,7 @@ impl Validator {
 				explainer
 			}
 		};
-		explainer.errors(value)
+		catching(|| explainer.errors(value))?
 	}
 }
 
@@ -133,7 +136,7 @@ impl CoercingValidator {
 	/// Coerces `value`, then checks it: the coerced value when it is valid, else its errors.
 	pub fn parse(&self, value: &Value) -> PiResult<ParseResult> {
 		let coerced = self.coerce(value)?;
-		if (self.check)(&coerced) {
+		if catching(|| (self.check)(&coerced))? {
 			return Ok(ParseResult::Ok(coerced.into_owned()));
 		}
 		Ok(ParseResult::Err(self.errors(&coerced)?))
