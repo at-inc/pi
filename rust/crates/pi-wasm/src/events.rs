@@ -126,7 +126,7 @@ pub fn send(stream: AssistantMessageEventStream, sink: EventSink) {
 
 /// What the JS side holds of the partial, so each event sends only what changed.
 #[derive(Default)]
-struct Mirror {
+pub(crate) struct Mirror {
 	partial: Option<SharedAssistantMessage>,
 	/// The message without `content`, as last sent.
 	head: Option<AssistantMessage>,
@@ -138,7 +138,15 @@ struct Mirror {
 }
 
 impl Mirror {
-	fn send(&mut self, sink: &EventSink, event: &AssistantMessageEvent) {
+	/// Ends the mirrored stream for the sink (`END` without a result), so it frees its handle, and forgets it.
+	pub(crate) fn end(&mut self, sink: &EventSink) {
+		if self.partial.take().is_some() {
+			*self = Mirror::default();
+			report(sink.event(END, 0, None, None, None, None));
+		}
+	}
+
+	pub(crate) fn send(&mut self, sink: &EventSink, event: &AssistantMessageEvent) {
 		use AssistantMessageEvent as E;
 		let (kind, index, partial, delta) = match event {
 			E::Start { partial } => (START, 0, partial, None),

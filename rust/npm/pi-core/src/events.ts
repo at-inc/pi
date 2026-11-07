@@ -175,18 +175,24 @@ const END = 12;
 
 type Block = TextContent | ThinkingContent | ToolCall;
 
+/** What an `AssistantMessageEventSink` pushes its events into: a stream, or a facade that handles each event. */
+export interface AssistantMessageEventTarget {
+	push(event: AssistantMessageEvent): void;
+	end(result?: AssistantMessage): void;
+}
+
 /**
  * Receives a Rust stream's events and pushes TS events into `stream`. It keeps one live `partial` and applies each
  * event's change to it, so every event's `partial` is the same object, as in the TS. A tool call's `arguments` are read
  * from the core when JS reads them, not on every delta.
  */
 export class AssistantMessageEventSink implements WasmEventSink {
-	readonly #stream: CoreAssistantMessageEventStream;
+	readonly #stream: AssistantMessageEventTarget;
 	#partial: AssistantMessage | undefined;
 	#handle: AssistantMessageHandle | undefined;
 	readonly #staleArguments = new Map<ToolCall, number>();
 
-	constructor(stream: CoreAssistantMessageEventStream) {
+	constructor(stream: AssistantMessageEventTarget) {
 		this.#stream = stream;
 	}
 
@@ -340,7 +346,7 @@ function setBlock(target: AssistantMessage, index: number, block: Block): void {
 }
 
 /** Makes `target` equal `source`, keeping `target` and its block objects. */
-function syncMessage(target: AssistantMessage, source: AssistantMessage): AssistantMessage {
+export function syncMessage(target: AssistantMessage, source: AssistantMessage): AssistantMessage {
 	syncHead(target, source);
 	source.content.forEach((block, index) => {
 		setBlock(target, index, block as Block);

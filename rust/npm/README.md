@@ -10,6 +10,8 @@ These packages ship the pi Rust core (`rust/crates`) behind the npm API of the T
   `createProvider`, `createModels`, `openAICompletionsApi`, `stream`/`complete` (see [pi-ai/README.md](pi-ai/README.md)).
 - `pi-mcp` (`@at-inc/pi-mcp-rs`): the facade of `@earendil-works/pi-mcp`, with every runtime export of `.`, `./oauth`
   and `./testing` (see [pi-mcp/README.md](pi-mcp/README.md)).
+- `pi-agent-core` (`@at-inc/pi-agent-core-rs`): the facade of `@at-inc/pi-agent-core`, every export bridged (see
+  [pi-agent-core/README.md](pi-agent-core/README.md)).
 
 `rust/npm` is its own npm workspace root with its own `package-lock.json`, outside the root workspaces. The root
 lockfile does not change when a facade is added.

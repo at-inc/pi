@@ -18,4 +18,6 @@ mod process;
 mod server;
 mod websocket;
 
+mod agent;
+
 pub use host::init;

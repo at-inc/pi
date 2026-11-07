@@ -6,13 +6,14 @@
 	"workspaces": [
 		"pi-core",
 		"pi-ai",
-		"pi-mcp"
+		"pi-mcp",
+		"pi-agent-core"
 	],
 	"scripts": {
-		"build": "npm run build --workspace=@at-inc/pi-core && npm run build --workspace=@at-inc/pi-ai-rs && npm run build --workspace=@at-inc/pi-mcp-rs",
+		"build": "npm run build --workspace=@at-inc/pi-core && npm run build --workspace=@at-inc/pi-ai-rs && npm run build --workspace=@at-inc/pi-mcp-rs && npm run build --workspace=@at-inc/pi-agent-core-rs",
 		"build:wasm": "npm run build:wasm --workspace=@at-inc/pi-core",
 		"check": "biome check --write --error-on-warnings . && tsc --noEmit -p tsconfig.json",
-		"test:vitest": "npm run test:vitest --workspace=@at-inc/pi-ai-rs && npm run test:vitest --workspace=@at-inc/pi-mcp-rs",
+		"test:vitest": "npm run test:vitest --workspace=@at-inc/pi-ai-rs && npm run test:vitest --workspace=@at-inc/pi-mcp-rs && npm run test:vitest --workspace=@at-inc/pi-agent-core-rs",
 		"bench": "npm run bench --workspace=@at-inc/pi-ai-rs"
 	},
 	"engines": {
