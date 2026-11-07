@@ -336,7 +336,7 @@ function syncHead(target: AssistantMessage, head: AssistantMessage): void {
 		if (key !== "content" && !(key in head)) delete record[key];
 	}
 	for (const [key, value] of Object.entries(head)) {
-		if (key !== "content") record[key] = value;
+		if (key !== "content" && key !== "__proto__") record[key] = value;
 	}
 }
 
@@ -353,6 +353,7 @@ function setBlock(target: AssistantMessage, index: number, block: Block): void {
 		if (!(key in block)) delete record[key];
 	}
 	for (const [key, value] of Object.entries(block)) {
+		if (key === "__proto__") continue;
 		Object.defineProperty(record, key, { value, writable: true, enumerable: true, configurable: true });
 	}
 }

@@ -23,7 +23,7 @@ for (const [key, target] of Object.entries(facadeExports)) {
 	if (typeof target !== "object" || !target.types) continue;
 	const tsTypes = tsExports[key]?.types;
 	if (!tsTypes) throw new Error(`${key} is not in the exports map of ${specifier}`);
-	const subpath = (name) => specifier + key.slice(1).replace("*", name);
+	const subpath = (name) => specifier + key.slice(1).replaceAll("*", name);
 	if (!key.includes("*")) {
 		writeFileSync(target.types, `export * from "${subpath("")}";\n`);
 		continue;
