@@ -1,28 +1,27 @@
 //! Port of `packages/ai/src/api/typesafe-system-one.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
 
-// PORT-STUB: w3-bedrock-misc
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::{LocalBoxFuture, PiError, PiResult};
+use pi_host::{LocalBoxFuture, PiResult};
 
+use super::typesafe_system_one;
 use crate::types::{ClassifierContext, ClassifierModel, ClassifierOptions, ClassifierResult, ProviderClassifier};
 
-struct NotPorted;
+struct LazyClassifier;
 
-impl ProviderClassifier for NotPorted {
+impl ProviderClassifier for LazyClassifier {
 	fn classify(
 		&self,
-		_model: &ClassifierModel,
-		_context: &ClassifierContext,
-		_options: Option<ClassifierOptions>,
+		model: &ClassifierModel,
+		context: &ClassifierContext,
+		options: Option<ClassifierOptions>,
 	) -> LocalBoxFuture<'static, PiResult<ClassifierResult>> {
-		Box::pin(async { Err(PiError::new("API not ported")) })
+		typesafe_system_one::classify(model, context, options)
 	}
 }
 
-/// `typesafeSystemOneApi()`: every classification rejects with `API not ported`.
+/// `typesafe_system_one_api()`: classifies through the `typesafe-system-one` module.
 pub fn typesafe_system_one_api() -> Rc<dyn ProviderClassifier> {
-	Rc::new(NotPorted)
+	Rc::new(LazyClassifier)
 }

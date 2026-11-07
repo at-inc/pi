@@ -3,10 +3,8 @@
 //! `rejects chat models at the classifier entry point at runtime` casts a chat model to `ClassifierModel`; Rust cannot
 //! cast, so the test builds a `ClassifierModel` from the chat model's fields with `type: "chat"`.
 //!
-//! Not ported, because they classify through wave-3 APIs: the request half of `routes %s Jev (%s) to its
-//! TypeSafe-compatible endpoint` (typesafe-system-one, `w3-bedrock-misc`) and the request half of `routes OpenAI GPT-6
-//! Luna through the Decisions API with images` (openai-decisions, `w3-openai-responses`). Their catalog halves are
-//! ported.
+//! Not ported, because it classifies through a wave-3 API of another shard: the request half of `routes OpenAI GPT-6
+//! Luna through the Decisions API with images` (openai-decisions, `w3-openai-responses`). Its catalog half is ported.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -280,20 +278,85 @@ mod models_with_classifier_models {
 
 	#[test]
 	fn routes_jev_to_its_typesafe_compatible_endpoint() {
-		let models = builtin_models(None);
-		for (provider, id) in [
-			("vercel-ai-gateway", "typesafe-ai/jev"),
-			("opencode", "jev-1.13"),
-			("opencode", "jev-1.13-free"),
+		for (provider, id, url) in [
+			(
+				"vercel-ai-gateway",
+				"typesafe-ai/jev",
+				"https://ai-gateway.vercel.sh/typesafe/v1/systemone",
+			),
+			(
+				"opencode",
+				"jev-1.13",
+				"https://opencode.ai/inference/systemone/v1/systemone",
+			),
+			(
+				"opencode",
+				"jev-1.13-free",
+				"https://opencode.ai/inference/systemone/v1/systemone",
+			),
 		] {
-			let jev = models
-				.get_model_of_type(ModelType::Classifier, provider, id)
-				.unwrap_or_else(|| panic!("missing {provider} Jev model"));
-			assert_match_object(
-				&to_json(&jev),
-				&json!({ "api": "typesafe-system-one", "contextWindow": 32000 }),
-			);
-			assert_eq!(models.get_model(provider, id), None, "{provider}/{id}");
+			pi_host::testing::run(|_| async move {
+				let models = builtin_models(None);
+				let jev = models
+					.get_model_of_type(ModelType::Classifier, provider, id)
+					.unwrap_or_else(|| panic!("missing {provider} Jev model"));
+				assert_match_object(
+					&to_json(&jev),
+					&json!({ "api": "typesafe-system-one", "contextWindow": 32000 }),
+				);
+				assert_eq!(models.get_model(provider, id), None, "{provider}/{id}");
+				let AnyModel::Classifier(jev) = jev else {
+					panic!("{provider}/{id} is not a classifier");
+				};
+
+				type Recorded = (String, Value, Option<String>);
+				let requests: Rc<RefCell<Vec<Recorded>>> = Rc::new(RefCell::new(Vec::new()));
+				let recorded = requests.clone();
+				let fetch: pi_host::FetchFunction = Rc::new(move |request: pi_host::HttpRequest| {
+					recorded.borrow_mut().push((
+						request.url.clone(),
+						serde_json::from_slice(request.body.as_deref().unwrap()).unwrap(),
+						request.header("authorization").map(str::to_string),
+					));
+					let body = json!({ "model": id, "answers": { "approved": { "type": "noul", "noul": 0.8 } } });
+					Box::pin(async move {
+						Ok(pi_host::HttpResponse::from_bytes(
+							200,
+							IndexMap::from([("content-type".to_string(), "application/json".to_string())]),
+							pi_host::js::json_stringify(&body),
+						))
+					})
+				});
+				let result = models
+					.classify(
+						&jev,
+						&context(),
+						Some(pi_ai::models::ModelsClassifierOptions {
+							base: ClassifierOptions {
+								base: pi_ai::types::ProviderRequestOptions {
+									api_key: Some("secret".into()),
+									fetch: Some(fetch),
+									..Default::default()
+								},
+								temperature: None,
+							},
+							..Default::default()
+						}),
+					)
+					.await;
+
+				let requests = requests.borrow();
+				assert_eq!(requests.len(), 1);
+				let (request_url, body, authorization) = &requests[0];
+				assert_eq!(request_url, url);
+				assert_match_object(body, &json!({ "model": id, "state": to_json(context())["state"] }));
+				assert_eq!(authorization.as_deref(), Some("Bearer secret"));
+				assert_eq!(result.stop_reason, ClassifierStopReason::Stop);
+				assert_eq!(
+					to_json(&result.answers["approved"]),
+					json!({ "type": "bool", "probability": 0.8 })
+				);
+			});
 		}
 	}
 
