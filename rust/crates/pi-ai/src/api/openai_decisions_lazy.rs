@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-decisions.lazy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Rust has no dynamic import: `classify` calls the statically linked module.
 

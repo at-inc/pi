@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-responses.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! - `OpenAIResponsesOptions` reaches `ProviderStreams::stream` as `ProviderStreamOptions.extra` keys:
 //!   `reasoningEffort` (a thinking level string), `reasoningSummary` (string or `null`), `serviceTier` and

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/azure-openai-config.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `AzureEndpointOptions extends StreamOptions` is `StreamOptions` plus the four `azure*` fields, reached through
 //! `Deref`. URLs are parsed with the WHATWG-compliant `url` crate, the counterpart of `new URL`.
