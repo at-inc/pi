@@ -68,6 +68,7 @@ async fn models_with_radius_key() -> Rc<dyn MutableModels> {
 					Ok(Some(Credential::ApiKey(ApiKeyCredential {
 						key: Some("radius-key".into()),
 						env: None,
+						extra: Default::default(),
 					})))
 				})
 			}),

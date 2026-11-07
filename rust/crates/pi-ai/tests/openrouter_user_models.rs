@@ -82,6 +82,7 @@ fn refresh_context() -> RefreshModelsContext {
 		credential: Some(Credential::ApiKey(ApiKeyCredential {
 			key: Some("sk-or-test".into()),
 			env: None,
+			extra: Default::default(),
 		})),
 		stored: None,
 		publish: std::rc::Rc::new(|_| Box::pin(async { Ok(true) })),

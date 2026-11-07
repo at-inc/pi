@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pi_ai::auth::resolve::AuthResolutionOverrides;
-use pi_ai::auth::types::{ApiKeyCredential, AuthInteraction, AuthPrompt, AuthResult, AuthType, Credential};
+use pi_ai::auth::types::{ApiKeyCredential, AuthInteraction, AuthPromptKind, AuthResult, AuthType, Credential};
 use pi_ai::models::{GetAuthTarget, MutableModels, create_models};
 use pi_ai::providers::kimi_coding::kimi_coding_provider;
 use pi_ai::types::ProviderEnv;
@@ -53,20 +53,20 @@ mod kimi_code_api_key_regions {
 						AuthInteraction {
 							signal: None,
 							prompt: Rc::new(move |prompt| {
-								let answer = match prompt {
-									AuthPrompt::Select { .. } => {
+								let answer = match prompt.kind {
+									AuthPromptKind::Select { .. } => {
 										recorded.borrow_mut().push("select");
 										region
 									}
-									AuthPrompt::Secret { .. } => {
+									AuthPromptKind::Secret { .. } => {
 										recorded.borrow_mut().push("secret");
 										"test-key"
 									}
-									AuthPrompt::Text { .. } => {
+									AuthPromptKind::Text { .. } => {
 										recorded.borrow_mut().push("text");
 										"test-key"
 									}
-									AuthPrompt::ManualCode { .. } => {
+									AuthPromptKind::ManualCode { .. } => {
 										recorded.borrow_mut().push("manual_code");
 										"test-key"
 									}
@@ -94,6 +94,7 @@ mod kimi_code_api_key_regions {
 								format!("https://api.kimi.{domain}/coding/v1")
 							),
 						])),
+						extra: Default::default(),
 					})
 				);
 				host.set_env("KIMI_CODE_OAUTH_HOST", "https://auth.example.com");

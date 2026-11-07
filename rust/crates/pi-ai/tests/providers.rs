@@ -16,8 +16,8 @@ use indexmap::IndexMap;
 use pi_ai::api::lazy::{LazyApiCapabilities, lazy_api};
 use pi_ai::auth::helpers::env_api_key_auth;
 use pi_ai::auth::types::{
-	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthEvent, AuthPrompt, AuthResult, ModelAuth,
-	ProviderAuth, ProviderAuthInteraction,
+	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthEvent, AuthResult, ModelAuth, ProviderAuth,
+	ProviderAuthInteraction,
 };
 use pi_ai::models::{
 	CreateModelsOptions, CreateProviderOptions, GetAuthTarget, ModelsRefreshOptions, ModelsSimpleStreamOptions,
@@ -529,6 +529,7 @@ mod builtin_providers {
 				ApiKeyCredential {
 					key: Some("bedrock-token".into()),
 					env: None,
+					extra: Default::default(),
 				}
 			);
 
@@ -540,6 +541,7 @@ mod builtin_providers {
 				ApiKeyCredential {
 					key: None,
 					env: Some(provider_env(&[("AWS_PROFILE", "work")])),
+					extra: Default::default(),
 				}
 			);
 			let events = to_json(&*events.borrow());
@@ -552,6 +554,7 @@ mod builtin_providers {
 				credential: Some(ApiKeyCredential {
 					key: None,
 					env: Some(provider_env(&[("AWS_PROFILE", "work")])),
+					extra: Default::default(),
 				}),
 				signal: never_aborted_signal(),
 			})
@@ -672,6 +675,7 @@ mod builtin_providers {
 				ApiKeyCredential {
 					key: Some("vertex-key".into()),
 					env: None,
+					extra: Default::default(),
 				}
 			);
 
@@ -690,6 +694,7 @@ mod builtin_providers {
 				ApiKeyCredential {
 					key: None,
 					env: Some(adc_env.clone()),
+					extra: Default::default(),
 				}
 			);
 			let events = to_json(&*events.borrow());
@@ -702,6 +707,7 @@ mod builtin_providers {
 				credential: Some(ApiKeyCredential {
 					key: None,
 					env: Some(adc_env.clone()),
+					extra: Default::default(),
 				}),
 				signal: never_aborted_signal(),
 			})
@@ -767,6 +773,7 @@ mod env_api_key_auth {
 				credential: Some(ApiKeyCredential {
 					key: Some("stored".into()),
 					env: None,
+					extra: Default::default(),
 				}),
 				signal: never_aborted_signal(),
 			})
@@ -808,7 +815,7 @@ mod env_api_key_auth {
 			let credential = (auth.login.unwrap())(ProviderAuthInteraction {
 				signal: never_aborted_signal(),
 				prompt: Rc::new(|prompt| {
-					assert!(matches!(prompt, AuthPrompt::Secret { .. }));
+					assert!(matches!(prompt.kind, pi_ai::auth::types::AuthPromptKind::Secret { .. }));
 					Box::pin(async { Ok("entered-key".to_string()) })
 				}),
 				notify: Rc::new(|_| {}),
@@ -820,6 +827,7 @@ mod env_api_key_auth {
 				ApiKeyCredential {
 					key: Some("entered-key".into()),
 					env: None,
+					extra: Default::default(),
 				}
 			);
 		});

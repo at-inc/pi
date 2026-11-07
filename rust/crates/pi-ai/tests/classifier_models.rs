@@ -366,6 +366,7 @@ mod models_with_classifier_models {
 							Ok(Some(Credential::ApiKey(ApiKeyCredential {
 								key: Some("secret".into()),
 								env: None,
+								extra: Default::default(),
 							})))
 						})
 					}),

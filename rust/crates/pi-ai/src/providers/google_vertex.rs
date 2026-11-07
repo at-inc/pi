@@ -13,8 +13,8 @@ use pi_host::{AbortSignal, PiError, PiResult};
 
 use crate::api::google_vertex_lazy::google_vertex_api;
 use crate::auth::types::{
-	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthEvent, AuthInfoLink, AuthPrompt, AuthResult,
-	AuthSelectOption, ModelAuth, ProviderAuth,
+	ApiKeyAuth, ApiKeyAuthInput, ApiKeyCredential, AuthContext, AuthEvent, AuthInfoLink, AuthPrompt, AuthPromptKind,
+	AuthResult, AuthSelectOption, ModelAuth, ProviderAuth,
 };
 use crate::models::{CreateProviderOptions, Provider, ProviderApi, create_provider};
 use crate::providers::google_vertex_models::GOOGLE_VERTEX_MODELS;
@@ -31,11 +31,10 @@ fn select_option(id: &str, label: &str) -> AuthSelectOption {
 }
 
 fn text_prompt(message: &str) -> AuthPrompt {
-	AuthPrompt::Text {
+	AuthPrompt::new(AuthPromptKind::Text {
 		message: message.into(),
 		placeholder: None,
-		signal: None,
-	}
+	})
 }
 
 /// `env(name)` of `resolve`: the ambient value, checked against the abort signal before and after the read.
@@ -59,28 +58,27 @@ fn vertex_auth() -> ApiKeyAuth {
 		login: Some(Rc::new(|interaction| {
 			Box::pin(async move {
 				interaction.signal.throw_if_aborted()?;
-				let method = (interaction.prompt)(AuthPrompt::Select {
+				let method = (interaction.prompt)(AuthPrompt::new(AuthPromptKind::Select {
 					message: "Select Google Vertex AI authentication method:".into(),
 					options: vec![
 						select_option("api-key", "Google Cloud API key"),
 						select_option("adc", "Application Default Credentials"),
 						select_option("service-account", "Service account credentials file"),
 					],
-					signal: None,
-				})
+				}))
 				.await?;
 				interaction.signal.throw_if_aborted()?;
 				if method == "api-key" {
 					return Ok(ApiKeyCredential {
 						key: Some(
-							(interaction.prompt)(AuthPrompt::Secret {
+							(interaction.prompt)(AuthPrompt::new(AuthPromptKind::Secret {
 								message: "Enter Google Cloud API key".into(),
 								placeholder: None,
-								signal: None,
-							})
+							}))
 							.await?,
 						),
 						env: None,
+						extra: Default::default(),
 					});
 				}
 				if method != "adc" && method != "service-account" {
@@ -114,6 +112,7 @@ fn vertex_auth() -> ApiKeyAuth {
 				Ok(ApiKeyCredential {
 					key: None,
 					env: Some(env),
+					extra: Default::default(),
 				})
 			})
 		})),

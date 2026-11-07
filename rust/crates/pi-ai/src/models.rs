@@ -732,6 +732,7 @@ impl ModelsState {
 		Ok(Some(Credential::ApiKey(ApiKeyCredential {
 			key: result.auth.api_key,
 			env: result.env,
+			extra: Default::default(),
 		})))
 	}
 
