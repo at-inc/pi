@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/anthropic.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Anthropic OAuth flow (Claude Pro/Max)
 //!

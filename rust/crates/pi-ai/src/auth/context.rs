@@ -1,10 +1,9 @@
 //! Port of `packages/ai/src/auth/context.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TS loads `node:fs/promises` and `node:os` at runtime and reports `false` where they are missing (browsers). The
-//! Rust core does no file I/O without the `native` feature, so `fileExists` checks the file system only with
-//! `native` and is always `false` otherwise, also on a Node or wasm host. `os.homedir()` is the host's `HOME`, else
-//! `std::env::home_dir()`; the file system is checked when the future is first polled.
+//! port asks the host: `pi_host::file_exists` for `fs.access` and `pi_host::home_dir` for `os.homedir()`, both
+//! `false`/`None` on hosts without a file system. The file system is checked when the future is first polled.
 
 use std::rc::Rc;
 
@@ -23,32 +22,59 @@ impl AuthContext for DefaultProviderAuthContext {
 
 	fn file_exists(&self, path: &str) -> LocalBoxFuture<'static, bool> {
 		let path = path.to_string();
-		Box::pin(async move { file_exists(&path) })
+		Box::pin(async move {
+			let mut resolved = path;
+			if resolved.starts_with('~') {
+				let Some(home) = pi_host::home_dir() else {
+					return false;
+				};
+				resolved = format!("{home}{}", &resolved[1..]);
+			}
+			pi_host::file_exists(&resolved)
+		})
 	}
-}
-
-#[cfg(feature = "native")]
-fn file_exists(path: &str) -> bool {
-	let mut resolved = path.to_string();
-	if resolved.starts_with('~') {
-		let Some(home) = pi_host::env("HOME")
-			.filter(|home| !home.is_empty())
-			.or_else(|| std::env::home_dir().map(|home| home.to_string_lossy().into_owned()))
-		else {
-			return false;
-		};
-		resolved = format!("{home}{}", &resolved[1..]);
-	}
-	std::fs::metadata(&resolved).is_ok()
-}
-
-#[cfg(not(feature = "native"))]
-fn file_exists(_path: &str) -> bool {
-	false
 }
 
 /// Default auth context: env vars from `process.env` (undefined in browsers),
 /// file existence via node:fs (always false in browsers).
 pub fn default_provider_auth_context() -> Rc<dyn AuthContext> {
 	Rc::new(DefaultProviderAuthContext)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn file_exists_checks_the_host_file_system_and_expands_the_home_dir() {
+		pi_host::testing::run(|host| async move {
+			host.set_home_dir("/home/pi");
+			host.add_file("/home/pi/.aws/credentials");
+			host.add_file("/etc/app.json");
+			let ctx = default_provider_auth_context();
+			assert!(ctx.file_exists("~/.aws/credentials").await);
+			assert!(ctx.file_exists("/etc/app.json").await);
+			assert!(!ctx.file_exists("~/.config/gcloud").await);
+		});
+	}
+
+	#[test]
+	fn file_exists_is_false_for_a_home_path_without_a_file_system() {
+		pi_host::testing::run(|host| async move {
+			host.add_file("/.aws/credentials");
+			assert!(!default_provider_auth_context().file_exists("~/.aws/credentials").await);
+		});
+	}
+
+	#[test]
+	fn env_drops_blank_values() {
+		pi_host::testing::run(|host| async move {
+			host.set_env("BLANK", " \t");
+			host.set_env("SET", " key ");
+			let ctx = default_provider_auth_context();
+			assert_eq!(ctx.env("BLANK").await, None);
+			assert_eq!(ctx.env("SET").await.as_deref(), Some(" key "));
+			assert_eq!(ctx.env("MISSING").await, None);
+		});
+	}
 }

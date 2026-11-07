@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/github-copilot.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! GitHub Copilot OAuth flow
 //!

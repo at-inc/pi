@@ -1,8 +1,7 @@
 //! Port of `packages/ai/test/openai-chatgpt-oauth.test.ts`.
 //!
 //! The login tests bind the fixed callback port 1455, so they need the `native` feature and hold
-//! `common::sequential()`. They read `PI_OAUTH_CALLBACK_HOST` through `utils/provider_env.rs` (w2-ai-core) and wait
-//! for it. The device ID and refresh tests run without either.
+//! `common::sequential()`. The device ID and refresh tests run without either.
 
 mod common;
 
@@ -109,7 +108,6 @@ mod login {
 	const DEVICE_ID: &str = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn registers_a_user_owned_client_and_stores_its_issued_id_and_granted_scopes() {
 		let _sequential = common::sequential();
 		let authorize_url = Rc::new(RefCell::new(None));
@@ -152,7 +150,6 @@ mod login {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn uses_the_app_s_agent_name_as_the_name_hint() {
 		let _sequential = common::sequential();
 		let authorize_url = Rc::new(RefCell::new(None));
@@ -178,7 +175,6 @@ mod login {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn rejects_registration_without_an_issued_client_id() {
 		let _sequential = common::sequential();
 		let calls = Rc::new(RefCell::new(0));
@@ -199,7 +195,6 @@ mod login {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn rejects_a_token_response_that_did_not_grant_direct_token_use() {
 		let _sequential = common::sequential();
 		let error = common::run(

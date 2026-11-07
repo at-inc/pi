@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/oauth.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 /// Type-only compatibility entry point for coding-agent extension OAuth declarations.
 pub use crate::compat::extension_oauth_types::{

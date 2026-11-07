@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/device-code.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `OAuthDeviceCodePollResult<T>` is one enum: the TS union of the incomplete results and `complete`.
 
@@ -99,7 +99,8 @@ async fn poll_until_done<T>(
 		let poll = match first_poll.take() {
 			Some(poll) => poll,
 			None => {
-				if pi_host::now_ms() >= deadline {
+				// `while (Date.now() < deadline)`: a NaN deadline ends the loop, which `now >= deadline` would not.
+				if pi_host::now_ms().partial_cmp(&deadline) != Some(std::cmp::Ordering::Less) {
 					break;
 				}
 				if options.signal.aborted() {

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/openai-codex.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! OpenAI Codex (ChatGPT OAuth) flow
 //!
@@ -9,8 +9,10 @@
 //! Port notes: `node:crypto`'s `randomBytes` is `rand`, which every target has, so `createState` never throws
 //! "OpenAI Codex OAuth is only available in Node.js environments". `atob` is the forgiving-base64 decoder of the
 //! HTML spec, so a base64url JWT payload (`-` or `_`) still fails to decode as in TS. `response.json()` is
-//! `response.text()` plus `JSON.parse`. A truthy non-string token field is kept as its `String(value)`. The
-//! credential serializes `refresh` before `access` (see `auth/types.rs`).
+//! `response.text()` plus `JSON.parse`. A truthy non-string token field is kept as its `String(value)`, and so is
+//! a non-string `user_code` in the `device_code` event, where TS passes the raw value; the device-auth poll sends
+//! `device_auth_id` and `user_code` back as returned. The credential serializes `refresh` before `access` (see
+//! `auth/types.rs`).
 
 use std::rc::Rc;
 
@@ -79,8 +81,8 @@ fn get_callback_host() -> String {
 
 #[derive(Clone)]
 struct DeviceAuthInfo {
-	device_auth_id: String,
-	user_code: String,
+	device_auth_id: Value,
+	user_code: Value,
 	interval_seconds: f64,
 }
 
@@ -238,12 +240,16 @@ fn js_truthy(value: Option<&Value>) -> bool {
 	}
 }
 
-/// JS `String(value)` of a truthy JSON value.
+/// JS `String(value)` of a non-null JSON value.
 fn js_string(value: &Value) -> String {
 	match value {
 		Value::String(value) => value.clone(),
 		Value::Number(number) => pi_host::js::number_to_string(number.as_f64().unwrap_or(f64::NAN)),
-		Value::Array(_) => "[object Array]".into(),
+		Value::Array(items) => items
+			.iter()
+			.map(|item| if item.is_null() { String::new() } else { js_string(item) })
+			.collect::<Vec<_>>()
+			.join(","),
 		Value::Object(_) => "[object Object]".into(),
 		other => other.to_string(),
 	}
@@ -371,8 +377,8 @@ async fn start_openai_codex_device_auth(signal: &AbortSignal) -> PiResult<Device
 	}
 
 	Ok(DeviceAuthInfo {
-		device_auth_id: js_string(device_auth_id.expect("checked truthy")),
-		user_code: js_string(user_code.expect("checked truthy")),
+		device_auth_id: device_auth_id.expect("checked truthy").clone(),
+		user_code: user_code.expect("checked truthy").clone(),
 		interval_seconds: interval_seconds.expect("checked finite"),
 	})
 }
@@ -518,7 +524,7 @@ async fn exchange_authorization_code_for_credentials(
 async fn login_openai_codex_device_code(interaction: ProviderAuthInteraction) -> PiResult<OAuthCredential> {
 	let device = start_openai_codex_device_auth(&interaction.signal).await?;
 	interaction.notify(AuthEvent::DeviceCode {
-		user_code: device.user_code.clone(),
+		user_code: js_string(&device.user_code),
 		verification_uri: DEVICE_VERIFICATION_URI.into(),
 		open_browser_on_confirm: None,
 		copy_code_on_confirm: None,

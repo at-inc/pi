@@ -1,22 +1,21 @@
 //! Port of `packages/ai/test/kimi-coding-provider.test.ts`.
 //!
-//! The `fetch` option of the `completeSimple` request records each request's URL and `authorization` header; the
-//! recorded list stands in for the in-handler `expect`s and `toHaveBeenCalledOnce`. `vi.stubEnv(name, "")` is the empty `TestHost` environment. `it.each` cases run in a loop.
+//! `vi.stubEnv(name, "")` is the empty `TestHost` environment. `it.each` cases run in a loop.
 
-use std::cell::RefCell;
+// The options' fields sit behind `Deref`, so the struct literal this lint suggests does not compile.
+#![allow(clippy::field_reassign_with_default)]
+
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+
 use pi_ai::auth::resolve::AuthResolutionOverrides;
 use pi_ai::auth::types::{ApiKeyCredential, AuthInteraction, AuthPromptKind, AuthResult, AuthType, Credential};
 use pi_ai::models::{GetAuthTarget, ModelsSimpleStreamOptions, MutableModels, create_models};
 use pi_ai::providers::kimi_coding::kimi_coding_provider;
-use pi_ai::types::{Context, ProviderEnv, ProviderRequestOptions, SimpleStreamOptions, StopReason, StreamOptions};
-use pi_host::{FetchFunction, HttpResponse};
-use serde_json::json;
-
-/// The url and `authorization` header of each request the fetch received.
-type Requests = Rc<RefCell<Vec<(String, Option<String>)>>>;
+use pi_ai::types::{Context, Message, ProviderEnv, StopReason, UserMessage, UserMessageContent};
+use pi_host::{HttpRequest, HttpResponse};
 
 fn kimi_models() -> Rc<dyn MutableModels> {
 	let models = create_models(None);
@@ -106,50 +105,42 @@ mod kimi_code_api_key_regions {
 				let auth = get_auth(models.as_ref(), None).await.unwrap().auth;
 				assert_eq!(auth.api_key.as_deref(), Some("test-key"));
 				assert_eq!(auth.base_url, Some(format!("https://api.kimi.{domain}/coding/v1")));
-				let requests: Requests = Rc::default();
-				let recorder = requests.clone();
-				let request: FetchFunction = Rc::new(move |request| {
-					recorder
-						.borrow_mut()
-						.push((request.url.clone(), request.header("authorization").map(str::to_string)));
-					Box::pin(async {
-						Ok(HttpResponse::from_bytes(
-							200,
-							IndexMap::from([("content-type".to_string(), "text/event-stream".to_string())]),
-							"data: {\"id\":\"chat_test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
-						))
-					})
-				});
-				let context: Context = serde_json::from_value(json!({
-					"messages": [{ "role": "user", "content": "Hello", "timestamp": 0 }],
-				}))
-				.unwrap();
+
+				let requests = Rc::new(Cell::new(0));
+				let counted = requests.clone();
+				let mut options = ModelsSimpleStreamOptions::default();
+				options.fetch = Some(Rc::new(move |request: HttpRequest| {
+					counted.set(counted.get() + 1);
+					assert_eq!(
+						request.url,
+						format!("https://api.kimi.{domain}/coding/v1/chat/completions")
+					);
+					assert_eq!(request.header("authorization"), Some("Bearer test-key"));
+					let response = HttpResponse::from_bytes(
+						200,
+						IndexMap::from([("content-type".to_string(), "text/event-stream".to_string())]),
+						"data: {\"id\":\"chat_test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+					);
+					Box::pin(async move { Ok(response) })
+				}));
 				let result = models
 					.complete_simple(
 						&models.get_model("kimi-coding", "kimi-for-coding").unwrap(),
-						&context,
-						Some(ModelsSimpleStreamOptions::from(SimpleStreamOptions {
-							base: StreamOptions {
-								base: ProviderRequestOptions {
-									fetch: Some(request),
-									..ProviderRequestOptions::default()
-								},
-								..StreamOptions::default()
-							},
-							..SimpleStreamOptions::default()
-						})),
+						&Context {
+							messages: vec![Message::User(UserMessage {
+								content: UserMessageContent::Text("Hello".into()),
+								timestamp: 0.0,
+								..UserMessage::default()
+							})],
+							..Context::default()
+						},
+						Some(options),
 					)
 					.await
 					.unwrap();
 				assert_eq!(result.stop_reason, StopReason::Stop);
 				assert_eq!(result.error_message, None);
-				assert_eq!(
-					*requests.borrow(),
-					[(
-						format!("https://api.kimi.{domain}/coding/v1/chat/completions"),
-						Some("Bearer test-key".to_string())
-					)]
-				);
+				assert_eq!(requests.get(), 1);
 			});
 		}
 	}

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/radius.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Radius gateway OAuth flow.
 //!
@@ -14,8 +14,9 @@
 //! `response.json()` is `response.text()` plus `JSON.parse`. Token fields of a token response that are not strings
 //! become `""` where TS keeps `undefined` (which `JSON.stringify` drops). The credential serializes
 //! `refresh, access, expires` before `scope` (see `auth/types.rs`). A device authorization `device_code` or `user_code`
-//! that is truthy but not a string counts as missing. The browser login needs the `native` feature
-//! for its callback server (`auth/oauth/callback_server.rs`).
+//! that is truthy but not a string counts as missing. The `device_code` event carries numbers only, so a non-number
+//! `interval` or `expires_in` reaches it as JS `Number(value)` where TS passes the raw value. The browser login needs
+//! the `native` feature for its callback server (`auth/oauth/callback_server.rs`).
 
 use std::rc::Rc;
 
@@ -55,8 +56,25 @@ struct DeviceAuthorizationResponse {
 	device_code: String,
 	user_code: String,
 	verification_uri: String,
-	expires_in: f64,
-	interval: Option<f64>,
+	/// `data.expires_in` as read: truthy, any JSON type.
+	expires_in: Value,
+	/// `data.interval` as read.
+	interval: Option<Value>,
+}
+
+impl DeviceAuthorizationResponse {
+	/// `expiresInSeconds` of the poller, which sets a deadline only for a number.
+	fn expires_in_seconds(&self) -> Option<f64> {
+		self.expires_in.as_f64()
+	}
+
+	/// `intervalSeconds` of the poller: `intervalSeconds ?? 5` drops `null`, then `* 1000` coerces the rest.
+	fn interval_seconds(&self) -> Option<f64> {
+		self.interval
+			.as_ref()
+			.filter(|interval| !interval.is_null())
+			.map(|interval| js_number(Some(interval)))
+	}
 }
 
 /// `new URL(path, gateway)`.
@@ -326,10 +344,7 @@ async fn request_device_authorization(gateway: &str, signal: &AbortSignal) -> Pi
 		Some(Value::String(value)) if !value.is_empty() => Some(value.clone()),
 		_ => None,
 	};
-	let expires_in = data
-		.get("expires_in")
-		.filter(|value| is_truthy(value))
-		.map(|value| js_number(Some(value)));
+	let expires_in = data.get("expires_in").filter(|value| is_truthy(value)).cloned();
 	let (Some(device_code), Some(user_code), Some(verification_uri), Some(expires_in)) = (
 		truthy_string("device_code"),
 		truthy_string("user_code"),
@@ -351,7 +366,7 @@ async fn request_device_authorization(gateway: &str, signal: &AbortSignal) -> Pi
 		user_code,
 		verification_uri,
 		expires_in,
-		interval: data.get("interval").and_then(Value::as_f64),
+		interval: data.get("interval").cloned(),
 	})
 }
 
@@ -373,15 +388,15 @@ async fn login_with_device_code(gateway: String, interaction: &ProviderAuthInter
 		verification_uri: device.verification_uri.clone(),
 		open_browser_on_confirm: None,
 		copy_code_on_confirm: None,
-		interval_seconds: device.interval,
-		expires_in_seconds: Some(device.expires_in),
+		interval_seconds: device.interval_seconds(),
+		expires_in_seconds: Some(js_number(Some(&device.expires_in))),
 	});
 
 	let signal = interaction.signal.clone();
 	let device_code = device.device_code.clone();
 	poll_oauth_device_code_flow(OAuthDeviceCodePollOptions {
-		interval_seconds: device.interval,
-		expires_in_seconds: Some(device.expires_in),
+		interval_seconds: device.interval_seconds(),
+		expires_in_seconds: device.expires_in_seconds(),
 		wait_before_first_poll: None,
 		signal: interaction.signal.clone(),
 		poll: Rc::new(move || {
