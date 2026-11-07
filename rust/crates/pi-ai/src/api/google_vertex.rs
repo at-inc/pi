@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/google-vertex.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The `@google/genai` SDK is `api/google_client.rs` and Vertex ADC is `api/google_auth.rs`. The TS repeats the
 //! google-generative-ai stream loop and `buildParams`; this module calls `stream_google_response` and `build_params`

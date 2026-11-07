@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openrouter-images.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Image generation over OpenRouter's chat completions endpoint.
 //!

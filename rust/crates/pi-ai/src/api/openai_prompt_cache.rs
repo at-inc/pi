@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-prompt-cache.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `Array.from(key)` splits a string into code points, which is what `str::chars` yields.
 
