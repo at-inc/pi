@@ -27,6 +27,10 @@
 - `./api/simple-options`: `clampMaxTokensToContext`, `resolveSamplingParams`, `buildBaseOptions`, `MIN_ANSWER_TOKENS`,
   `DEFAULT_THINKING_BUDGETS`, `clampReasoning`, `thinkingBudgetForLevel`, `clampThinkingBudgetToAnswerRoom`,
   `adjustMaxTokensForThinking`.
+- `./api/google-shared`: every runtime export (`resolveGoogleThinkingLevel`, `convertMessages`, `convertTools`,
+  `mapStopReason`, `retryGoogleRequest`, ...).
+- `./api/google-generative-ai`, `./api/google-vertex`, `./api/mistral-conversations`: `stream`, `streamSimple`; their
+  `.lazy` modules: `googleGenerativeAIApi`, `googleVertexApi`, `mistralConversationsApi`.
 
 ## Not bridged yet
 

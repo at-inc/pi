@@ -7,6 +7,7 @@ mod bedrock_converse_stream;
 mod compat;
 mod github_copilot_headers;
 mod google_generative_ai;
+mod google_shared;
 mod google_vertex;
 mod mistral_conversations;
 mod models;

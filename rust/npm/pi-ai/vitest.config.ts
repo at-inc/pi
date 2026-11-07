@@ -36,6 +36,14 @@ export const skipped: Record<string, string> = {
 	"test/fireworks-model-generation.test.ts":
 		"needs models getSupportedThinkingLevels and hasApi, bridged by the models slice",
 	"test/fork-model-fallbacks.test.ts": "needs models getSupportedThinkingLevels, bridged by the models slice",
+	"test/google-raw-stop-reason.test.ts":
+		"imports ../src/utils/identity.ts (formatUserAgent), which is not bridged yet; the wasm core's User-Agent is 'pi/<version> (browser)' where the TS on Node reports the Node runtime",
+	"test/google-vertex-api-key-resolution.test.ts":
+		"imports ../src/utils/identity.ts (formatUserAgent), which is not bridged yet; 'forwards custom baseUrl to the ADC client' also asserts project and location, which a Vertex request to a custom base URL does not carry",
+	"test/mistral-http-transport.test.ts":
+		"imports ../src/utils/identity.ts (formatUserAgent), which is not bridged yet; the wasm core's User-Agent is 'pi/<version> (browser)' where the TS on Node reports the Node runtime",
+	"test/mistral-raw-stop-reason.test.ts":
+		"imports ../src/utils/retry.ts (isRetryableAssistantError), which is not bridged yet",
 };
 
 function facadeModules(): Plugin {
@@ -90,6 +98,8 @@ export default defineConfig({
 			"test/lax-message-content.test.ts",
 			"test/fireworks-model-generation.test.ts",
 			"test/fork-model-fallbacks.test.ts",
+			"test/google-*.test.ts",
+			"test/mistral-*.test.ts",
 		],
 		exclude: Object.keys(skipped),
 		testTimeout: 30000,
