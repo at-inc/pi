@@ -11,13 +11,9 @@ fn base(details: Option<JsonValue>) -> ToolResultMessage {
 	ToolResultMessage {
 		tool_call_id: "call-1".into(),
 		tool_name: "read".into(),
-		content: vec![],
 		details,
-		usage: None,
-		nested_calls: None,
-		is_error: false,
 		timestamp: 1.0,
-		duration_ms: None,
+		..ToolResultMessage::default()
 	}
 }
 

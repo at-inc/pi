@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
-use pi_ai::types::{AssistantMessage, AssistantMessageEvent, SharedAssistantMessage, StopReason, Usage};
+use pi_ai::types::{AssistantMessage, AssistantMessageEvent, SharedAssistantMessage, StopReason};
 use pi_ai::utils::event_stream::{AssistantMessageEventStream, EventStream};
 
 // Regression tests for https://github.com/earendil-works/pi/issues/9055
@@ -124,19 +124,10 @@ fn message(timestamp: f64, duration_ms: Option<f64>) -> AssistantMessage {
 		api: "openai-responses".into(),
 		provider: "openai".into(),
 		model: "m".into(),
-		response_model: None,
-		response_id: None,
-		provider_thinking_level: None,
-		thinking_level: None,
-		diagnostics: None,
-		usage: Usage::default(),
 		stop_reason: StopReason::Stop,
-		deferred: None,
-		error_message: None,
-		raw_stop_reason: None,
-		end_turn: None,
 		timestamp,
 		duration_ms,
+		..AssistantMessage::default()
 	}
 }
 

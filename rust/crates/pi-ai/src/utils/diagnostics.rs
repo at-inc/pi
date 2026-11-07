@@ -1,9 +1,9 @@
 //! Port of `packages/ai/src/utils/diagnostics.ts`.
 //! PORT-STATUS: ported
 //!
-//! TypeScript takes the thrown value as `unknown`; the Rust port takes the `PiError` that stands in for it. A
-//! TS error's own fields (`statusCode`, `headers`, `payload`, `error`, `code`) are read from `PiError.data`, and
-//! `error.status` from `PiError.status`. Rust errors carry no stack, so `stack` is always absent. TS turns a `Headers`
+//! TypeScript takes the thrown value as `unknown`; the Rust port takes a `Thrown`: the `PiError` that stands in for an
+//! `Error`, or the JSON value of anything else that was thrown. A TS error's own fields (`statusCode`, `headers`,
+//! `payload`, `error`, `code`) are read from `PiError.data`, and `error.status` from `PiError.status`. Rust errors carry no stack, so `stack` is always absent. TS turns a `Headers`
 //! instance into `Object.fromEntries(headers)` (lowercase, sorted names); `data.headers` is copied as it is, so code
 //! that builds a `PiError` from a response stores the headers in that form.
 
@@ -45,15 +45,62 @@ pub struct AssistantMessageDiagnostic {
 	pub details: Option<JsonObject>,
 }
 
-pub fn format_thrown_value(value: &PiError) -> String {
-	if value.message.is_empty() {
-		value.name.clone()
-	} else {
-		value.message.clone()
+/// A thrown value: an `Error`, which the port carries as a `PiError`, or any other value JS code can throw.
+#[derive(Clone, Copy, Debug)]
+pub enum Thrown<'a> {
+	Error(&'a PiError),
+	Value(&'a Value),
+}
+
+impl<'a> From<&'a PiError> for Thrown<'a> {
+	fn from(error: &'a PiError) -> Self {
+		Self::Error(error)
 	}
 }
 
-pub fn extract_diagnostic_error(error: &PiError) -> DiagnosticErrorInfo {
+impl<'a> From<&'a Value> for Thrown<'a> {
+	fn from(value: &'a Value) -> Self {
+		Self::Value(value)
+	}
+}
+
+pub fn format_thrown_value<'a>(value: impl Into<Thrown<'a>>) -> String {
+	match value.into() {
+		Thrown::Error(error) if error.message.is_empty() => error.name.clone(),
+		Thrown::Error(error) => error.message.clone(),
+		Thrown::Value(value) => js_string(value),
+	}
+}
+
+/// JS `String(value)` of a JSON value.
+fn js_string(value: &Value) -> String {
+	match value {
+		Value::Null => "null".into(),
+		Value::Bool(value) => value.to_string(),
+		Value::Number(number) => pi_host::js::number_to_string(number.as_f64().unwrap_or(f64::NAN)),
+		Value::String(value) => value.clone(),
+		// `Array.prototype.join` writes `null` items as empty strings.
+		Value::Array(items) => items
+			.iter()
+			.map(|item| if item.is_null() { String::new() } else { js_string(item) })
+			.collect::<Vec<_>>()
+			.join(","),
+		Value::Object(_) => "[object Object]".into(),
+	}
+}
+
+pub fn extract_diagnostic_error<'a>(error: impl Into<Thrown<'a>>) -> DiagnosticErrorInfo {
+	let error = match error.into() {
+		Thrown::Error(error) => error,
+		value @ Thrown::Value(_) => {
+			return DiagnosticErrorInfo {
+				name: Some("ThrownValue".into()),
+				message: format_thrown_value(value),
+				stack: None,
+				code: None,
+			};
+		}
+	};
 	let code = error
 		.data
 		.as_ref()
@@ -79,9 +126,9 @@ pub fn extract_diagnostic_error(error: &PiError) -> DiagnosticErrorInfo {
 	}
 }
 
-pub fn create_assistant_message_diagnostic(
+pub fn create_assistant_message_diagnostic<'a>(
 	r#type: &str,
-	error: &PiError,
+	error: impl Into<Thrown<'a>>,
 	details: Option<JsonObject>,
 ) -> AssistantMessageDiagnostic {
 	AssistantMessageDiagnostic {
@@ -93,10 +140,14 @@ pub fn create_assistant_message_diagnostic(
 }
 
 /// Preserve provider metadata that is lost when SDK errors become display strings.
-pub fn create_provider_error_diagnostic(error: &PiError) -> AssistantMessageDiagnostic {
-	let source = error.data.as_ref().and_then(Value::as_object);
+pub fn create_provider_error_diagnostic<'a>(error: impl Into<Thrown<'a>>) -> AssistantMessageDiagnostic {
+	let error = error.into();
+	let (source, error_status) = match error {
+		Thrown::Error(error) => (error.data.as_ref().and_then(Value::as_object), error.status),
+		Thrown::Value(value) => (value.as_object(), None),
+	};
 	let field = |name: &str| source.and_then(|source| source.get(name));
-	let status = match (error.status, field("status")) {
+	let status = match (error_status, field("status")) {
 		(Some(status), _) => Some(Value::from(status)),
 		(None, Some(status)) if status.is_number() => Some(status.clone()),
 		_ => field("statusCode").filter(|status| status.is_number()).cloned(),

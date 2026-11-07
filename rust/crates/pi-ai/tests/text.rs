@@ -6,7 +6,7 @@ use pi_ai::utils::text::content_text;
 fn text(text: &str) -> TextContent {
 	TextContent {
 		text: text.into(),
-		text_signature: None,
+		..TextContent::default()
 	}
 }
 
@@ -48,6 +48,7 @@ fn extracts_text_from_tool_result_content() {
 		UserContent::Image(ImageContent {
 			data: "...".into(),
 			mime_type: "image/png".into(),
+			..ImageContent::default()
 		}),
 		UserContent::Text(text("second")),
 	];

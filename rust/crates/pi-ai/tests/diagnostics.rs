@@ -2,8 +2,9 @@
 //! directly. The cases that stream through the Anthropic, OpenAI Completions, Responses and Codex APIs move with those
 //! providers. The `Headers` instance, `undefined` values and the `1n` payload have no counterpart in a `PiError`, whose
 //! `data` is already JSON, so those inputs become plain JSON objects and the serialization fallback is not reachable.
+//! `createProviderErrorDiagnostic(null)` becomes a thrown JSON `null`.
 
-use pi_ai::types::{AssistantMessage, StopReason, Usage};
+use pi_ai::types::{AssistantMessage, StopReason};
 use pi_ai::utils::diagnostics::{
 	AssistantMessageDiagnostic, DiagnosticErrorCode, append_assistant_message_diagnostic,
 	create_provider_error_diagnostic, extract_diagnostic_error, format_thrown_value,
@@ -32,7 +33,10 @@ fn accepts_status_code_and_plain_header_records() {
 		details(&error),
 		json!({ "status": 403, "headers": { "x-request-id": "request" }, "payload": payload })
 	);
-	assert_eq!(diagnose(&PiError::new("")).r#type, "provider_error");
+	assert_eq!(
+		pi_host::testing::run(|_| async { create_provider_error_diagnostic(&Value::Null) }).r#type,
+		"provider_error"
+	);
 }
 
 #[test]
@@ -111,19 +115,8 @@ fn appends_and_serializes_diagnostics_in_ts_field_order() {
 		api: "openai-responses".into(),
 		provider: "openai".into(),
 		model: "m".into(),
-		response_model: None,
-		response_id: None,
-		provider_thinking_level: None,
-		thinking_level: None,
-		diagnostics: None,
-		usage: Usage::default(),
 		stop_reason: StopReason::Error,
-		deferred: None,
-		error_message: None,
-		raw_stop_reason: None,
-		end_turn: None,
-		timestamp: 0.0,
-		duration_ms: None,
+		..AssistantMessage::default()
 	};
 	let diagnostic = diagnose(&PiError::new("Boom").with_status(500));
 	append_assistant_message_diagnostic(&mut message, diagnostic.clone());
@@ -133,4 +126,30 @@ fn appends_and_serializes_diagnostics_in_ts_field_order() {
 	let keys: Vec<&str> = ["\"type\"", "\"timestamp\"", "\"error\"", "\"details\""].to_vec();
 	let positions: Vec<usize> = keys.iter().map(|key| serialized.find(key).unwrap()).collect();
 	assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{serialized}");
+}
+
+#[test]
+fn reports_non_error_throws_as_thrown_values() {
+	let info = extract_diagnostic_error(&json!("boom"));
+	assert_eq!(info.name.as_deref(), Some("ThrownValue"));
+	assert_eq!(info.message, "boom");
+	assert_eq!(info.code, None);
+	assert_eq!(format_thrown_value(&json!(42)), "42");
+	assert_eq!(format_thrown_value(&json!(null)), "null");
+	assert_eq!(format_thrown_value(&json!([1, null, "a", [2, 3]])), "1,,a,2,3");
+	assert_eq!(format_thrown_value(&json!({ "code": 1 })), "[object Object]");
+	let thrown = json!({ "status": 429, "headers": { "retry-after": "60" }, "error": { "message": "Plan limit" } });
+	let diagnostic = pi_host::testing::run(|_| async { create_provider_error_diagnostic(&thrown) });
+	assert_eq!(
+		diagnostic.error.as_ref().and_then(|error| error.name.as_deref()),
+		Some("ThrownValue")
+	);
+	assert_eq!(
+		diagnostic.error.as_ref().map(|error| error.message.as_str()),
+		Some("[object Object]")
+	);
+	assert_eq!(
+		serde_json::to_value(&diagnostic.details).unwrap(),
+		json!({ "status": 429, "headers": { "retry-after": "60" }, "payload": { "message": "Plan limit" } })
+	);
 }

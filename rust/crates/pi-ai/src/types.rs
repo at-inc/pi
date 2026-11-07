@@ -6,7 +6,8 @@
 //! `ModelTypeMap`. Generic types whose parameter only narrows a field (`Model<TApi>`, `ToolResultMessage<TDetails>`,
 //! `Tool<TParameters>`) are one type with the widest field type; `Model.compat` is the raw JSON object with typed
 //! accessors. Serialized structs list their fields in the TS interface order, so `JSON.stringify` output of a value
-//! whose TS object literal used another order differs in key order only.
+//! whose TS object literal used another order differs in key order only. Message, block, usage, tool and model
+//! structs keep the app fields of the TS object in a flattened `extra`, written after the declared fields.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -645,6 +646,9 @@ pub struct TextContent {
 	/// e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub text_signature: Option<String>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_type")]
+	pub extra: JsonObject,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -659,6 +663,9 @@ pub struct ThinkingContent {
 	/// to the API for multi-turn continuity.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub redacted: Option<bool>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_type")]
+	pub extra: JsonObject,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -668,6 +675,9 @@ pub struct ImageContent {
 	pub data: String,
 	/// e.g., "image/jpeg", "image/png"
 	pub mime_type: String,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_type")]
+	pub extra: JsonObject,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -687,6 +697,9 @@ pub struct ToolCall {
 	/// Describes the problem and includes the text the model sent; tool argument validation fails with it.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub arguments_error: Option<String>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_type")]
+	pub extra: JsonObject,
 }
 
 /// A block of `AssistantMessage.content`: `TextContent | ThinkingContent | ToolCall`.
@@ -736,6 +749,9 @@ pub struct Usage {
 	pub reasoning: Option<f64>,
 	pub total_tokens: f64,
 	pub cost: UsageCost,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: JsonObject,
 }
 
 /// `Usage.cost`.
@@ -755,12 +771,17 @@ pub struct UsageCost {
 	/// True when `total` is the billed cost reported by the provider. False when it is a catalog estimate; absent also means false.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub total_from_provider: Option<bool>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: JsonObject,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// `Default` (`Stop`) exists only so message literals can use `..Default::default()`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StopReason {
 	#[serde(rename = "pending")]
 	Pending,
+	#[default]
 	#[serde(rename = "stop")]
 	Stop,
 	#[serde(rename = "length")]
@@ -784,7 +805,22 @@ fn present_json_value<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Opti
 	Value::deserialize(deserializer).map(Some)
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The `extra` of a block deserialized on its own, where serde hands the `type` tag to the flattened map too. The
+/// struct writes its tag itself, so keeping it here would write it twice.
+fn extra_without_type<'de, D: Deserializer<'de>>(deserializer: D) -> Result<JsonObject, D::Error> {
+	let mut extra = JsonObject::deserialize(deserializer)?;
+	extra.shift_remove("type");
+	Ok(extra)
+}
+
+/// `extra_without_type` for the `role` tag of a message.
+fn extra_without_role<'de, D: Deserializer<'de>>(deserializer: D) -> Result<JsonObject, D::Error> {
+	let mut extra = JsonObject::deserialize(deserializer)?;
+	extra.shift_remove("role");
+	Ok(extra)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeferredHandle {
 	pub provider: String,
@@ -803,6 +839,9 @@ pub struct DeferredHandle {
 		skip_serializing_if = "Option::is_none"
 	)]
 	pub data: Option<JsonValue>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: JsonObject,
 }
 
 /// System instructions and tool declarations at one point in the transcript.
@@ -813,7 +852,7 @@ pub struct DeferredHandle {
 /// every system message in order yields the current prompt and tools. Providers that
 /// accept system messages mid-conversation send each one in place; other providers
 /// rebuild the leading system message from the replayed state.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename = "system", rename_all = "camelCase")]
 pub struct SystemMessage {
 	/// Instruction text. On the leading message this is the base prompt; later, additional instructions.
@@ -832,6 +871,9 @@ pub struct SystemMessage {
 	pub tools_removed: Option<Vec<ToolReference>>,
 	/// Unix timestamp in milliseconds
 	pub timestamp: f64,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_role")]
+	pub extra: JsonObject,
 }
 
 /// `SystemMessage.content`: `string | TextContent[]`.
@@ -842,12 +884,21 @@ pub enum SystemMessageContent {
 	Blocks(Vec<TextContent>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl Default for SystemMessageContent {
+	fn default() -> Self {
+		Self::Text(String::new())
+	}
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename = "user", rename_all = "camelCase")]
 pub struct UserMessage {
 	pub content: UserMessageContent,
 	/// Unix timestamp in milliseconds
 	pub timestamp: f64,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_role")]
+	pub extra: JsonObject,
 }
 
 /// `UserMessage.content`: `string | (TextContent | ImageContent)[]`.
@@ -858,7 +909,13 @@ pub enum UserMessageContent {
 	Blocks(Vec<UserContent>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl Default for UserMessageContent {
+	fn default() -> Self {
+		Self::Text(String::new())
+	}
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename = "assistant", rename_all = "camelCase")]
 pub struct AssistantMessage {
 	pub content: Vec<AssistantContent>,
@@ -899,6 +956,9 @@ pub struct AssistantMessage {
 	/// for deferred results fetched later.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub duration_ms: Option<f64>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_role")]
+	pub extra: JsonObject,
 }
 
 /// The live response-so-far that a provider mutates and every event's `partial` shares.
@@ -945,7 +1005,7 @@ pub struct NestedToolCalls {
 	pub complete: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename = "toolResult", rename_all = "camelCase")]
 pub struct ToolResultMessage {
 	pub tool_call_id: String,
@@ -971,6 +1031,9 @@ pub struct ToolResultMessage {
 	/// Milliseconds the tool's execution took, measured with a monotonic clock. Absent for legacy results.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub duration_ms: Option<f64>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten, deserialize_with = "extra_without_role")]
+	pub extra: JsonObject,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -1187,7 +1250,7 @@ pub enum ToolConstrainedSampling {
 
 /// A tool the model may call. `parameters` is the JSON Schema of its arguments: pi-schema's builders (which also type
 /// the arguments, see `Static` in `@earendil-works/pi-schema`), TypeBox schemas, or any JSON Schema object.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
 	pub name: String,
@@ -1195,6 +1258,9 @@ pub struct Tool {
 	pub parameters: Value,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub constrained_sampling: Option<ToolConstrainedSampling>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: JsonObject,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1310,7 +1376,7 @@ pub enum AssistantMessageEvent {
 }
 
 /// Fields shared by every catalog entry, regardless of what you can do with it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BaseModel<A = Api> {
 	pub id: String,
@@ -1328,7 +1394,7 @@ pub struct BaseModel<A = Api> {
 }
 
 /// Chat model: usable with `stream()` and friends.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
 	#[serde(flatten)]
@@ -1361,6 +1427,9 @@ pub struct Model {
 	/// the accessor for the model's API (`openai_completions_compat()`, ...).
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub compat: Option<JsonObject>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: JsonObject,
 }
 
 impl Deref for Model {
@@ -1435,6 +1504,20 @@ pub struct ImageModel {
 	pub r#type: ModelType,
 	/// Output modalities. Always includes `"image"`; `"text"` means the model can also return text blocks.
 	pub output: Vec<ModelInputModality>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: JsonObject,
+}
+
+impl Default for ImageModel {
+	fn default() -> Self {
+		Self {
+			base: BaseModel::default(),
+			r#type: ModelType::Image,
+			output: Vec::new(),
+			extra: JsonObject::new(),
+		}
+	}
 }
 
 impl Deref for ImageModel {
@@ -1465,6 +1548,21 @@ pub struct ClassifierModel {
 	/// through `system_one_compat()`.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub compat: Option<JsonObject>,
+	/// App fields the TS object carried beyond this interface; kept so they survive a round trip.
+	#[serde(flatten)]
+	pub extra: JsonObject,
+}
+
+impl Default for ClassifierModel {
+	fn default() -> Self {
+		Self {
+			base: BaseModel::default(),
+			r#type: ModelType::Classifier,
+			context_window: 0.0,
+			compat: None,
+			extra: JsonObject::new(),
+		}
+	}
 }
 
 impl Deref for ClassifierModel {
@@ -1499,14 +1597,17 @@ pub enum ModelType {
 	Classifier,
 }
 
-/// Anything a provider can list. Narrow with `isModelType()`. Deserializes by `type`; an absent `type` is a chat
-/// model.
+/// Anything a provider can list. Narrow with `isModelType()`. Deserializes by `type`; an absent or `null` `type` is
+/// a chat model.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum AnyModel {
 	Chat(Model),
 	Image(ImageModel),
 	Classifier(ClassifierModel),
+	/// An entry whose `type` is none of the known ones, kept as it was read: TS keeps such an object, and
+	/// `isModelType()` matches no type for it.
+	Other(Value),
 }
 
 impl<'de> Deserialize<'de> for AnyModel {
@@ -1514,7 +1615,10 @@ impl<'de> Deserialize<'de> for AnyModel {
 		let value = Value::deserialize(deserializer)?;
 		let model_type = match value.get("type") {
 			None | Some(Value::Null) => ModelType::Chat,
-			Some(model_type) => ModelType::deserialize(model_type).map_err(serde::de::Error::custom)?,
+			Some(model_type) => match ModelType::deserialize(model_type) {
+				Ok(model_type) => model_type,
+				Err(_) => return Ok(AnyModel::Other(value)),
+			},
 		};
 		let model = match model_type {
 			ModelType::Chat => serde_json::from_value(value).map(AnyModel::Chat),
@@ -1537,14 +1641,16 @@ mod tests {
 			content: UserMessageContent::Blocks(vec![
 				UserContent::Text(TextContent {
 					text: "hi".into(),
-					text_signature: None,
+					..TextContent::default()
 				}),
 				UserContent::Image(ImageContent {
 					data: "AA==".into(),
 					mime_type: "image/png".into(),
+					..ImageContent::default()
 				}),
 			]),
 			timestamp: 1.0,
+			..UserMessage::default()
 		});
 		let serialized = json_stringify(&message);
 		assert_eq!(
@@ -1568,19 +1674,9 @@ mod tests {
 			api: api::OPENAI_RESPONSES.into(),
 			provider: provider_id::OPENAI.into(),
 			model: "m".into(),
-			response_model: None,
-			response_id: None,
-			provider_thinking_level: None,
-			thinking_level: None,
-			diagnostics: None,
-			usage: Usage::default(),
 			stop_reason: StopReason::ToolUse,
-			deferred: None,
-			error_message: None,
-			raw_stop_reason: None,
-			end_turn: None,
 			timestamp: 2.0,
-			duration_ms: None,
+			..AssistantMessage::default()
 		}));
 		let event = AssistantMessageEvent::ToolcallEnd {
 			content_index: 0,
@@ -1593,6 +1689,49 @@ mod tests {
 		assert_eq!(
 			serde_json::from_str::<AssistantMessageEvent>(&serialized).unwrap(),
 			event
+		);
+	}
+
+	#[test]
+	fn app_fields_survive_a_round_trip() {
+		let message = json!({
+			"role": "assistant",
+			"content": [
+				{ "type": "text", "text": "hi", "appBlock": { "pinned": true } },
+				{ "type": "toolCall", "id": "1", "name": "read", "arguments": {}, "appCall": 1 },
+			],
+			"api": "openai-responses",
+			"provider": "openai",
+			"model": "m",
+			"usage": {
+				"input": 1, "output": 2, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 3,
+				"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0, "appCost": "x" },
+				"appUsage": [1],
+			},
+			"stopReason": "stop",
+			"deferred": { "provider": "openai", "modelId": "m", "api": "openai-responses", "id": "r", "appDeferred": null },
+			"timestamp": 1,
+			"appMessage": "kept",
+		});
+		let parsed: Message = serde_json::from_value(message.clone()).unwrap();
+		let Message::Assistant(assistant) = &parsed else {
+			panic!("expected an assistant message");
+		};
+		assert_eq!(assistant.extra.get("appMessage"), Some(&json!("kept")));
+		let AssistantContent::Text(text) = &assistant.content[0] else {
+			panic!("expected a text block");
+		};
+		assert_eq!(text.extra.get("appBlock"), Some(&json!({ "pinned": true })));
+		assert_eq!(json_stringify(&parsed), json_stringify(&message));
+
+		let block = json!({ "type": "image", "data": "AA==", "mimeType": "image/png", "appImage": 2 });
+		let image: ImageContent = serde_json::from_value(block.clone()).unwrap();
+		assert_eq!(json_stringify(&image), json_stringify(&block));
+
+		let tool = json!({ "name": "read", "description": "Read", "parameters": {}, "appTool": true });
+		assert_eq!(
+			serde_json::to_value(serde_json::from_value::<Tool>(tool.clone()).unwrap()).unwrap(),
+			tool
 		);
 	}
 
@@ -1618,6 +1757,13 @@ mod tests {
 		assert_eq!(chat.openai_completions_compat().supports_store, Some(false));
 		assert_eq!(json_stringify(&chat), json_stringify(&model));
 
+		let mut extended = model.clone();
+		extended["appModel"] = json!({ "tier": 1 });
+		assert_eq!(
+			json_stringify(&serde_json::from_value::<AnyModel>(extended.clone()).unwrap()),
+			json_stringify(&extended)
+		);
+
 		let mut untyped = model.clone();
 		untyped["type"] = Value::Null;
 		untyped["compat"] = json!({ "supportsStore": false, "thinkingFormat": "future-format" });
@@ -1626,5 +1772,11 @@ mod tests {
 		};
 		assert_eq!(chat.openai_completions_compat().supports_store, Some(false));
 		assert_eq!(chat.openai_completions_compat().thinking_format, None);
+
+		let mut future = model.clone();
+		future["type"] = json!("video");
+		let parsed = serde_json::from_value::<AnyModel>(future.clone()).unwrap();
+		assert_eq!(parsed, AnyModel::Other(future.clone()));
+		assert_eq!(json_stringify(&parsed), json_stringify(&future));
 	}
 }

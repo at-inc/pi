@@ -6,6 +6,7 @@ use pi_ai::utils::identity::{
 	format_user_agent, get_attribution_headers, get_identity_headers, merge_client_identity,
 };
 use pi_ai::utils::version::PI_AI_VERSION;
+use pi_host::PiResult;
 use serde_json::{Value, json};
 
 fn target<'a>(provider: &'a str, base_url: &'a str) -> ClientIdentityTarget<'a> {
@@ -16,7 +17,7 @@ fn acme(categories: Option<Vec<&str>>) -> ClientAttribution {
 	ClientAttribution {
 		name: "acme".into(),
 		url: "https://acme.example".into(),
-		categories: categories.map(|categories| categories.into_iter().map(String::from).collect()),
+		categories: categories.map(|categories| Some(categories.into_iter().map(String::from).collect())),
 	}
 }
 
@@ -27,8 +28,8 @@ fn attributed(attribution: ClientAttribution) -> ClientIdentity {
 	}
 }
 
-fn headers_json(headers: indexmap::IndexMap<String, String>) -> Value {
-	serde_json::to_value(headers).unwrap()
+fn headers_json(headers: PiResult<indexmap::IndexMap<String, String>>) -> Value {
+	serde_json::to_value(headers.unwrap()).unwrap()
 }
 
 #[test]
@@ -127,12 +128,12 @@ fn parses_identities_from_json() {
 #[test]
 fn sends_no_attribution_unless_enabled() {
 	let open_router = target("openrouter", "https://openrouter.ai/api/v1");
-	assert!(get_attribution_headers(open_router, None).is_empty());
+	assert!(get_attribution_headers(open_router, None).unwrap().is_empty());
 	let off = ClientIdentity {
 		attribution: Some(None),
 		..ClientIdentity::default()
 	};
-	assert!(get_attribution_headers(open_router, Some(&off)).is_empty());
+	assert!(get_attribution_headers(open_router, Some(&off)).unwrap().is_empty());
 	assert_eq!(
 		headers_json(get_identity_headers(open_router, None)),
 		json!({ "User-Agent": format_user_agent(None) })
@@ -175,7 +176,8 @@ fn attributes_open_router_requests() {
 	let legacy = get_attribution_headers(
 		target("custom", "not-a-url-openrouter.ai"),
 		Some(&attributed(PI_ATTRIBUTION.clone())),
-	);
+	)
+	.unwrap();
 	assert_eq!(legacy.get("X-OpenRouter-Title").map(String::as_str), Some("pi"));
 }
 
@@ -217,6 +219,7 @@ fn does_not_attribute_nvidia_models_routed_through_gateways_to_nvidia() {
 	let pi = attributed(PI_ATTRIBUTION.clone());
 	assert!(
 		!get_attribution_headers(target("openrouter", "https://openrouter.ai/api/v1"), Some(&pi))
+			.unwrap()
 			.contains_key("X-BILLING-INVOKE-ORIGIN")
 	);
 	assert!(
@@ -224,6 +227,42 @@ fn does_not_attribute_nvidia_models_routed_through_gateways_to_nvidia() {
 			target("vercel-ai-gateway", "https://ai-gateway.vercel.sh/v1"),
 			Some(&pi)
 		)
+		.unwrap()
 		.is_empty()
+	);
+}
+
+#[test]
+fn keeps_unknown_user_agent_modes_and_formats_them_as_detailed() {
+	let identity: ClientIdentity = serde_json::from_value(json!({ "userAgent": "long" })).unwrap();
+	assert_eq!(
+		identity.user_agent,
+		Some(UserAgentMode::Named(UserAgentModeName::Other("long".into())))
+	);
+	assert_eq!(format_user_agent(Some(&identity)), format_user_agent(None));
+	assert_eq!(serde_json::to_value(&identity).unwrap(), json!({ "userAgent": "long" }));
+}
+
+#[test]
+fn throws_like_the_ts_for_null_open_router_categories() {
+	let identity: ClientIdentity = serde_json::from_value(
+		json!({ "attribution": { "name": "acme", "url": "https://acme.example", "categories": null } }),
+	)
+	.unwrap();
+	let error =
+		get_attribution_headers(target("openrouter", "https://openrouter.ai/api/v1"), Some(&identity)).unwrap_err();
+	assert_eq!(error.name, "TypeError");
+	assert_eq!(error.message, "Cannot read properties of null (reading 'length')");
+	assert!(get_identity_headers(target("openrouter", "https://openrouter.ai/api/v1"), Some(&identity)).is_err());
+	assert_eq!(
+		headers_json(get_attribution_headers(
+			target("opencode", "https://opencode.ai/zen/v1"),
+			Some(&identity)
+		)),
+		json!({ "x-opencode-client": "acme" })
+	);
+	assert_eq!(
+		serde_json::to_value(&identity).unwrap()["attribution"]["categories"],
+		Value::Null
 	);
 }

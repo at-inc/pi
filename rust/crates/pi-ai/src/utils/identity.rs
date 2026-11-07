@@ -9,6 +9,7 @@
 use std::sync::LazyLock;
 
 use indexmap::IndexMap;
+use pi_host::{PiError, PiResult};
 use serde::{Deserialize, Serialize};
 
 use super::version::PI_AI_VERSION;
@@ -25,13 +26,16 @@ pub enum UserAgentMode {
 	Custom { custom: String },
 }
 
-/// The named `User-Agent` modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The named `User-Agent` modes. `formatUserAgent` treats any string other than `"short"` as detailed, so other
+/// strings are kept as `Other` instead of failing to parse.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UserAgentModeName {
 	#[serde(rename = "short")]
 	Short,
 	#[serde(rename = "detailed")]
 	Detailed,
+	#[serde(untagged)]
+	Other(String),
 }
 
 /// Who requests are attributed to. `getAttributionHeaders()` maps the fields to each provider's headers.
@@ -42,16 +46,21 @@ pub struct ClientAttribution {
 	pub name: String,
 	/// App URL: OpenRouter `HTTP-Referer`, the app's identity in OpenRouter's rankings, grouped by origin.
 	pub url: String,
-	/// App categories, e.g. `["cli-agent"]`: OpenRouter `X-OpenRouter-Categories`, comma-separated.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub categories: Option<Vec<String>>,
+	/// App categories, e.g. `["cli-agent"]`: OpenRouter `X-OpenRouter-Categories`, comma-separated. An explicit `null`
+	/// (`Some(None)`) makes OpenRouter attribution fail with the TypeError the TS throws.
+	#[serde(
+		default,
+		deserialize_with = "pi_host::js::double_option",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub categories: Option<Option<Vec<String>>>,
 }
 
 /// pi's attribution, used by pi-agent-core, pi-durable, and the coding agent.
 pub static PI_ATTRIBUTION: LazyLock<ClientAttribution> = LazyLock::new(|| ClientAttribution {
 	name: "pi".into(),
 	url: "https://pi.dev".into(),
-	categories: Some(vec!["cli-agent".into()]),
+	categories: Some(Some(vec!["cli-agent".into()])),
 });
 
 /// How pi-ai identifies the calling app to providers. Every field is optional; absent fields use pi-ai's defaults:
@@ -144,7 +153,7 @@ pub fn format_user_agent(identity: Option<&ClientIdentity>) -> String {
 	match mode {
 		UserAgentMode::Custom { custom } => return custom,
 		UserAgentMode::Named(UserAgentModeName::Short) => return "pi".into(),
-		UserAgentMode::Named(UserAgentModeName::Detailed) => {}
+		UserAgentMode::Named(_) => {}
 	}
 	let product = format!("pi/{}", get_client_version(identity));
 	match runtime_description() {
@@ -172,38 +181,41 @@ fn is_open_code(target: ClientIdentityTarget) -> bool {
 	target.provider == "opencode" || target.provider == "opencode-go" || matches_host(target.base_url, OPENCODE_HOST)
 }
 
-/// Provider attribution headers of an identity for a request target. Empty when attribution is off.
+/// Provider attribution headers of an identity for a request target. Empty when attribution is off. Fails like the TS
+/// for an OpenRouter target whose `categories` is `null`.
 pub fn get_attribution_headers(
 	target: ClientIdentityTarget,
 	identity: Option<&ClientIdentity>,
-) -> IndexMap<String, String> {
+) -> PiResult<IndexMap<String, String>> {
 	let mut headers = IndexMap::new();
 	let Some(Some(attribution)) = identity
 		.and_then(|identity| identity.attribution.as_ref())
 		.map(Option::as_ref)
 	else {
-		return headers;
+		return Ok(headers);
 	};
 	let ClientAttribution { name, url, categories } = attribution;
 	if is_open_router(target) {
 		headers.insert("HTTP-Referer".into(), url.clone());
 		headers.insert("X-OpenRouter-Title".into(), name.clone());
-		if let Some(categories) = categories
-			&& !categories.is_empty()
-		{
-			headers.insert("X-OpenRouter-Categories".into(), categories.join(","));
+		match categories {
+			Some(None) => return Err(PiError::type_error("Cannot read properties of null (reading 'length')")),
+			Some(Some(categories)) if !categories.is_empty() => {
+				headers.insert("X-OpenRouter-Categories".into(), categories.join(","));
+			}
+			_ => {}
 		}
-		return headers;
+		return Ok(headers);
 	}
 	// NVIDIA expects a capitalized origin, such as `Pi`.
 	if is_nvidia_nim(target) {
 		headers.insert("X-BILLING-INVOKE-ORIGIN".into(), capitalize_first(name));
-		return headers;
+		return Ok(headers);
 	}
 	if is_open_code(target) {
 		headers.insert("x-opencode-client".into(), name.clone());
 	}
-	headers
+	Ok(headers)
 }
 
 /// `name.charAt(0).toUpperCase() + name.slice(1)`. A first character outside the BMP starts with a surrogate, which
@@ -236,10 +248,10 @@ pub fn get_open_code_session_headers(
 pub fn get_identity_headers(
 	target: ClientIdentityTarget,
 	identity: Option<&ClientIdentity>,
-) -> IndexMap<String, String> {
+) -> PiResult<IndexMap<String, String>> {
 	let mut headers = IndexMap::from([("User-Agent".to_string(), format_user_agent(identity))]);
-	headers.extend(get_attribution_headers(target, identity));
-	headers
+	headers.extend(get_attribution_headers(target, identity)?);
+	Ok(headers)
 }
 
 // PORT-TODO: w2-ai-core: `withClientIdentity(models, identity)` wraps `Models` / `MutableModels` from `models.ts`. It
