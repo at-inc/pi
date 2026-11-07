@@ -1135,9 +1135,9 @@ async fn consume_chat_stream(
 				Some(arguments) if js_truthy(arguments) => json_stringify(arguments),
 				_ => "{}".to_string(),
 			};
-			let arguments = open.arguments.append(&args_delta);
-			if let AssistantContent::ToolCall(block) = &mut output.borrow_mut().content[open.content_index] {
-				block.arguments = (*arguments).clone();
+			match &mut output.borrow_mut().content[open.content_index] {
+				AssistantContent::ToolCall(block) => open.arguments.append(&args_delta, &mut block.arguments),
+				_ => unreachable!("an open tool call indexes a tool call block"),
 			}
 			stream.push(AssistantMessageEvent::ToolcallDelta {
 				content_index: open.content_index,

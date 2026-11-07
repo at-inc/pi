@@ -584,7 +584,7 @@ fn process_proxy_event(
 			let args = tool_arguments.get_mut(&content_index);
 			match (positions.block(&mut partial.borrow_mut().content, content_index), args) {
 				(Some(AssistantContent::ToolCall(content)), Some(args)) => {
-					content.arguments = (*args.append(&delta)).clone();
+					args.append(&delta, &mut content.arguments);
 				}
 				_ => return Err(PiError::new("Received toolcall_delta for non-toolCall content")),
 			}

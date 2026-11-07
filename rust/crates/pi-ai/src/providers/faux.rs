@@ -722,9 +722,8 @@ async fn stream_with_deltas(
 						end_with_error(stream, StopReason::Aborted, create_aborted_message(&partial.borrow()));
 						return Ok(());
 					}
-					let arguments = tool_arguments.append(&chunk);
 					if let Some(AssistantContent::ToolCall(tool_call)) = partial.borrow_mut().content.get_mut(index) {
-						tool_call.arguments = (*arguments).clone();
+						tool_arguments.append(&chunk, &mut tool_call.arguments);
 					}
 					stream.push(AssistantMessageEvent::ToolcallDelta {
 						content_index: index,
