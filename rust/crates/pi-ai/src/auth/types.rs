@@ -9,6 +9,10 @@
 //! (`OAuthCredentials & { type: "oauth" }`) repeats the `OAuthCredentials` fields and writes its `type` tag first,
 //! then `refresh`, `access`, `expires` in declaration order, then provider fields in insertion order; a TS object
 //! literal that listed `access` before `refresh` stringifies with the other order.
+//! Deserialization accepts what the TS runtime keeps: a non-string `refresh`, `access`, `key` or env value becomes its
+//! `String(value)` (a missing or `null` token becomes `""`), and `expires` is `Number(value)` (missing is `NaN`,
+//! `null` is `0`). Unknown keys of both credential types survive in `extra`. A credential whose `type` is neither
+//! `api_key` nor `oauth` does not deserialize, where the TS store keeps it and resolution ignores it.
 
 use std::ops::Deref;
 use std::rc::Rc;
@@ -38,6 +42,8 @@ pub struct ModelAuth {
 pub struct ApiKeyCredential {
 	pub key: Option<String>,
 	pub env: Option<ProviderEnv>,
+	/// App fields of the stored object, in insertion order.
+	pub extra: Map<String, Value>,
 }
 
 impl Serialize for ApiKeyCredential {
@@ -53,23 +59,30 @@ impl Serialize for ApiKeyCredential {
 				serde_json::to_value(env).map_err(serde::ser::Error::custom)?,
 			);
 		}
+		for (key, value) in &self.extra {
+			object.insert(key.clone(), value.clone());
+		}
 		object.serialize(serializer)
 	}
 }
 
 impl<'de> Deserialize<'de> for ApiKeyCredential {
 	fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-		#[derive(Deserialize)]
-		struct Fields {
-			#[serde(default)]
-			key: Option<String>,
-			#[serde(default)]
-			env: Option<ProviderEnv>,
-		}
-		let fields = Fields::deserialize(deserializer)?;
+		let mut object = Map::deserialize(deserializer)?;
+		object.shift_remove("type");
+		let key = object.shift_remove("key").and_then(|key| optional_js_string(&key));
+		let env = match object.shift_remove("env") {
+			Some(Value::Object(env)) => Some(
+				env.iter()
+					.filter_map(|(name, value)| optional_js_string(value).map(|value| (name.clone(), value)))
+					.collect(),
+			),
+			_ => None,
+		};
 		Ok(Self {
-			key: fields.key,
-			env: fields.env,
+			key,
+			env,
+			extra: object,
 		})
 	}
 }
@@ -115,7 +128,14 @@ impl OAuthCredential {
 
 	/// `credential[key] = value`; an existing key keeps its position, like a JS property assignment.
 	pub fn set_field(&mut self, key: &str, value: Value) {
-		self.extra.insert(key.into(), value);
+		match key {
+			"refresh" => self.refresh = token_string(Some(value)),
+			"access" => self.access = token_string(Some(value)),
+			"expires" => self.expires = js_number(Some(value)),
+			_ => {
+				self.extra.insert(key.into(), value);
+			}
+		}
 	}
 }
 
@@ -123,18 +143,43 @@ impl<'de> Deserialize<'de> for OAuthCredential {
 	fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
 		let mut object = Map::deserialize(deserializer)?;
 		object.shift_remove("type");
-		let OAuthCredentials {
-			refresh,
-			access,
-			expires,
-			extra,
-		} = OAuthCredentials::deserialize(Value::Object(object)).map_err(serde::de::Error::custom)?;
+		let refresh = token_string(object.shift_remove("refresh"));
+		let access = token_string(object.shift_remove("access"));
+		let expires = js_number(object.shift_remove("expires"));
 		Ok(Self {
 			refresh,
 			access,
 			expires,
-			extra,
+			extra: object,
 		})
+	}
+}
+
+/// JS `String(value)` of a stored value; `null` is absent.
+fn optional_js_string(value: &Value) -> Option<String> {
+	match value {
+		Value::Null => None,
+		Value::String(value) => Some(value.clone()),
+		Value::Number(number) => Some(pi_host::js::number_to_string(number.as_f64().unwrap_or(f64::NAN))),
+		Value::Bool(value) => Some(value.to_string()),
+		Value::Array(_) | Value::Object(_) => Some(pi_host::js::json_stringify(value)),
+	}
+}
+
+/// A stored token: its `String(value)`, or `""` when missing or `null`.
+fn token_string(value: Option<Value>) -> String {
+	value.as_ref().and_then(optional_js_string).unwrap_or_default()
+}
+
+/// JS `Number(value)` of a stored field; a missing field is `NaN`.
+fn js_number(value: Option<Value>) -> f64 {
+	match value {
+		None => f64::NAN,
+		Some(Value::Null) => 0.0,
+		Some(Value::Bool(value)) => f64::from(u8::from(value)),
+		Some(Value::Number(number)) => number.as_f64().unwrap_or(f64::NAN),
+		Some(Value::String(value)) => pi_host::js::string_to_number(&value),
+		Some(_) => f64::NAN,
 	}
 }
 
@@ -597,4 +642,59 @@ impl OAuthAuth {
 pub struct ProviderAuth {
 	pub api_key: Option<ApiKeyAuth>,
 	pub oauth: Option<OAuthAuth>,
+}
+
+#[cfg(test)]
+mod tests {
+	use serde_json::json;
+
+	use super::*;
+
+	fn credential(value: Value) -> Credential {
+		serde_json::from_value(value).unwrap()
+	}
+
+	#[test]
+	fn deserializes_what_the_ts_runtime_keeps() {
+		let Credential::OAuth(missing_expires) = credential(json!({ "type": "oauth", "access": "a", "refresh": "r" }))
+		else {
+			panic!("oauth");
+		};
+		assert!(missing_expires.expires.is_nan());
+		let Credential::OAuth(loose) = credential(json!({ "type": "oauth", "access": null, "expires": "123" })) else {
+			panic!("oauth");
+		};
+		assert_eq!(
+			(loose.access.as_str(), loose.refresh.as_str(), loose.expires),
+			("", "", 123.0)
+		);
+		let Credential::OAuth(null_expires) = credential(json!({ "type": "oauth", "access": "a", "expires": null }))
+		else {
+			panic!("oauth");
+		};
+		assert_eq!(null_expires.expires, 0.0);
+		let Credential::ApiKey(api_key) =
+			credential(json!({ "type": "api_key", "key": 5, "env": { "PORT": 8080 }, "command": "op read" }))
+		else {
+			panic!("api_key");
+		};
+		assert_eq!(api_key.key.as_deref(), Some("5"));
+		assert_eq!(api_key.env.as_ref().unwrap()["PORT"], "8080");
+		assert_eq!(
+			serde_json::to_value(Credential::ApiKey(api_key)).unwrap(),
+			json!({ "type": "api_key", "key": "5", "env": { "PORT": "8080" }, "command": "op read" })
+		);
+	}
+
+	#[test]
+	fn set_field_assigns_the_token_fields() {
+		let mut credential = OAuthCredential::new("r", "a", 1.0);
+		credential.set_field("access", json!("b"));
+		credential.set_field("accountId", json!("x"));
+		assert_eq!(credential.access, "b");
+		assert_eq!(
+			serde_json::to_value(&credential).unwrap(),
+			json!({ "type": "oauth", "refresh": "r", "access": "b", "expires": 1.0, "accountId": "x" })
+		);
+	}
 }

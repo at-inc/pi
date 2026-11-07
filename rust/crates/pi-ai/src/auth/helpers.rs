@@ -38,7 +38,7 @@ pub fn env_api_key_auth(name: &str, env_vars: &[&str]) -> ApiKeyAuth {
 				interaction.signal.throw_if_aborted()?;
 				Ok(ApiKeyCredential {
 					key: Some(key),
-					env: None,
+					..Default::default()
 				})
 			})
 		})),

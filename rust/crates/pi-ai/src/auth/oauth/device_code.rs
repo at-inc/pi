@@ -3,9 +3,12 @@
 //!
 //! `OAuthDeviceCodePollResult<T>` is one enum: the TS union of the incomplete results and `complete`.
 
+use std::future::Future;
 use std::rc::Rc;
 
+use futures::channel::oneshot;
 use futures::future::{Either, select};
+use pi_host::js::{math_max, math_min};
 use pi_host::{AbortSignal, LocalBoxFuture, PiError, PiResult};
 
 const CANCEL_MESSAGE: &str = "Login cancelled";
@@ -49,11 +52,36 @@ pub async fn abortable_sleep(ms: f64, signal: &AbortSignal, cancel_message: &str
 	}
 }
 
-pub async fn poll_oauth_device_code_flow<T>(options: OAuthDeviceCodePollOptions<T>) -> PiResult<T> {
+/// Polls until `poll` completes or fails, the deadline passes, or `signal` aborts. Like the TS promise, the
+/// deadline and the first `poll()` call happen when this is called, and the flow runs whether or not the returned
+/// future is awaited.
+pub fn poll_oauth_device_code_flow<T: 'static>(
+	options: OAuthDeviceCodePollOptions<T>,
+) -> impl Future<Output = PiResult<T>> + 'static + use<T> {
 	let deadline = match options.expires_in_seconds {
 		Some(expires_in_seconds) => pi_host::now_ms() + expires_in_seconds * 1000.0,
 		None => f64::INFINITY,
 	};
+	let first_poll =
+		(options.wait_before_first_poll != Some(true) && pi_host::now_ms() < deadline && !options.signal.aborted())
+			.then(|| (options.poll)());
+	let (sender, receiver) = oneshot::channel();
+	pi_host::spawn_local(async move {
+		let _ = sender.send(poll_until_done(options, deadline, first_poll).await);
+	});
+	async move {
+		match receiver.await {
+			Ok(result) => result,
+			Err(_) => futures::future::pending().await,
+		}
+	}
+}
+
+async fn poll_until_done<T>(
+	options: OAuthDeviceCodePollOptions<T>,
+	deadline: f64,
+	mut first_poll: Option<LocalBoxFuture<'static, PiResult<OAuthDeviceCodePollResult<T>>>>,
+) -> PiResult<T> {
 	let mut interval_ms = math_max(
 		MINIMUM_INTERVAL_MS,
 		(options.interval_seconds.unwrap_or(DEFAULT_POLL_INTERVAL_SECONDS) * 1000.0).floor(),
@@ -67,12 +95,21 @@ pub async fn poll_oauth_device_code_flow<T>(options: OAuthDeviceCodePollOptions<
 		}
 	}
 
-	while pi_host::now_ms() < deadline {
-		if options.signal.aborted() {
-			return Err(PiError::new(CANCEL_MESSAGE));
-		}
+	loop {
+		let poll = match first_poll.take() {
+			Some(poll) => poll,
+			None => {
+				if pi_host::now_ms() >= deadline {
+					break;
+				}
+				if options.signal.aborted() {
+					return Err(PiError::new(CANCEL_MESSAGE));
+				}
+				(options.poll)()
+			}
+		};
 
-		match (options.poll)().await? {
+		match poll.await? {
 			OAuthDeviceCodePollResult::Complete { value } => return Ok(value),
 			OAuthDeviceCodePollResult::Failed { message } => return Err(PiError::new(message)),
 			OAuthDeviceCodePollResult::SlowDown { interval_seconds } => {
@@ -103,14 +140,4 @@ pub async fn poll_oauth_device_code_flow<T>(options: OAuthDeviceCodePollOptions<
 	} else {
 		TIMEOUT_MESSAGE
 	}))
-}
-
-/// JS `Math.max(a, b)`: NaN when either is NaN.
-fn math_max(a: f64, b: f64) -> f64 {
-	if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
-}
-
-/// JS `Math.min(a, b)`: NaN when either is NaN.
-fn math_min(a: f64, b: f64) -> f64 {
-	if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
 }

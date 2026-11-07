@@ -1,7 +1,8 @@
 //! Port of `packages/ai/src/auth/oauth/trusted-url.ts`.
 //! PORT-STATUS: ported
 //!
-//! The WHATWG `URL` parser is the `url` crate, which implements the same standard.
+//! The WHATWG `URL` parser is the `url` crate, which implements the same standard. It is stricter on invalid
+//! punycode labels: `https://xn--a.com/` is rejected, where Node keeps it.
 
 use serde_json::Value;
 

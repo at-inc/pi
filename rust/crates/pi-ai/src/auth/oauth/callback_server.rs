@@ -3,16 +3,27 @@
 //!
 //! Loopback OAuth redirect handler shared by the browser sign-in flows.
 //!
-//! The listening socket needs the `native` feature: it is a tokio `TcpListener` that reads one request head per
-//! connection (within 60 seconds, Node's `headersTimeout`) and answers with `connection: close`, instead of
-//! `node:http`. Without `native`, `startOAuthCallbackServer` rejects with
-//! `OAuth callback server requires the native feature`, as a platform that cannot listen would; flows that catch the
-//! rejection continue with manual input. A request target that is not a valid URL gets the 404 page, where the TS
-//! handler throws and never answers. `close` stops accepting; open connections finish their response, like Node's
-//! `server.close()`. A bind failure is an `Error` with Node's `listen <code>: <description> <host>:<port>` message
-//! and `data.code`. The wait promise is a `Shared` future, so `T` is `Clone`. TS returns the anonymous
-//! `{ type: "callback", value } | { type: "manual", input }` union of `waitForCallbackOrManualInput` as
-//! `CallbackOrManualInput` and takes its prompt as `ManualInputPrompt`.
+//! The listening socket needs the `native` feature: it is a tokio `TcpListener` instead of `node:http`. Without
+//! `native`, `startOAuthCallbackServer` rejects with `OAuth callback server requires the native feature`, as a
+//! platform that cannot listen would; flows that catch the rejection continue with manual input.
+//!
+//! Like Node, the server binds the first address the host name resolves to, closes its socket inside `close()`,
+//! keeps listening after an accept error (an aborted connection or descriptor exhaustion is retried silently,
+//! other errors settle the wait as Node's `error` event does), and keeps the wait alive while its callbacks can
+//! still settle it, so dropping the server handle neither rejects `wait()` nor stops the server. Bind errors carry
+//! Node's message (`listen EADDRINUSE: address already in use 127.0.0.1:1455`, `getaddrinfo ENOTFOUND host`) and
+//! `data` (`errno`, `code`, `syscall`, `address`, `port`); an error kind Node names but Rust does not is `UNKNOWN`.
+//!
+//! The HTTP side reads one request head per connection, within Node's `headersTimeout` of 60 seconds. It answers a
+//! malformed request line (unknown or lowercase method, a target byte outside visible ASCII, bare LF line endings)
+//! with a bare 400 and a head over Node's 16 KiB limit with a bare 431, as Node's parser does. The response
+//! differs from Node's in bytes: `content-length` instead of chunked encoding, `connection: close` instead of
+//! keep-alive, no `Date` header, and a request body is never read. A HEAD request gets the headers only. A request
+//! target that is not a valid URL gets the 404 page, where the TS handler throws inside `void (async () => …)()`
+//! and the unhandled rejection ends a Node process. The wait promise is a `Shared` future, so `T` is `Clone`. TS
+//! returns the anonymous `{ type: "callback", value } | { type: "manual", input }` union of
+//! `waitForCallbackOrManualInput` as `CallbackOrManualInput` and takes its prompt as `ManualInputPrompt`; its
+//! `finally` also runs when the returned future is dropped.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -55,7 +66,8 @@ struct CallbackState<T> {
 	sender: RefCell<Option<oneshot::Sender<WaitResult<T>>>>,
 	timer: RefCell<Option<AbortHandle>>,
 	abort_listener: RefCell<Option<(AbortSignal, ListenerId)>>,
-	listener: RefCell<Option<AbortHandle>>,
+	/// Closes the listening socket at once, like Node's `server.close()`.
+	close_listener: RefCell<Option<Box<dyn FnOnce()>>>,
 }
 
 impl<T> CallbackState<T> {
@@ -99,8 +111,9 @@ impl<T: Clone + 'static> OAuthCallbackServer<T> {
 
 	pub fn close(&self) {
 		self.state.finish(Err(PiError::new("OAuth callback server closed")));
-		if let Some(listener) = self.state.listener.borrow_mut().take() {
-			listener.abort();
+		let close_listener = self.state.close_listener.borrow_mut().take();
+		if let Some(close_listener) = close_listener {
+			close_listener();
 		}
 	}
 }
@@ -124,34 +137,26 @@ pub async fn start_oauth_callback_server<T: Clone + 'static>(
 		sender: RefCell::new(Some(sender)),
 		timer: RefCell::new(None),
 		abort_listener: RefCell::new(None),
-		listener: RefCell::new(None),
+		close_listener: RefCell::new(None),
 	});
 
 	let port = native::listen(&options, state.clone()).await?;
 
 	if let Some(signal) = &options.signal {
-		let aborted = Rc::downgrade(&state);
-		let listener = signal.add_listener(move |_| {
-			if let Some(state) = aborted.upgrade() {
-				state.finish(Err(PiError::new("Login cancelled")));
-			}
-		});
+		let aborted = state.clone();
+		let listener = signal.add_listener(move |_| aborted.finish(Err(PiError::new("Login cancelled"))));
 		*state.abort_listener.borrow_mut() = Some((signal.clone(), listener));
 	}
 	if let Some(timeout_ms) = options.timeout_ms {
 		let (timer, registration) = AbortHandle::new_pair();
 		*state.timer.borrow_mut() = Some(timer);
-		let expired = Rc::downgrade(&state);
+		let expired = state.clone();
 		let message = format!("{} sign-in timed out", options.provider_name);
+		// Created here so the timer starts now, as `setTimeout` does.
+		let sleep = pi_host::current().sleep(timeout_ms);
 		pi_host::spawn_local(async move {
-			if futures::future::Abortable::new(pi_host::sleep(timeout_ms, None), registration)
-				.await
-				.is_err()
-			{
-				return;
-			}
-			if let Some(state) = expired.upgrade() {
-				state.finish(Err(PiError::new(message)));
+			if futures::future::Abortable::new(sleep, registration).await.is_ok() {
+				expired.finish(Err(PiError::new(message)));
 			}
 		});
 	}
@@ -186,7 +191,12 @@ mod native {
 
 #[cfg(feature = "native")]
 mod native {
-	use std::rc::{Rc, Weak};
+	use std::cell::RefCell;
+	use std::future::poll_fn;
+	use std::io::ErrorKind;
+	use std::net::SocketAddr;
+	use std::rc::Rc;
+	use std::task::Poll;
 
 	use futures::future::{AbortHandle, Abortable, Either, select};
 	use pi_host::{PiError, PiResult};
@@ -198,16 +208,12 @@ mod native {
 	use super::{CallbackState, OAuthCallbackCompleteFunction, OAuthCallbackServerOptions};
 	use crate::utils::oauth_page::{oauth_error_html, oauth_success_html};
 
-	const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
-	/// Node's default `headersTimeout`.
-	const HEADERS_TIMEOUT_MS: f64 = 60_000.0;
-
 	struct Route<T> {
 		provider_name: String,
 		path: String,
 		state: Option<String>,
 		complete: OAuthCallbackCompleteFunction<T>,
-		callback: Weak<CallbackState<T>>,
+		callback: Rc<CallbackState<T>>,
 	}
 
 	/// Binds the socket and starts accepting; returns the bound port.
@@ -215,70 +221,222 @@ mod native {
 		options: &OAuthCallbackServerOptions<T>,
 		state: Rc<CallbackState<T>>,
 	) -> PiResult<u16> {
-		let listener = TcpListener::bind((options.host.as_str(), options.port))
+		// Node's `listen(port, host)` binds the first address `dns.lookup` returns.
+		let address = tokio::net::lookup_host((options.host.as_str(), options.port))
 			.await
-			.map_err(|error| listen_error(&error, &options.host, options.port))?;
+			.ok()
+			.and_then(|mut addresses| addresses.next());
+		let Some(address) = address else {
+			return Err(
+				PiError::new(format!("getaddrinfo ENOTFOUND {}", options.host)).with_data(json!({
+					"errno": -3008,
+					"code": "ENOTFOUND",
+					"syscall": "getaddrinfo",
+					"hostname": options.host,
+				})),
+			);
+		};
+		let listener = TcpListener::bind(address)
+			.await
+			.map_err(|error| listen_error(&error, address))?;
 		let port = listener
 			.local_addr()
 			.map_err(|_| PiError::new("OAuth callback server did not bind to TCP"))?
 			.port();
+		let socket = Rc::new(RefCell::new(Some(listener)));
+		let (handle, registration) = AbortHandle::new_pair();
+		*state.close_listener.borrow_mut() = Some(Box::new({
+			let socket = socket.clone();
+			move || {
+				socket.borrow_mut().take();
+				handle.abort();
+			}
+		}));
 		let route = Rc::new(Route {
 			provider_name: options.provider_name.clone(),
 			path: options.path.clone(),
 			state: options.state.clone(),
 			complete: options.complete.clone(),
-			callback: Rc::downgrade(&state),
+			callback: state,
 		});
-		let (handle, registration) = AbortHandle::new_pair();
-		*state.listener.borrow_mut() = Some(handle);
 		pi_host::spawn_local(async move {
-			let accept = async move {
-				loop {
-					match listener.accept().await {
-						Ok((stream, _)) => {
-							let route = route.clone();
-							pi_host::spawn_local(async move { serve(&route, stream).await });
-						}
-						Err(error) => {
-							if let Some(callback) = route.callback.upgrade() {
-								callback.finish(Err(PiError::new(error.to_string())));
-							}
-							return;
-						}
-					}
-				}
-			};
-			let _ = Abortable::new(accept, registration).await;
+			let _ = Abortable::new(accept_connections(socket, route), registration).await;
 		});
 		Ok(port)
 	}
 
-	fn listen_error(error: &std::io::Error, host: &str, port: u16) -> PiError {
-		let (code, description) = match error.kind() {
-			std::io::ErrorKind::AddrInUse => ("EADDRINUSE", "address already in use"),
-			std::io::ErrorKind::AddrNotAvailable => ("EADDRNOTAVAIL", "address not available"),
-			std::io::ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
-			_ => ("EIO", "i/o error"),
-		};
-		PiError::new(format!("listen {code}: {description} {host}:{port}")).with_data(json!({ "code": code }))
+	fn listen_error(error: &std::io::Error, address: SocketAddr) -> PiError {
+		let (code, description) = uv_error(error);
+		PiError::new(format!(
+			"listen {code}: {description} {}:{}",
+			address.ip(),
+			address.port()
+		))
+		.with_data(json!({
+			"errno": error.raw_os_error().map(|errno| -errno),
+			"code": code,
+			"syscall": "listen",
+			"address": address.ip().to_string(),
+			"port": address.port(),
+		}))
 	}
 
-	async fn read_head(stream: &mut TcpStream) -> Option<Vec<u8>> {
-		let mut head = Vec::new();
-		let mut chunk = [0u8; 4096];
-		while !head.windows(4).any(|window| window == b"\r\n\r\n") {
-			match stream.read(&mut chunk).await {
-				Ok(0) | Err(_) => return None,
-				Ok(read) => head.extend_from_slice(&chunk[..read]),
-			}
-			if head.len() > MAX_REQUEST_HEAD_BYTES {
-				return None;
+	/// libuv's code and description for the errors a listening socket reports.
+	fn uv_error(error: &std::io::Error) -> (&'static str, &'static str) {
+		match error.kind() {
+			ErrorKind::AddrInUse => ("EADDRINUSE", "address already in use"),
+			ErrorKind::AddrNotAvailable => ("EADDRNOTAVAIL", "address not available"),
+			ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
+			ErrorKind::InvalidInput => ("EINVAL", "invalid argument"),
+			ErrorKind::ConnectionAborted => ("ECONNABORTED", "software caused connection abort"),
+			ErrorKind::ConnectionReset => ("ECONNRESET", "connection reset by peer"),
+			_ => ("UNKNOWN", "unknown error"),
+		}
+	}
+
+	const EMFILE: i32 = 24;
+	const ENFILE: i32 = 23;
+	const DESCRIPTOR_RETRY_MS: f64 = 100.0;
+
+	async fn accept_connections<T: 'static>(socket: Rc<RefCell<Option<TcpListener>>>, route: Rc<Route<T>>) {
+		loop {
+			let accepted = poll_fn(|cx| match socket.borrow().as_ref() {
+				Some(listener) => listener.poll_accept(cx).map(Some),
+				None => Poll::Ready(None),
+			})
+			.await;
+			match accepted {
+				None => return,
+				Some(Ok((stream, _))) => {
+					let route = route.clone();
+					pi_host::spawn_local(async move { serve(&route, stream).await });
+				}
+				// libuv retries an aborted connection and waits out descriptor exhaustion without reporting either.
+				Some(Err(error)) if error.kind() == ErrorKind::ConnectionAborted => {}
+				Some(Err(error)) if matches!(error.raw_os_error(), Some(EMFILE | ENFILE)) => {
+					let _ = pi_host::sleep(DESCRIPTOR_RETRY_MS, None).await;
+				}
+				// Node emits `error` on the server, which settles the wait, and keeps listening.
+				Some(Err(error)) => {
+					let (code, _) = uv_error(&error);
+					route
+						.callback
+						.finish(Err(PiError::new(format!("accept {code}")).with_data(json!({
+							"errno": error.raw_os_error().map(|errno| -errno),
+							"code": code,
+							"syscall": "accept",
+						}))));
+				}
 			}
 		}
-		Some(head)
 	}
 
-	async fn send_page(stream: &mut TcpStream, status: u16, html: String) {
+	/// Node's `maxHeaderSize`.
+	const MAX_REQUEST_HEAD_BYTES: usize = 16 * 1024;
+	/// Node's default `headersTimeout`.
+	const HEADERS_TIMEOUT_MS: f64 = 60_000.0;
+
+	enum RequestHead {
+		Complete(Vec<u8>),
+		/// A line ends in a bare LF, which Node's parser rejects.
+		Malformed,
+		TooLarge,
+		Closed,
+	}
+
+	async fn read_head(stream: &mut TcpStream) -> RequestHead {
+		let mut head = Vec::new();
+		let mut chunk = [0u8; 4096];
+		loop {
+			match stream.read(&mut chunk).await {
+				Ok(0) | Err(_) => return RequestHead::Closed,
+				Ok(read) => head.extend_from_slice(&chunk[..read]),
+			}
+			let end = head.windows(4).position(|window| window == b"\r\n\r\n");
+			let scanned = &head[..end.map_or(head.len(), |end| end + 4)];
+			if scanned
+				.iter()
+				.enumerate()
+				.any(|(index, byte)| *byte == b'\n' && (index == 0 || scanned[index - 1] != b'\r'))
+			{
+				return RequestHead::Malformed;
+			}
+			if scanned.len() > MAX_REQUEST_HEAD_BYTES {
+				return RequestHead::TooLarge;
+			}
+			if let Some(end) = end {
+				head.truncate(end + 4);
+				return RequestHead::Complete(head);
+			}
+		}
+	}
+
+	/// The methods Node's HTTP parser accepts.
+	const METHODS: &[&str] = &[
+		"DELETE",
+		"GET",
+		"HEAD",
+		"POST",
+		"PUT",
+		"CONNECT",
+		"OPTIONS",
+		"TRACE",
+		"COPY",
+		"LOCK",
+		"MKCOL",
+		"MOVE",
+		"PROPFIND",
+		"PROPPATCH",
+		"SEARCH",
+		"UNLOCK",
+		"BIND",
+		"REBIND",
+		"UNBIND",
+		"ACL",
+		"REPORT",
+		"MKACTIVITY",
+		"CHECKOUT",
+		"MERGE",
+		"M-SEARCH",
+		"NOTIFY",
+		"SUBSCRIBE",
+		"UNSUBSCRIBE",
+		"PATCH",
+		"PURGE",
+		"MKCALENDAR",
+		"LINK",
+		"UNLINK",
+		"SOURCE",
+		"QUERY",
+	];
+
+	/// Method and target of a request line Node's parser accepts.
+	fn request_line(head: &[u8]) -> Option<(String, String)> {
+		let line = &head[..head.windows(2).position(|window| window == b"\r\n")?];
+		let mut parts = line.split(|byte| *byte == b' ');
+		let method = std::str::from_utf8(parts.next()?).ok()?;
+		let target = parts.next()?;
+		let version = parts.next()?;
+		if parts.next().is_some()
+			|| !METHODS.contains(&method)
+			|| target.is_empty()
+			|| !target.iter().all(|byte| (0x21..=0x7e).contains(byte))
+			|| !version.starts_with(b"HTTP/1.")
+		{
+			return None;
+		}
+		Some((method.to_string(), String::from_utf8(target.to_vec()).ok()?))
+	}
+
+	/// The bare response Node's parser sends for a request it rejects.
+	async fn reject(stream: &mut TcpStream, status: &str) {
+		let _ = stream
+			.write_all(format!("HTTP/1.1 {status}\r\nConnection: close\r\n\r\n").as_bytes())
+			.await;
+		let _ = stream.shutdown().await;
+	}
+
+	async fn send_page(stream: &mut TcpStream, method: &str, status: u16, html: String) {
 		let reason = match status {
 			200 => "OK",
 			400 => "Bad Request",
@@ -286,10 +444,13 @@ mod native {
 			409 => "Conflict",
 			_ => "Bad Gateway",
 		};
-		let response = format!(
-			"HTTP/1.1 {status} {reason}\r\ncontent-type: text/html; charset=utf-8\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{html}",
+		let mut response = format!(
+			"HTTP/1.1 {status} {reason}\r\ncontent-type: text/html; charset=utf-8\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
 			html.len()
 		);
+		if method != "HEAD" {
+			response.push_str(&html);
+		}
 		let _ = stream.write_all(response.as_bytes()).await;
 		let _ = stream.shutdown().await;
 	}
@@ -300,18 +461,26 @@ mod native {
 			let deadline = pi_host::sleep(HEADERS_TIMEOUT_MS, None);
 			futures::pin_mut!(read, deadline);
 			match select(read, deadline).await {
-				Either::Left((Some(head), _)) => head,
-				_ => return,
+				Either::Left((head, _)) => head,
+				Either::Right(_) => return,
 			}
 		};
-		let head = String::from_utf8_lossy(&head);
-		let mut request_line = head.lines().next().unwrap_or("").split_whitespace();
-		let method = request_line.next().unwrap_or("");
-		let target = request_line.next().unwrap_or("/");
-		let url = Url::parse("http://localhost").and_then(|base| base.join(target));
+		let head = match head {
+			RequestHead::Complete(head) => head,
+			RequestHead::Malformed => return reject(&mut stream, "400 Bad Request").await,
+			RequestHead::TooLarge => return reject(&mut stream, "431 Request Header Fields Too Large").await,
+			RequestHead::Closed => return,
+		};
+		let Some((method, target)) = request_line(&head) else {
+			return reject(&mut stream, "400 Bad Request").await;
+		};
+		let url = Url::parse("http://localhost").and_then(|base| base.join(&target));
 		let url = match url {
 			Ok(url) if method == "GET" && url.path() == route.path => url,
-			_ => return send_page(&mut stream, 404, oauth_error_html("Callback route not found.", None)).await,
+			_ => {
+				let html = oauth_error_html("Callback route not found.", None);
+				return send_page(&mut stream, &method, 404, html).await;
+			}
 		};
 		let param = |name: &str| {
 			url.query_pairs()
@@ -321,60 +490,43 @@ mod native {
 		if let Some(expected) = &route.state
 			&& param("state").as_ref() != Some(expected)
 		{
-			return send_page(&mut stream, 400, oauth_error_html("State mismatch.", None)).await;
+			return send_page(&mut stream, &method, 400, oauth_error_html("State mismatch.", None)).await;
 		}
-		let Some(callback) = route.callback.upgrade() else {
-			return send_page(
-				&mut stream,
-				409,
-				oauth_error_html("This sign-in has already been handled.", None),
-			)
-			.await;
-		};
+		let callback = &route.callback;
 		if callback.claimed.get() || callback.settled.get() {
-			return send_page(
-				&mut stream,
-				409,
-				oauth_error_html("This sign-in has already been handled.", None),
-			)
-			.await;
+			let html = oauth_error_html("This sign-in has already been handled.", None);
+			return send_page(&mut stream, &method, 409, html).await;
 		}
 		let provider_name = &route.provider_name;
+		// TS sends each page and settles the wait in the same tick, so the wait settles before the page is written.
 		if let Some(error) = param("error").filter(|error| !error.is_empty()) {
 			let description = param("error_description").unwrap_or(error);
-			send_page(
-				&mut stream,
-				400,
-				oauth_error_html(&format!("{provider_name} authorization failed."), Some(&description)),
-			)
-			.await;
 			callback.finish(Err(PiError::new(format!(
 				"{provider_name} authorization failed: {description}"
 			))));
-			return;
+			let html = oauth_error_html(&format!("{provider_name} authorization failed."), Some(&description));
+			return send_page(&mut stream, &method, 400, html).await;
 		}
 		let Some(code) = param("code").filter(|code| !code.is_empty()) else {
-			return send_page(&mut stream, 400, oauth_error_html("Missing authorization code.", None)).await;
+			return send_page(
+				&mut stream,
+				&method,
+				400,
+				oauth_error_html("Missing authorization code.", None),
+			)
+			.await;
 		};
 		callback.claimed.set(true);
 		match (route.complete)(code).await {
 			Ok(value) => {
-				send_page(
-					&mut stream,
-					200,
-					oauth_success_html(&format!("Signed in to {provider_name}. You may now close this page.")),
-				)
-				.await;
 				callback.finish(Ok(Some(value)));
+				let html = oauth_success_html(&format!("Signed in to {provider_name}. You may now close this page."));
+				send_page(&mut stream, &method, 200, html).await;
 			}
 			Err(failure) => {
-				send_page(
-					&mut stream,
-					502,
-					oauth_error_html(&format!("{provider_name} sign-in failed."), Some(&failure.message)),
-				)
-				.await;
+				let html = oauth_error_html(&format!("{provider_name} sign-in failed."), Some(&failure.message));
 				callback.finish(Err(failure));
+				send_page(&mut stream, &method, 502, html).await;
 			}
 		}
 	}
@@ -403,6 +555,7 @@ pub async fn wait_for_callback_or_manual_input<T: Clone + 'static>(
 	prompt: ManualInputPrompt,
 ) -> PiResult<CallbackOrManualInput<T>> {
 	let manual_abort = AbortController::new();
+	let _finally = AbortOnDrop(manual_abort.clone());
 	let manual_error: Rc<RefCell<Option<PiError>>> = Rc::new(RefCell::new(None));
 	let prompting = interaction.prompt(AuthPrompt {
 		signal: Some(manual_abort.signal()),
@@ -429,7 +582,7 @@ pub async fn wait_for_callback_or_manual_input<T: Clone + 'static>(
 			let _ = manual_sender.send(input);
 		});
 	}
-	let result = async {
+	async {
 		let value = match callback {
 			Some(callback) => callback.wait().await?,
 			None => None,
@@ -448,7 +601,14 @@ pub async fn wait_for_callback_or_manual_input<T: Clone + 'static>(
 			input: input.unwrap_or_default(),
 		})
 	}
-	.await;
-	manual_abort.abort();
-	result
+	.await
+}
+
+/// Runs the TS `finally { manualAbort.abort() }` on every exit, a dropped future included.
+struct AbortOnDrop(AbortController);
+
+impl Drop for AbortOnDrop {
+	fn drop(&mut self) {
+		self.0.abort();
+	}
 }

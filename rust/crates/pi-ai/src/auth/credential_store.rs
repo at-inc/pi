@@ -3,6 +3,8 @@
 //!
 //! The TS promise chain per provider is a `Shared` future that settles when the queued task settles; each entry
 //! carries a sequence number that stands in for the identity check `this.chains.get(providerId) === tail`.
+//! `read` returns, and `modify` hands its function, a clone of the stored credential, where TS shares the stored
+//! object: changing the value in place does not change the store; return it from `modify` instead.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

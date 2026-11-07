@@ -8,6 +8,8 @@
 use std::future::Future;
 use std::rc::Rc;
 
+use futures::channel::oneshot;
+use pi_host::js::math_max;
 use pi_host::{AbortController, AbortSignal, LocalBoxFuture, PiError, PiResult};
 
 pub use crate::utils::models_error::{ModelsError, ModelsErrorCode};
@@ -44,27 +46,24 @@ pub fn resolve_provider_auth(
 ) -> impl Future<Output = PiResult<Option<AuthResult>>> + 'static + use<> {
 	let signal = operation_signal(overrides.as_ref().and_then(|overrides| overrides.signal.as_ref()));
 	race_with_abort_signal(
-		resolve_provider_auth_with_signal(
-			provider_id.to_string(),
-			auth.clone(),
-			credentials,
-			auth_context,
-			overrides,
-			signal.clone(),
-		),
+		resolve_provider_auth_with_signal(provider_id, auth, credentials, auth_context, overrides, signal.clone()),
 		&signal,
 	)
 }
 
-async fn resolve_provider_auth_with_signal(
-	provider_id: String,
-	auth: ProviderAuth,
+/// Runs the part of the TS async function before its first `await` when called: the abort check and the
+/// override `apiKey.resolve` call or the `credentials.read` call.
+fn resolve_provider_auth_with_signal(
+	provider_id: &str,
+	auth: &ProviderAuth,
 	credentials: Rc<dyn CredentialStore>,
 	auth_context: Rc<dyn AuthContext>,
 	overrides: Option<AuthResolutionOverrides>,
 	signal: AbortSignal,
-) -> PiResult<Option<AuthResult>> {
-	signal.throw_if_aborted()?;
+) -> LocalBoxFuture<'static, PiResult<Option<AuthResult>>> {
+	if let Err(error) = signal.throw_if_aborted() {
+		return Box::pin(async move { Err(error) });
+	}
 	let override_env = overrides.as_ref().and_then(|overrides| overrides.env.clone());
 	let request_auth_context = match &override_env {
 		Some(env) => overlay_env_auth_context(auth_context, env.clone()),
@@ -75,24 +74,33 @@ async fn resolve_provider_auth_with_signal(
 		&& let Some(api_key_override) = &overrides.api_key
 		&& let Some(api_key) = &auth.api_key
 	{
-		return resolve_api_key(
+		return Box::pin(resolve_api_key(
 			request_auth_context,
 			api_key,
-			&provider_id,
+			provider_id,
 			Some(ApiKeyCredential {
 				key: Some(api_key_override.clone()),
 				env: overrides.env.clone(),
+				..Default::default()
 			}),
 			signal,
-		)
-		.await;
+		));
 	}
 
-	let stored = read_credential(credentials.clone(), &provider_id, signal.clone()).await?;
-	if let Some(stored) = stored {
+	let stored = read_credential(credentials.clone(), provider_id, signal.clone());
+	let provider_id = provider_id.to_string();
+	let auth = auth.clone();
+	Box::pin(async move {
+		let Some(stored) = stored.await? else {
+			// Ambient (env vars, AWS profiles, ADC files).
+			return match &auth.api_key {
+				Some(api_key) => resolve_api_key(request_auth_context, api_key, &provider_id, None, signal).await,
+				None => Ok(None),
+			};
+		};
 		match (stored, &auth.oauth, &auth.api_key) {
 			(Credential::OAuth(stored), Some(oauth), _) => {
-				return resolve_stored_oauth(
+				resolve_stored_oauth(
 					credentials,
 					&provider_id,
 					oauth,
@@ -100,7 +108,7 @@ async fn resolve_provider_auth_with_signal(
 					signal,
 					overrides.as_ref().and_then(|overrides| overrides.min_oauth_validity_ms),
 				)
-				.await;
+				.await
 			}
 			(Credential::ApiKey(stored), _, Some(api_key)) => {
 				let credential = match override_env {
@@ -114,17 +122,11 @@ async fn resolve_provider_auth_with_signal(
 					}
 					None => stored,
 				};
-				return resolve_api_key(request_auth_context, api_key, &provider_id, Some(credential), signal).await;
+				resolve_api_key(request_auth_context, api_key, &provider_id, Some(credential), signal).await
 			}
-			_ => return Ok(None),
+			_ => Ok(None),
 		}
-	}
-
-	// Ambient (env vars, AWS profiles, ADC files).
-	match &auth.api_key {
-		Some(api_key) => resolve_api_key(request_auth_context, api_key, &provider_id, None, signal).await,
-		None => Ok(None),
-	}
+	})
 }
 
 struct OverlayEnvAuthContext {
@@ -217,23 +219,39 @@ pub fn refresh_stored_oauth_credential(
 	};
 	let signal = signal.clone();
 	let provider_id = provider_id.to_string();
-	async move {
+	// TS removes the listener in `finally` once `modify` settles, even when nobody awaits the result.
+	let (sender, receiver) = oneshot::channel();
+	pi_host::spawn_local(async move {
 		let post = modified.await;
 		signal.remove_listener(listener);
-		match post {
-			Ok(Some(Credential::OAuth(post))) => Ok(Some(post)),
-			Ok(_) => Ok(None),
-			Err(error) => {
-				if ModelsError::is(&error) {
-					return Err(error);
-				}
-				signal.throw_if_aborted()?;
-				Err(ModelsError::new(
-					ModelsErrorCode::Auth,
-					&format!("Credential store modify failed for {provider_id}"),
-					Some((&error).into()),
-				))
+		let _ = sender.send(refresh_result(post, &signal, &provider_id));
+	});
+	async move {
+		match receiver.await {
+			Ok(result) => result,
+			Err(_) => futures::future::pending().await,
+		}
+	}
+}
+
+fn refresh_result(
+	post: PiResult<Option<Credential>>,
+	signal: &AbortSignal,
+	provider_id: &str,
+) -> PiResult<Option<OAuthCredential>> {
+	match post {
+		Ok(Some(Credential::OAuth(post))) => Ok(Some(post)),
+		Ok(_) => Ok(None),
+		Err(error) => {
+			if ModelsError::is(&error) {
+				return Err(error);
 			}
+			signal.throw_if_aborted()?;
+			Err(ModelsError::new(
+				ModelsErrorCode::Auth,
+				&format!("Credential store modify failed for {provider_id}"),
+				Some((&error).into()),
+			))
 		}
 	}
 }
@@ -248,7 +266,7 @@ async fn resolve_stored_oauth(
 	signal: AbortSignal,
 	min_oauth_validity_ms: Option<f64>,
 ) -> PiResult<Option<AuthResult>> {
-	let minimum_validity_ms = DEFAULT_OAUTH_MINIMUM_VALIDITY_MS.max(min_oauth_validity_ms.unwrap_or(0.0));
+	let minimum_validity_ms = math_max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, min_oauth_validity_ms.unwrap_or(0.0));
 	let expires_soon =
 		move |credential: &OAuthCredential| pi_host::now_ms() + minimum_validity_ms >= credential.expires;
 	let mut credential = stored;
@@ -287,42 +305,46 @@ async fn resolve_stored_oauth(
 	}
 }
 
-async fn resolve_api_key(
+/// Calls `apiKey.resolve` now, like the TS async function's synchronous start.
+fn resolve_api_key(
 	auth_context: Rc<dyn AuthContext>,
 	api_key: &ApiKeyAuth,
 	provider_id: &str,
 	credential: Option<ApiKeyCredential>,
 	signal: AbortSignal,
-) -> PiResult<Option<AuthResult>> {
-	api_key
-		.resolve(ApiKeyAuthInput {
-			ctx: auth_context,
-			credential,
-			signal,
-		})
-		.await
-		.map_err(|error| {
+) -> impl Future<Output = PiResult<Option<AuthResult>>> + 'static + use<> {
+	let resolved = api_key.resolve(ApiKeyAuthInput {
+		ctx: auth_context,
+		credential,
+		signal,
+	});
+	let provider_id = provider_id.to_string();
+	async move {
+		resolved.await.map_err(|error| {
 			ModelsError::new(
 				ModelsErrorCode::Auth,
 				&format!("API key auth failed for provider {provider_id}"),
 				Some((&error).into()),
 			)
 		})
+	}
 }
 
-async fn read_credential(
+/// Calls `credentials.read` now, like the TS async function's synchronous start.
+fn read_credential(
 	credentials: Rc<dyn CredentialStore>,
 	provider_id: &str,
 	signal: AbortSignal,
-) -> PiResult<Option<Credential>> {
-	credentials
-		.read(provider_id, Some(AuthOperationOptions { signal: Some(signal) }))
-		.await
-		.map_err(|error| {
+) -> impl Future<Output = PiResult<Option<Credential>>> + 'static + use<> {
+	let read = credentials.read(provider_id, Some(AuthOperationOptions { signal: Some(signal) }));
+	let provider_id = provider_id.to_string();
+	async move {
+		read.await.map_err(|error| {
 			ModelsError::new(
 				ModelsErrorCode::Auth,
 				&format!("Credential store read failed for {provider_id}"),
 				Some((&error).into()),
 			)
 		})
+	}
 }

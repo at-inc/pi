@@ -446,3 +446,100 @@ mod wait_for_callback_or_manual_input {
 		});
 	}
 }
+
+/// Rust-only checks of the Node behaviours the port reproduces by hand.
+mod node_behaviour {
+	use futures::FutureExt;
+	use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+	use super::*;
+
+	async fn raw_request(redirect_uri: &str, request: &[u8]) -> String {
+		let url = Url::parse(redirect_uri).unwrap();
+		let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", url.port().unwrap()))
+			.await
+			.unwrap();
+		stream.write_all(request).await.unwrap();
+		let mut response = Vec::new();
+		let _ = stream.read_to_end(&mut response).await;
+		String::from_utf8_lossy(&response).into_owned()
+	}
+
+	#[test]
+	fn close_frees_the_port_at_once() {
+		pi_host::native::run(|| async {
+			let server = start(options()).await.unwrap();
+			let port = Url::parse(&server.redirect_uri).unwrap().port().unwrap();
+			server.close();
+			let again = start(OAuthCallbackServerOptions { port, ..options() }).await.unwrap();
+			again.close();
+		});
+	}
+
+	#[test]
+	fn dropping_the_server_handle_keeps_the_wait_alive() {
+		pi_host::native::run(|| async {
+			let controller = AbortController::new();
+			let server = start(OAuthCallbackServerOptions {
+				signal: Some(controller.signal()),
+				..options()
+			})
+			.await
+			.unwrap();
+			let wait = server.wait();
+			drop(server);
+			controller.abort();
+			assert_eq!(wait.await.unwrap_err().message, "Login cancelled");
+		});
+	}
+
+	#[test]
+	fn rejects_requests_node_cannot_parse() {
+		pi_host::native::run(|| async {
+			let server = start(options()).await.unwrap();
+			let lowercase = raw_request(&server.redirect_uri, b"get /callback HTTP/1.1\r\nHost: x\r\n\r\n").await;
+			assert!(lowercase.starts_with("HTTP/1.1 400 Bad Request\r\n"), "{lowercase}");
+			let bare_lf = raw_request(&server.redirect_uri, b"GET /callback HTTP/1.1\nHost: x\n\n").await;
+			assert!(bare_lf.starts_with("HTTP/1.1 400 Bad Request\r\n"), "{bare_lf}");
+			let non_ascii = raw_request(
+				&server.redirect_uri,
+				b"GET /callback?code=\xC3\xA9 HTTP/1.1\r\nHost: x\r\n\r\n",
+			)
+			.await;
+			assert!(non_ascii.starts_with("HTTP/1.1 400 Bad Request\r\n"), "{non_ascii}");
+			let mut large = b"GET /callback HTTP/1.1\r\nX-Large: ".to_vec();
+			large.extend(std::iter::repeat_n(b'a', 20 * 1024));
+			large.extend_from_slice(b"\r\n\r\n");
+			let too_large = raw_request(&server.redirect_uri, &large).await;
+			assert!(
+				too_large.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+				"{too_large}"
+			);
+			server.close();
+		});
+	}
+
+	#[test]
+	fn dropping_the_wait_aborts_the_manual_prompt() {
+		pi_host::native::run(|| async {
+			let manual_signal: Rc<RefCell<Option<AbortSignal>>> = Rc::new(RefCell::new(None));
+			let recorded = manual_signal.clone();
+			let interaction = interaction(
+				pending_prompt(move |prompt| *recorded.borrow_mut() = prompt.signal.clone()),
+				None,
+			);
+			let mut waiting = Box::pin(wait_for_callback_or_manual_input::<String>(
+				&interaction,
+				None,
+				ManualInputPrompt {
+					message: "paste".into(),
+					placeholder: "url".into(),
+				},
+			));
+			assert!((&mut waiting).now_or_never().is_none());
+			assert!(!manual_signal.borrow().as_ref().unwrap().aborted());
+			drop(waiting);
+			assert!(manual_signal.borrow().as_ref().unwrap().aborted());
+		});
+	}
+}
