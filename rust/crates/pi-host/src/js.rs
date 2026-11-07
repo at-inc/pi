@@ -82,6 +82,93 @@ pub fn number_to_string(value: f64) -> String {
 	buffer.format(value).to_string()
 }
 
+/// JavaScript `StrWhiteSpaceChar`: white space and line terminators, which include U+FEFF but not U+0085.
+fn is_js_whitespace(ch: char) -> bool {
+	(ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}'
+}
+
+/// Length of the longest prefix of `value` that is a `StrDecimalLiteral` without its sign (`Infinity`, `1.5e3`,
+/// `.5`, `5.`), or 0.
+fn unsigned_decimal_prefix(value: &str) -> usize {
+	if value.starts_with("Infinity") {
+		return "Infinity".len();
+	}
+	let bytes = value.as_bytes();
+	let digits = |from: usize| bytes[from..].iter().take_while(|byte| byte.is_ascii_digit()).count();
+	let integer = digits(0);
+	let mut end = integer;
+	if bytes.get(end) == Some(&b'.') {
+		let fraction = digits(end + 1);
+		if integer == 0 && fraction == 0 {
+			return 0;
+		}
+		end += 1 + fraction;
+	} else if integer == 0 {
+		return 0;
+	}
+	if matches!(bytes.get(end), Some(b'e' | b'E')) {
+		let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+		let exponent = digits(end + 1 + sign);
+		if exponent > 0 {
+			end += 1 + sign + exponent;
+		}
+	}
+	end
+}
+
+fn parse_signed_decimal(value: &str) -> f64 {
+	let (negative, unsigned) = match value.as_bytes().first() {
+		Some(b'-') => (true, &value[1..]),
+		Some(b'+') => (false, &value[1..]),
+		_ => (false, value),
+	};
+	let magnitude = if unsigned == "Infinity" {
+		f64::INFINITY
+	} else {
+		unsigned.parse::<f64>().unwrap_or(f64::NAN)
+	};
+	if negative { -magnitude } else { magnitude }
+}
+
+/// `Number.parseFloat(value)`: the longest decimal prefix after leading white space, or `NaN`.
+pub fn parse_float(value: &str) -> f64 {
+	let value = value.trim_start_matches(is_js_whitespace);
+	let sign = usize::from(value.starts_with(['+', '-']));
+	let length = unsigned_decimal_prefix(&value[sign..]);
+	if length == 0 {
+		return f64::NAN;
+	}
+	parse_signed_decimal(&value[..sign + length])
+}
+
+/// `Number(value)` of a string: `0` for blank, `0x`/`0o`/`0b` integers, decimal literals, else `NaN`.
+pub fn string_to_number(value: &str) -> f64 {
+	let value = value.trim_matches(is_js_whitespace);
+	if value.is_empty() {
+		return 0.0;
+	}
+	let radix = match value.get(..2) {
+		Some("0x" | "0X") => Some(16),
+		Some("0o" | "0O") => Some(8),
+		Some("0b" | "0B") => Some(2),
+		_ => None,
+	};
+	if let Some(radix) = radix {
+		let digits = &value[2..];
+		if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
+			return f64::NAN;
+		}
+		return digits.chars().fold(0.0, |total, ch| {
+			total * f64::from(radix) + f64::from(ch.to_digit(radix).unwrap_or(0))
+		});
+	}
+	let sign = usize::from(value.starts_with(['+', '-']));
+	if unsigned_decimal_prefix(&value[sign..]) != value.len() - sign {
+		return f64::NAN;
+	}
+	parse_signed_decimal(value)
+}
+
 /// `str.length`: the number of UTF-16 code units.
 pub fn utf16_len(value: &str) -> usize {
 	value.encode_utf16().count()
@@ -177,6 +264,24 @@ mod tests {
 			json_stringify_pretty(&serde_json::json!({ "a": 1.0 }), 2),
 			"{\n  \"a\": 1\n}"
 		);
+	}
+
+	#[test]
+	fn number_parsing_matches_javascript() {
+		assert_eq!(parse_float(" 1.5s"), 1.5);
+		assert_eq!(parse_float("-.5e1x"), -5.0);
+		assert_eq!(parse_float("1e"), 1.0);
+		assert_eq!(parse_float("Infinityx"), f64::INFINITY);
+		assert!(parse_float("x1").is_nan());
+		assert!(parse_float(".").is_nan());
+		assert_eq!(string_to_number(" 12 "), 12.0);
+		assert_eq!(string_to_number(""), 0.0);
+		assert_eq!(string_to_number("0x1f"), 31.0);
+		assert_eq!(string_to_number("5."), 5.0);
+		assert_eq!(string_to_number("-Infinity"), f64::NEG_INFINITY);
+		assert!(string_to_number("1e").is_nan());
+		assert!(string_to_number("inf").is_nan());
+		assert!(string_to_number("-0x1").is_nan());
 	}
 
 	#[test]

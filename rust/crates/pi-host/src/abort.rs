@@ -103,6 +103,20 @@ impl AbortSignal {
 		reason
 	}
 
+	/// `AbortSignal.timeout(ms)`: a signal that aborts with a `TimeoutError` after `ms` milliseconds of host time.
+	pub fn timeout(ms: f64) -> AbortSignal {
+		let controller = AbortController::new();
+		let signal = controller.signal();
+		crate::host::spawn_local(async move {
+			crate::host::current().sleep(ms).await;
+			controller.abort_with(PiError::named(
+				"TimeoutError",
+				"The operation was aborted due to timeout",
+			));
+		});
+		signal
+	}
+
 	/// `AbortSignal.any(signals)`.
 	pub fn any(signals: &[AbortSignal]) -> AbortSignal {
 		if let Some(reason) = signals.iter().find_map(AbortSignal::reason) {

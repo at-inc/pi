@@ -2,9 +2,10 @@
 //! PORT-STATUS: ported
 //!
 //! The TS loads `node:fs`, `node:os` and `node:path` lazily and treats a runtime without them as a browser. The
-//! port reads the file system through the host (`pi_host::file_exists`, `pi_host::home_dir`): a host without a home
-//! directory is a browser, whose missing ADC file is cached permanently. The cache is per thread. The TS
-//! overloads for `KnownProvider` and `string` are one function taking `&str`.
+//! port reads the file system through the host (`pi_host::file_exists`, `pi_host::home_dir`), which is always loaded:
+//! a browser host has no file system, so its answer, `false`, is cached like the TS browser branch caches it. Without a
+//! home directory only the default ADC path is unavailable. The cache is per thread. The TS overloads for
+//! `KnownProvider` and `string` are one function taking `&str`.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -36,23 +37,19 @@ fn has_vertex_adc_credentials(env: Option<&ProviderEnv>) -> bool {
 	if let Some(cached) = CACHED_VERTEX_ADC_CREDENTIALS_EXISTS.get() {
 		return cached;
 	}
-	let Some(home_dir) = pi_host::home_dir() else {
-		// Definitively in a browser — safe to cache false permanently
-		CACHED_VERTEX_ADC_CREDENTIALS_EXISTS.set(Some(false));
-		return false;
-	};
-
 	// Check GOOGLE_APPLICATION_CREDENTIALS env var first (standard way)
 	let exists = match get_provider_env_value("GOOGLE_APPLICATION_CREDENTIALS", env) {
 		Some(gac_path) => pi_host::file_exists(&gac_path),
 		// Fall back to default ADC path (lazy evaluation)
-		None => pi_host::file_exists(
-			&Path::new(&home_dir)
-				.join(".config")
-				.join("gcloud")
-				.join("application_default_credentials.json")
-				.to_string_lossy(),
-		),
+		None => pi_host::home_dir().is_some_and(|home_dir| {
+			pi_host::file_exists(
+				&Path::new(&home_dir)
+					.join(".config")
+					.join("gcloud")
+					.join("application_default_credentials.json")
+					.to_string_lossy(),
+			)
+		}),
 	};
 	CACHED_VERTEX_ADC_CREDENTIALS_EXISTS.set(Some(exists));
 	exists

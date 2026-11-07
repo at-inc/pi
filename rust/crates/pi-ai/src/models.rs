@@ -38,7 +38,7 @@ use indexmap::IndexMap;
 use pi_host::{AbortController, AbortSignal, LocalBoxFuture, PiError, PiResult};
 use serde_json::Value;
 
-use crate::api::lazy::lazy_stream;
+use crate::api::lazy::{lazy_stream, start_now};
 use crate::auth::context::default_provider_auth_context;
 use crate::auth::credential_store::InMemoryCredentialStore;
 use crate::auth::resolve::{AuthResolutionOverrides, refresh_stored_oauth_credential, resolve_provider_auth};
@@ -982,21 +982,6 @@ async fn finish_apply_auth<M: 'static>(
 	Ok(AppliedAuth { base_url, options })
 }
 
-/// Runs `operation` on the host executor from now on, like the body of a TS async function, which runs whether or
-/// not anyone awaits its promise. The returned future only waits for the outcome, so dropping it cancels nothing.
-fn start_now<T: 'static>(operation: impl Future<Output = T> + 'static) -> LocalBoxFuture<'static, T> {
-	let (sender, receiver) = oneshot::channel();
-	pi_host::spawn_local(async move {
-		let _ = sender.send(operation.await);
-	});
-	Box::pin(async move {
-		match receiver.await {
-			Ok(outcome) => outcome,
-			Err(_) => futures::future::pending().await,
-		}
-	})
-}
-
 fn with_base_url<A>(model: &mut BaseModel<A>, base_url: Option<String>) {
 	if let Some(base_url) = base_url {
 		model.base_url = base_url;
@@ -1904,7 +1889,9 @@ pub fn create_provider(input: CreateProviderOptions) -> PiResult<Provider> {
 		let message = format!("Provider {} has no API implementation for \"{}\"", id, model.api);
 		lazy_stream(
 			model,
-			move || async move { Err(ModelsError::new(ModelsErrorCode::Stream, &message, None)) },
+			move || async move {
+				Err::<AssistantMessageEventStream, _>(ModelsError::new(ModelsErrorCode::Stream, &message, None))
+			},
 			None,
 		)
 	};
