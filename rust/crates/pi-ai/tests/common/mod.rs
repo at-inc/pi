@@ -52,6 +52,7 @@ mod host {
 	struct FetchHost {
 		native: NativeHost,
 		handler: FetchHandler,
+		env: Vec<(String, String)>,
 	}
 
 	impl Host for FetchHost {
@@ -65,7 +66,10 @@ mod host {
 			self.native.monotonic_ms()
 		}
 		fn env(&self, key: &str) -> Option<String> {
-			self.native.env(key)
+			match self.env.iter().find(|(name, _)| name == key) {
+				Some((_, value)) => Some(value.clone()),
+				None => self.native.env(key),
+			}
 		}
 		fn sleep(&self, ms: f64) -> LocalBoxFuture<'static, ()> {
 			self.native.sleep(ms)
@@ -75,11 +79,20 @@ mod host {
 		}
 	}
 
-	pub fn run<T, Fut: Future<Output = T>>(handler: FetchHandler, test: impl FnOnce() -> Fut) -> T {
+	pub fn run<T, Fut: Future<Output = T>>(
+		handler: FetchHandler,
+		env: &[(&str, &str)],
+		test: impl FnOnce() -> Fut,
+	) -> T {
+		let env = env
+			.iter()
+			.map(|(name, value)| (name.to_string(), value.to_string()))
+			.collect();
 		pi_host::native::run(|| async move {
 			let previous = pi_host::set_host(std::rc::Rc::new(FetchHost {
 				native: NativeHost::new(),
 				handler,
+				env,
 			}));
 			let output = test().await;
 			if let Some(previous) = previous {
@@ -102,9 +115,16 @@ mod host {
 
 	use super::FetchHandler;
 
-	pub fn run<T, Fut: Future<Output = T>>(handler: FetchHandler, test: impl FnOnce() -> Fut) -> T {
+	pub fn run<T, Fut: Future<Output = T>>(
+		handler: FetchHandler,
+		env: &[(&str, &str)],
+		test: impl FnOnce() -> Fut,
+	) -> T {
 		pi_host::testing::run(|host| {
 			host.on_fetch(move |request| handler(request));
+			for (name, value) in env {
+				host.set_env(name, value);
+			}
 			test()
 		})
 	}
@@ -120,7 +140,16 @@ mod host {
 
 /// Runs `test` with `fetch` served by `handler`.
 pub fn run<T, Fut: Future<Output = T>>(handler: FetchHandler, test: impl FnOnce() -> Fut) -> T {
-	host::run(handler, test)
+	host::run(handler, &[], test)
+}
+
+/// `run` with `vi.stubEnv` for each of `env`.
+pub fn run_with_env<T, Fut: Future<Output = T>>(
+	handler: FetchHandler,
+	env: &[(&str, &str)],
+	test: impl FnOnce() -> Fut,
+) -> T {
+	host::run(handler, env, test)
 }
 
 /// The platform `fetch` the handler stubbed out.

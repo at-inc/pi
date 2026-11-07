@@ -107,7 +107,7 @@ packages/ai/src/auth/oauth/load.ts	rust/crates/pi-ai/src/auth/oauth/load.rs	pi-a
 packages/ai/src/auth/oauth/meta.ts	rust/crates/pi-ai/src/auth/oauth/meta.rs	pi-ai	198	w2-ai-auth	pending
 packages/ai/src/auth/oauth/openai-chatgpt.ts	rust/crates/pi-ai/src/auth/oauth/openai_chatgpt.rs	pi-ai	310	w2-ai-auth	pending
 packages/ai/src/auth/oauth/openai-codex.ts	rust/crates/pi-ai/src/auth/oauth/openai_codex.rs	pi-ai	439	w2-ai-auth	ported
-packages/ai/src/auth/oauth/openrouter.ts	rust/crates/pi-ai/src/auth/oauth/openrouter.rs	pi-ai	170	w2-ai-auth	pending
+packages/ai/src/auth/oauth/openrouter.ts	rust/crates/pi-ai/src/auth/oauth/openrouter.rs	pi-ai	170	w2-ai-auth	ported
 packages/ai/src/auth/oauth/pkce.ts	rust/crates/pi-ai/src/auth/oauth/pkce.rs	pi-ai	35	w2-ai-auth	ported
 packages/ai/src/auth/oauth/radius.ts	rust/crates/pi-ai/src/auth/oauth/radius.rs	pi-ai	328	w2-ai-auth	pending
 packages/ai/src/auth/oauth/trusted-url.ts	rust/crates/pi-ai/src/auth/oauth/trusted_url.rs	pi-ai	11	w2-ai-auth	ported
