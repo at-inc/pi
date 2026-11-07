@@ -8,9 +8,12 @@ use pi_ai::types::{
 	BaseModel, ImageContent, ImageModel, ImagesContext, ImagesOptions, ImagesStopReason, ModelCost, ModelInputModality,
 	ModelType, ProviderImagesOptions, ProviderRequestOptions, TextContent, UserContent,
 };
-use pi_host::AbortController;
+use std::rc::Rc;
+
+use indexmap::IndexMap;
 use pi_host::testing::run;
-use serde_json::json;
+use pi_host::{AbortController, HttpResponse};
+use serde_json::{Value, json};
 
 const RESPONSE: &str = r#"{"id":"img-1","usage":{"prompt_tokens":12,"completion_tokens":34,"prompt_tokens_details":{"cached_tokens":0}},"choices":[{"message":{"content":"Here is your image.","images":[{"image_url":"data:image/png;base64,ZmFrZS1wbmc="}]}}]}"#;
 
@@ -258,6 +261,159 @@ mod openai_sdk_behavior {
 				.await
 				.unwrap();
 			assert_eq!(output.error_message.as_deref(), Some("Connection error."));
+		});
+	}
+
+	fn with_payload(payload: Value) -> Option<ProviderImagesOptions> {
+		options(ProviderRequestOptions {
+			on_payload: Some(Rc::new(move |_, _| {
+				let payload = payload.clone();
+				Box::pin(async move { Ok(Some(payload)) })
+			})),
+			..ProviderRequestOptions::default()
+		})
+	}
+
+	#[test]
+	fn sends_on_payload_replacements_through_create_and_build_body() {
+		run(|host| async move {
+			host.respond_with(200, &[("content-type", "application/json")], RESPONSE);
+			let model = model("m", "m", vec![ModelInputModality::Image]);
+
+			let output = generate_images(&model, &context(), with_payload(Value::Null))
+				.await
+				.unwrap();
+			assert_eq!(output.stop_reason, ImagesStopReason::Error);
+			assert_eq!(
+				output.error_message.as_deref(),
+				Some("Cannot read properties of null (reading 'stream')")
+			);
+			assert!(host.requests().is_empty());
+
+			let output = generate_images(&model, &context(), with_payload(json!(false)))
+				.await
+				.unwrap();
+			assert_eq!(output.stop_reason, ImagesStopReason::Stop);
+			let request = host.requests().pop().unwrap();
+			assert_eq!((request.body.as_deref(), request.header("content-type")), (None, None));
+
+			let output = generate_images(&model, &context(), with_payload(json!({ "stream": true })))
+				.await
+				.unwrap();
+			assert_eq!(output.stop_reason, ImagesStopReason::Error);
+			assert_eq!(
+				output.error_message.as_deref(),
+				Some("Cannot read properties of undefined (reading '0')")
+			);
+			assert_eq!(
+				host.requests().pop().unwrap().body.as_deref(),
+				Some(r#"{"stream":true}"#)
+			);
+		});
+	}
+
+	#[test]
+	fn reports_a_caller_abort_after_the_headers_as_a_user_abort() {
+		run(|_| async move {
+			let controller = AbortController::new();
+			let abort = controller.clone();
+			let fetch: pi_host::FetchFunction = Rc::new(move |_| {
+				abort.abort();
+				Box::pin(async {
+					Ok(HttpResponse::from_bytes(
+						200,
+						IndexMap::from([("content-type".to_string(), "application/json".to_string())]),
+						RESPONSE,
+					))
+				})
+			});
+			let model = model("m", "m", vec![ModelInputModality::Image]);
+			let output = generate_images(
+				&model,
+				&context(),
+				options(ProviderRequestOptions {
+					signal: Some(controller.signal()),
+					fetch: Some(fetch),
+					..ProviderRequestOptions::default()
+				}),
+			)
+			.await
+			.unwrap();
+			assert_eq!(output.stop_reason, ImagesStopReason::Aborted);
+			assert_eq!(output.error_message.as_deref(), Some("Request aborted"));
+			assert!(output.output.is_empty());
+		});
+	}
+
+	#[test]
+	fn times_out_a_stalled_body_but_not_a_stalled_error_body() {
+		run(|host| async move {
+			let status = Rc::new(std::cell::Cell::new(200));
+			let response_status = status.clone();
+			host.on_fetch(move |_| {
+				let status = response_status.get();
+				Box::pin(async move {
+					let body = if status == 200 {
+						RESPONSE
+					} else {
+						r#"{"error":{"message":"slow"}}"#
+					};
+					let (head, tail) = body.split_at(10);
+					let head = futures::stream::once(async move { Ok(head.to_string().into()) });
+					let tail = futures::stream::once(async move {
+						pi_host::sleep(2000.0, None).await?;
+						Ok(tail.to_string().into())
+					});
+					Ok(HttpResponse {
+						status,
+						status_text: String::new(),
+						url: String::new(),
+						headers: IndexMap::from([("content-type".to_string(), "application/json".to_string())]),
+						body: futures::StreamExt::boxed_local(futures::StreamExt::chain(head, tail)),
+					})
+				})
+			});
+			let model = model("m", "m", vec![ModelInputModality::Image]);
+			let timeout = || {
+				options(ProviderRequestOptions {
+					timeout_ms: Some(1000.0),
+					..ProviderRequestOptions::default()
+				})
+			};
+
+			let output = generate_images(&model, &context(), timeout()).await.unwrap();
+			assert_eq!(output.error_message.as_deref(), Some("Request timed out."));
+
+			status.set(400);
+			let output = generate_images(&model, &context(), timeout()).await.unwrap();
+			assert_eq!(output.error_message.as_deref(), Some(r#"400: {"message":"slow"}"#));
+		});
+	}
+
+	#[test]
+	fn builds_the_url_like_build_url() {
+		run(|host| async move {
+			host.respond_with(200, &[("content-type", "application/json")], RESPONSE);
+			host.set_env("OPENAI_BASE_URL", "https://env.test/v1");
+			let mut model = model("m", "m", vec![ModelInputModality::Image]);
+
+			model.base.base_url = "https://x.test/api?b=1&2=x".into();
+			generate_images(&model, &context(), options(ProviderRequestOptions::default()))
+				.await
+				.unwrap();
+			model.base.base_url = String::new();
+			generate_images(&model, &context(), options(ProviderRequestOptions::default()))
+				.await
+				.unwrap();
+
+			let urls: Vec<String> = host.requests().into_iter().map(|request| request.url).collect();
+			assert_eq!(
+				urls,
+				[
+					"https://x.test/api?2=x%2Fchat%2Fcompletions&b=1",
+					"https://api.openai.com/v1/chat/completions"
+				]
+			);
 		});
 	}
 }

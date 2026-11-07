@@ -12,13 +12,16 @@
 //! - `X-Stainless-Runtime-Version` is `unknown` (there is no Node `process.version`), and on wasm32 the platform
 //!   headers are the SDK's unknown-runtime set.
 //! - Header values are not checked for the characters `Headers` rejects.
+//! - `OPENAI_LOG` is not read, so nothing is logged at any level and an invalid level gives no warning.
 
 use std::collections::HashSet;
+use std::convert::Infallible;
+use std::pin::pin;
 
 use futures::future::{Either, select};
 use indexmap::IndexMap;
 use pi_host::js::json_stringify;
-use pi_host::{AbortSignal, HttpRequest, HttpResponse, LocalBoxFuture, PiError, PiResult};
+use pi_host::{AbortController, AbortSignal, HttpRequest, HttpResponse, LocalBoxFuture, PiError, PiResult};
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
@@ -337,8 +340,9 @@ impl OpenAiChatClient {
 			default_headers = values.into_iter().map(|(name, value)| (name, Some(value))).collect();
 			default_headers.extend(nulls.into_iter().map(|name| (name, None)));
 		}
+		// `baseURL` is always given, so `OPENAI_BASE_URL` is never read, and an empty one falls back to the default.
 		let base_url = if base_url.is_empty() {
-			read_env("OPENAI_BASE_URL").unwrap_or_else(|| "https://api.openai.com/v1".to_string())
+			"https://api.openai.com/v1".to_string()
 		} else {
 			base_url.to_string()
 		};
@@ -360,30 +364,47 @@ impl OpenAiChatClient {
 		signal: Option<AbortSignal>,
 		timeout_ms: Option<f64>,
 	) -> LocalBoxFuture<'static, PiResult<ChatResponse>> {
-		let request = self.build_request(params, signal.as_ref(), timeout_ms);
+		let request = self.build_request(params, timeout_ms);
+		// `create` posts with `stream: body.stream ?? false`; a truthy value makes the SDK parse the response as SSE.
+		let stream = params.get("stream").is_some_and(|stream| truthy(&stream));
 		let fetch = self.fetch.clone();
 		Box::pin(async move {
 			let (mut request, timeout) = request?;
-			if signal.as_ref().is_some_and(AbortSignal::aborted) {
+			let caller_aborted = || signal.as_ref().is_some_and(AbortSignal::aborted);
+			if caller_aborted() {
 				return Err(user_abort_error());
 			}
-			// `setTimeout` clamps delays above 2^31 - 1 to 1ms.
-			let timeout_signal = AbortSignal::timeout(if timeout > 2_147_483_647.0 { 1.0 } else { timeout });
-			let request_signal = match &signal {
-				Some(signal) => AbortSignal::any(&[signal.clone(), timeout_signal.clone()]),
-				None => timeout_signal.clone(),
+			let start_ms = pi_host::now_ms();
+			// `createRequestController`: the request signal follows the caller's signal and the SDK's own aborts.
+			let controller = AbortController::new();
+			request.signal = Some(match &signal {
+				Some(signal) => AbortSignal::any(&[controller.signal(), signal.clone()]),
+				None => controller.signal(),
+			});
+			// `fetchWithTimeout` aborts the request when its timer fires before the headers arrive, then clears it.
+			let abort_on_timeout = async {
+				let _ = pi_host::sleep(set_timeout_delay(timeout), None).await;
+				controller.abort();
+				futures::future::pending::<Infallible>().await
 			};
-			request.signal = Some(request_signal.clone());
-			let caller_aborted = || signal.as_ref().is_some_and(AbortSignal::aborted);
-			let response = match race(pi_host::fetch(request, fetch.as_ref()), &request_signal).await {
+			let response = match select(pin!(pi_host::fetch(request, fetch.as_ref())), pin!(abort_on_timeout)).await {
+				Either::Left((response, _)) => response,
+				Either::Right((never, _)) => match never {},
+			};
+			let response = match response {
 				Ok(response) => response,
 				Err(error) => {
 					if caller_aborted() {
 						return Err(user_abort_error());
 					}
-					// The SDK's `/timed? ?out/i` test on `String(error)`.
-					let described = format!("{}: {}", error.name, error.message);
-					if error.is_abort() || timeout_signal.aborted() || timed_out_regex().is_match(&described) {
+					// The SDK's `/timed? ?out/i` test on `String(error) + String(error.cause)`.
+					let cause = error
+						.data
+						.as_ref()
+						.and_then(|data| data.get("cause"))
+						.and_then(Value::as_str);
+					let described = format!("{}: {}{}", error.name, error.message, cause.unwrap_or(""));
+					if error.is_abort() || timed_out_regex().is_match(&described) {
 						return Err(connection_error("Request timed out."));
 					}
 					return Err(connection_error("Connection error."));
@@ -397,22 +418,51 @@ impl OpenAiChatClient {
 				};
 				return Err(status_error(status, &headers, &text));
 			}
-			match race(parse_response(response), &request_signal).await {
-				Ok(body) => Ok((status, headers, body)),
-				Err(_) if caller_aborted() => Err(user_abort_error()),
-				Err(_) if timeout_signal.aborted() => Err(connection_error("Request timed out.")),
-				Err(error) => Err(error),
+			// `Stream.fromSSEResponse` reads nothing up front, and the `Stream` has no `id`, `usage` or `choices`.
+			if stream {
+				return Ok((status, headers, Some(json!({}))));
+			}
+			// `parseResponseWithTimeout` parses these directly, without its abort check and body timer.
+			if status == 204 || response.header("content-length") == Some("0") {
+				return Ok((status, headers, parse_response(response).await?));
+			}
+			if caller_aborted() {
+				return Err(user_abort_error());
+			}
+			let remaining = (start_ms + timeout - pi_host::now_ms()).max(0.0);
+			let interrupt = async {
+				let caller_abort = async {
+					match &signal {
+						Some(signal) => signal.aborted_future().await,
+						None => futures::future::pending().await,
+					}
+				};
+				match select(
+					pin!(pi_host::sleep(set_timeout_delay(remaining), None)),
+					pin!(caller_abort),
+				)
+				.await
+				{
+					Either::Left(_) => {
+						controller.abort();
+						connection_error("Request timed out.")
+					}
+					Either::Right(_) => user_abort_error(),
+				}
+			};
+			match select(pin!(parse_response(response)), pin!(interrupt)).await {
+				Either::Left((Ok(body), _)) => Ok((status, headers, body)),
+				Either::Left((Err(_), _)) if caller_aborted() => Err(user_abort_error()),
+				Either::Left((Err(error), _)) | Either::Right((error, _)) => Err(error),
 			}
 		})
 	}
 
 	/// `buildRequest`: the URL, the headers and the body, plus the timeout in milliseconds.
-	fn build_request(
-		&self,
-		params: &Value,
-		signal: Option<&AbortSignal>,
-		timeout_ms: Option<f64>,
-	) -> PiResult<(HttpRequest, f64)> {
+	fn build_request(&self, params: &Value, timeout_ms: Option<f64>) -> PiResult<(HttpRequest, f64)> {
+		if params.is_null() {
+			return Err(PiError::type_error("Cannot read properties of null (reading 'stream')"));
+		}
 		let url = self.build_url("/chat/completions")?;
 		if let Some(timeout) = timeout_ms {
 			if timeout.fract() != 0.0 || !timeout.is_finite() {
@@ -442,11 +492,18 @@ impl OpenAiChatClient {
 		);
 		sdk_headers.push(("OpenAI-Organization".into(), self.organization.clone()));
 		sdk_headers.push(("OpenAI-Project".into(), self.project.clone()));
+		// `buildBody` sends no body and no content type for a falsy body.
+		let has_body = truthy(&params);
+		let body_headers = if has_body {
+			vec![("content-type".into(), Some("application/json".into()))]
+		} else {
+			Vec::new()
+		};
 		let (values, nulls) = build_headers(&[
 			sdk_headers,
 			vec![("Authorization".into(), Some(format!("Bearer {}", self.api_key)))],
 			self.default_headers.clone(),
-			vec![("content-type".into(), Some("application/json".into()))],
+			body_headers,
 		])?;
 		let has = |name: &str| values.get(name).is_some_and(|value| !value.is_empty()) || nulls.contains(name);
 		if !has("authorization") && !has("api-key") {
@@ -456,8 +513,7 @@ impl OpenAiChatClient {
 		}
 		let mut request = HttpRequest::new("POST", url);
 		request.headers = values;
-		request.body = Some(json_stringify(params).into());
-		request.signal = signal.cloned();
+		request.body = has_body.then(|| json_stringify(params).into());
 		Ok((request, timeout))
 	}
 
@@ -469,7 +525,19 @@ impl OpenAiChatClient {
 			format!("{}{path}", self.base_url)
 		};
 		let mut url = url::Url::parse(&joined).map_err(|_| PiError::type_error("Invalid URL"))?;
-		let query: IndexMap<String, String> = url.query_pairs().into_owned().collect();
+		let mut query: IndexMap<String, String> = url.query_pairs().into_owned().collect();
+		// `Object.fromEntries(url.searchParams)` makes an object, which lists array-index keys first, ascending.
+		let array_index = |key: &str| {
+			key.parse::<u32>()
+				.ok()
+				.filter(|index| *index != u32::MAX && index.to_string() == key)
+		};
+		query.sort_by(|a, _, b, _| match (array_index(a), array_index(b)) {
+			(Some(a), Some(b)) => a.cmp(&b),
+			(Some(_), None) => std::cmp::Ordering::Less,
+			(None, Some(_)) => std::cmp::Ordering::Greater,
+			(None, None) => std::cmp::Ordering::Equal,
+		});
 		if !query.is_empty() {
 			let search: Vec<String> = query
 				.iter()
@@ -481,13 +549,9 @@ impl OpenAiChatClient {
 	}
 }
 
-/// Races `future` against `signal`, failing with the abort reason when the signal fires first.
-async fn race<T>(future: impl Future<Output = PiResult<T>>, signal: &AbortSignal) -> PiResult<T> {
-	let aborted = signal.aborted_future();
-	match select(std::pin::pin!(future), std::pin::pin!(aborted)).await {
-		Either::Left((result, _)) => result,
-		Either::Right((reason, _)) => Err(reason),
-	}
+/// The delay `setTimeout` waits: one beyond `2^31 - 1` is clamped to 1ms.
+fn set_timeout_delay(ms: f64) -> f64 {
+	if ms > 2_147_483_647.0 { 1.0 } else { ms }
 }
 
 /// `defaultParseResponse` for a non-streaming JSON call: `None` stands for `undefined`.

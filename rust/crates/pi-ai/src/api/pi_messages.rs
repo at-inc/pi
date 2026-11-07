@@ -24,6 +24,11 @@
 //! - `streamSimple`'s `debug` comes from the `SimpleStreamOptions` extra keys in TS; `SimpleStreamOptions` has none in
 //!   Rust, so `stream_simple` never sets it. `stream` reads `reasoning`, `toolChoice` and `debug` from
 //!   `ProviderStreamOptions.extra`.
+//! - A `text_end`/`thinking_end` without `content` fails the stream; the TS stores `text`/`thinking: undefined`.
+//! - The payload's `context` is serialized from typed messages, so its keys follow the struct order rather than the
+//!   order of the caller's objects.
+//! - `response.body` is null only for the null-body statuses 204 and 205: a `fetch` override cannot return a 2xx
+//!   response without a body.
 //! - The TS async body starts inside `stream()`; here it runs on the host executor, so `onPayload` is first called
 //!   once the caller yields.
 
@@ -31,7 +36,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use futures::StreamExt;
-use futures::future::{Either, select};
 use pi_host::js::{json_stringify, number_to_string, utf16_len};
 use pi_host::{AbortSignal, HttpRequest, PiError, PiResult};
 use serde_json::{Map, Value, json};
@@ -221,22 +225,15 @@ async fn run(
 		return Err(create_response_error(model, &url, status, &status_text, &body));
 	}
 
+	// `fetch` gives a null-body status a null `response.body`.
+	if matches!(response.status, 204 | 205) {
+		return Err(PiError::new(format!("{} response has no body", model.provider)));
+	}
+
 	let mut reader = EventReader::default();
 	let mut body = response.body;
-	let signal = options.base.signal.clone();
 	loop {
-		// A host fetch ends the body quietly on abort; JS rejects the read with the signal's reason.
-		let chunk = match &signal {
-			Some(signal) => {
-				let aborted = signal.aborted_future();
-				match select(body.next(), std::pin::pin!(aborted)).await {
-					Either::Left((chunk, _)) => chunk,
-					Either::Right((reason, _)) => return Err(reason),
-				}
-			}
-			None => body.next().await,
-		};
-		let chunk = match chunk {
+		let chunk = match body.next().await {
 			Some(chunk) => Some(chunk?),
 			None => None,
 		};

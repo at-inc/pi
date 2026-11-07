@@ -446,8 +446,77 @@ mod pi_messages {
 			);
 		});
 	}
+
+	// Not in the TS suite: `fetch` gives a 204 response a null body, which hits the `!response.body` branch.
+	#[test]
+	fn reports_a_null_body_status_as_a_missing_body() {
+		run(|host| async move {
+			host.on_fetch(|_| Box::pin(async { Ok(HttpResponse::from_bytes(204, IndexMap::new(), "")) }));
+
+			let message = result(Some(PiMessagesOptions {
+				base: options(StreamOptions::default()),
+				..PiMessagesOptions::default()
+			}))
+			.await;
+
+			assert_eq!(message.stop_reason, StopReason::Error);
+			assert_eq!(message.error_message.as_deref(), Some("radius response has no body"));
+		});
+	}
+
+	// Not in the TS suite: the TS only stops on abort when the body's read rejects, so a body that ignores the signal
+	// is read to its terminal event.
+	#[test]
+	fn keeps_reading_a_body_that_ignores_the_abort() {
+		run(|host| async move {
+			host.on_fetch(|_| {
+				Box::pin(async {
+					let start =
+						futures::stream::once(async { Ok(format!("data: {}\n\n", json!({ "type": "start" })).into()) });
+					let done = futures::stream::once(async {
+						pi_host::sleep(50.0, None).await?;
+						let done =
+							json!({ "type": "done", "reason": "stop", "usage": usage(), "responseId": "resp_1" });
+						Ok(format!("data: {done}\n\n").into())
+					});
+					Ok(HttpResponse {
+						status: 200,
+						status_text: "OK".into(),
+						url: String::new(),
+						headers: IndexMap::from([("content-type".to_string(), "text/event-stream".to_string())]),
+						body: futures::StreamExt::boxed_local(futures::StreamExt::chain(start, done)),
+					})
+				})
+			});
+			let controller = pi_host::AbortController::new();
+			let abort = controller.clone();
+
+			let message = result(Some(PiMessagesOptions {
+				base: options(StreamOptions {
+					base: ProviderRequestOptions {
+						signal: Some(controller.signal()),
+						..ProviderRequestOptions::default()
+					},
+					on_provider_stream_event: Some(Rc::new(move |event: &Value, _: &Model| {
+						if event["type"] == "start" {
+							abort.abort();
+						}
+						Box::pin(async { Ok(()) })
+					})),
+					..StreamOptions::default()
+				}),
+				..PiMessagesOptions::default()
+			}))
+			.await;
+
+			assert!(controller.signal().aborted());
+			assert_eq!(message.stop_reason, StopReason::Stop);
+			assert_eq!(message.response_id.as_deref(), Some("resp_1"));
+		});
+	}
 }
 
+// The TS case "is a known api usable on models" is a type-level check with no runtime behavior to port.
 mod pi_messages_api_registration {
 	use pi_ai::compat::get_api_provider;
 
