@@ -45,7 +45,7 @@ where
 	resolved
 }
 
-/// `String.prototype.replaceAll` with a string pattern: the replacement expands `$$`, `$&`, `$\`` and `$'`, and
+/// `String.prototype.replaceAll` with a string pattern: the replacement expands `$$`, `$&`, `` $` `` and `$'`, and
 /// any other `$` stays literal because a string pattern has no capture groups.
 fn replace_all(haystack: &str, pattern: &str, replacement: &str) -> String {
 	let mut out = String::with_capacity(haystack.len());

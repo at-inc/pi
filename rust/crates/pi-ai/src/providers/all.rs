@@ -5,8 +5,11 @@
 //! - `BuiltinProvider` and the catalog id/API helper types only narrow types; providers and model ids are `&str`.
 //!   The getters return copies of the catalog entries, and a provider or model id the catalog lacks reads as `None`
 //!   (the TS returns `undefined` despite its types).
-//! - `getBuiltinModelDataGeneratedAt` parses `generatedAt` as the `YYYY-MM-DDTHH:mm:ss[.sss]Z` string the generator
-//!   writes (`Date.prototype.toISOString`); any other string reads as `Date.parse`'s NaN, so `None`.
+//! - `getBuiltinModelDataGeneratedAt` parses only the `YYYY-MM-DDTHH:mm:ss[.s{1,3}]Z` form the generator writes
+//!   (`Date.prototype.toISOString`), with V8's day rollover (`2026-02-30` is March 2). Strings V8's `Date.parse` also
+//!   accepts read as `None` here: `T24:00:00Z`, fractions longer than 3 digits, `THH:mmZ` without seconds, `±HH:mm`
+//!   offsets, lowercase `t`/`z`, date-only `YYYY`, `YYYY-MM` and `YYYY-MM-DD`, `±YYYYYY` years, date-times without an
+//!   offset (local time) and the legacy formats such as `Nov 7 2026`.
 //! - `builtinModels` registers each provider as an `Rc<Provider>`.
 
 use std::rc::Rc;
