@@ -2,7 +2,7 @@
 
 import type * as ts from "@at-inc/pi-ai/providers/cloudflare-auth";
 import { wasm } from "@at-inc/pi-core";
-import { apiKeyAuthOf } from "../models.ts";
+import { apiKeyAuthOf } from "../internal/auth.ts";
 
 export type * from "@at-inc/pi-ai/providers/cloudflare-auth";
 

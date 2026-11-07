@@ -234,6 +234,21 @@ pub fn fetch_function(fetch: Function) -> FetchFunction {
 	fetch_function
 }
 
+/// The JS function of a `FetchFunction`: `globalThis.fetch` for the host fetch, the caller's function for the last
+/// `options.fetch` while it lives. `None` for a fetch written in Rust, which has no JS function.
+fn fetch_to_js(fetch: &FetchFunction) -> Option<JsValue> {
+	if pi_host::is_global_fetch(fetch) {
+		return Reflect::get(&js_sys::global(), &"fetch".into()).ok();
+	}
+	LAST_FETCH.with_borrow(|last| {
+		let (function, fetch_function) = last.as_ref()?;
+		let same = std::ptr::addr_eq(fetch_function.as_ptr(), Rc::as_ptr(fetch));
+		same.then(|| function.upgrade())
+			.flatten()
+			.map(|function| (*function).clone().into())
+	})
+}
+
 /// `options.onPayload(payload, model)`. A callback that returns `undefined` keeps the payload, including changes it made
 /// to the payload object in place, as the TS sends the object it passed.
 fn on_payload<M: 'static>(function: Function, this: JsValue, model: JsValue) -> OnPayload<M> {
@@ -276,8 +291,8 @@ pub fn on_provider_stream_event(function: Function, this: JsValue, model: JsValu
 
 /// The JS options object for Rust options, for calling a JS implementation (`ProviderStreams` written in JS): the
 /// plain fields, `signal` (alive while the returned guard lives), and `onPayload`, `onResponse` and
-/// `onProviderStreamEvent` as JS functions over the Rust callbacks. A custom `fetch` and `telemetry` are not bridged
-/// this way yet.
+/// `onProviderStreamEvent` as JS functions over the Rust callbacks, and `fetch` as the caller's JS function (see
+/// `fetch_to_js`). `telemetry` is not bridged this way yet.
 pub fn stream_options_to_js(
 	options: &StreamOptions,
 	extra: &Map<String, Value>,
@@ -341,6 +356,9 @@ pub fn request_options_to_js<M: DeserializeOwned + 'static>(
 	let signal = options.signal.as_ref().map(crate::abort::to_js);
 	if let Some(signal) = &signal {
 		set("signal", signal.js.clone());
+	}
+	if let Some(fetch) = options.fetch.as_ref().and_then(fetch_to_js) {
+		set("fetch", fetch);
 	}
 	let data: [(&str, Option<Value>); 7] = [
 		("apiKey", options.api_key.clone().map(Value::from)),

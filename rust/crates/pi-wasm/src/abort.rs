@@ -106,3 +106,9 @@ pub fn to_js(signal: &AbortSignal) -> JsSignal {
 	}
 	JsSignal { js }
 }
+
+/// The JS `AbortSignal` of a Rust signal for a signal JS may keep after the call that received it settles (a prompt's
+/// signal aborts once the login settles). It is the signal `to_js` gives, which follows the Rust signal for its life.
+pub fn to_js_lasting(signal: &AbortSignal) -> JsValue {
+	to_js(signal).js
+}

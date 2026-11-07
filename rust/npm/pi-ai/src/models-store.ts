@@ -1,24 +1,28 @@
-// models-store: `InMemoryModelsStore` over the Rust store. A `Models` given one calls it like any JS store.
+// models-store: the in-memory models store, a Rust store behind the TS class's methods.
 
-import type { ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions } from "@at-inc/pi-ai";
+import type * as ts from "@at-inc/pi-ai/models-store";
 import { wasm } from "@at-inc/pi-core";
-import { rethrow } from "./internal/errors.ts";
+import type { ModelsStoreHandle } from "@at-inc/pi-core/wasm";
 
-export type { ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions } from "@at-inc/pi-ai";
+export type * from "@at-inc/pi-ai/models-store";
 
-/** The TS package's `InMemoryModelsStore`: entries are copied in and out, as `structuredClone` does in the TS. */
-export class InMemoryModelsStore implements ModelsStore {
-	readonly #handle = wasm.aiInMemoryModelsStore();
+/** The TS `InMemoryModelsStore` over a Rust store. */
+class RustInMemoryModelsStore implements ts.ModelsStore {
+	readonly #handle: ModelsStoreHandle = wasm.aiInMemoryModelsStore();
 
-	read(providerId: string, options?: ModelsStoreOperationOptions): Promise<ModelsStoreEntry | undefined> {
-		return this.#handle.read(providerId, options).catch(rethrow);
+	read(...[providerId, options]: Parameters<ts.ModelsStore["read"]>): ReturnType<ts.ModelsStore["read"]> {
+		return this.#handle.read(providerId, options);
 	}
 
-	async write(providerId: string, entry: ModelsStoreEntry, options?: ModelsStoreOperationOptions): Promise<void> {
-		return this.#handle.write(providerId, entry, options).catch(rethrow);
+	write(...[providerId, entry, options]: Parameters<ts.ModelsStore["write"]>): ReturnType<ts.ModelsStore["write"]> {
+		return this.#handle.write(providerId, entry, options);
 	}
 
-	delete(providerId: string, options?: ModelsStoreOperationOptions): Promise<void> {
-		return this.#handle.delete(providerId, options).catch(rethrow);
+	delete(...[providerId, options]: Parameters<ts.ModelsStore["delete"]>): ReturnType<ts.ModelsStore["delete"]> {
+		return this.#handle.delete(providerId, options);
 	}
 }
+
+// The TS class has private members, which makes TypeScript compare it by declaration.
+export const InMemoryModelsStore = RustInMemoryModelsStore as unknown as typeof ts.InMemoryModelsStore;
+export type InMemoryModelsStore = ts.InMemoryModelsStore;

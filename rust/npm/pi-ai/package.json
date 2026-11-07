@@ -50,7 +50,7 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"test:vitest": "node ../../../node_modules/vitest/vitest.mjs --run --config vitest.config.ts",
-		"test:workers": "node test/workers/smoke.ts",
+		"test:workers": "node test/workers/smoke.ts && node test/workers/listen.ts",
 		"bench": "node --conditions=source bench/stream.ts"
 	},
 	"dependencies": {

@@ -1,11 +1,10 @@
 //! Providers across the boundary, for `models`: a JS `Provider` object as a Rust `Provider` (`js_provider`), JS image
-//! and classifier implementations as Rust ones, a JS `AuthContext` as a Rust one, and a Rust `RefreshModelsContext`
-//! as the JS one a JS `refreshModels` receives (and back, for a Rust `refreshModels` called from JS).
+//! and classifier implementations as Rust ones, and a Rust `RefreshModelsContext` as the JS one a JS `refreshModels` receives (and back, for a Rust `refreshModels` called from JS).
 
 use std::rc::Rc;
 
 use js_sys::{Array, Function, Object, Reflect};
-use pi_ai::auth::types::{AuthContext, Credential};
+use pi_ai::auth::types::Credential;
 use pi_ai::{
 	AnyModel, AssistantImages, CancelDeferredFunction, ClassifierContext, ClassifierFunction, ClassifierModel,
 	ClassifierOptions, ClassifierResult, FetchDeferredFunction, FetchModelsFunction, FilterAllModelsFunction,
@@ -39,7 +38,7 @@ pub fn js_provider(object: JsValue) -> Result<Provider, JsValue> {
 		} else {
 			Some(arg(headers)?)
 		},
-		auth: super::models::provider_auth(&get(&object, "auth")),
+		auth: super::auth::provider_auth(&get(&object, "auth")),
 		get_models: Rc::new(reader(object.clone(), "getModels")),
 		get_all_models: method(&object, "getAllModels")
 			.map(|_| Rc::new(reader(object.clone(), "getAllModels")) as GetAllModelsFunction),
@@ -334,27 +333,6 @@ impl ProviderClassifier for JsClassifier {
 		Box::pin(async move {
 			let (args, _signal) = args?;
 			crate::json::from_js(call(&object, "classify", &args).await?)
-		})
-	}
-}
-
-/// A JS `AuthContext` (`{ env, fileExists }`) as a Rust one. A throwing or rejecting method reads as unset.
-pub struct JsAuthContext {
-	pub object: JsValue,
-}
-
-impl AuthContext for JsAuthContext {
-	fn env(&self, name: &str) -> LocalBoxFuture<'static, Option<String>> {
-		let (object, name) = (self.object.clone(), JsValue::from(name));
-		Box::pin(async move { call(&object, "env", &[name]).await.ok()?.as_string() })
-	}
-
-	fn file_exists(&self, path: &str) -> LocalBoxFuture<'static, bool> {
-		let (object, path) = (self.object.clone(), JsValue::from(path));
-		Box::pin(async move {
-			call(&object, "fileExists", &[path])
-				.await
-				.is_ok_and(|exists| exists.is_truthy())
 		})
 	}
 }

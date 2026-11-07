@@ -1,17 +1,17 @@
 // models: createProvider and createModels over Rust providers, plus the module's helper functions. Providers written in
 // JS (any `Provider` object) and the facade's Rust providers both go into a Rust `Models`, which calls the JS stores
-// and auth context it is given; `login`/`logout` belong to the auth facade.
+// and auth context it is given and runs `login`/`logout` through the providers' auth.
 
 import type {
 	AnyModel,
 	Api,
-	ApiKeyAuth,
 	AssistantMessage,
 	AssistantMessageEventStream,
 	AuthCheck,
 	AuthOperationOptions,
 	AuthResult,
 	Context,
+	Credential,
 	Model,
 	ModelType,
 	ModelTypeMap,
@@ -22,10 +22,10 @@ import type {
 } from "@at-inc/pi-ai";
 import type * as ts from "@at-inc/pi-ai/models";
 import { streamFrom, wasm } from "@at-inc/pi-core";
-import type { ApiKeyAuthHandle, ModelsHandle, ProviderHandle } from "@at-inc/pi-core/wasm";
+import type { ModelsHandle, ProviderHandle } from "@at-inc/pi-core/wasm";
+import { apiKeyAuthOf, oauthAuthOf } from "./internal/auth.ts";
 import { rethrow, revived } from "./internal/errors.ts";
 import { nativeClassifierOf, nativeImagesOf, nativeOf } from "./internal/native-api.ts";
-import { notBridged } from "./internal/not-bridged.ts";
 
 export type * from "@at-inc/pi-ai/models";
 export { ModelsError } from "./utils/models-error.ts";
@@ -67,33 +67,14 @@ export function providerFromHandle(handle: ProviderHandle, auth: ProviderAuth = 
 	return provider;
 }
 
-/** The JS view of a Rust provider's auth. `login` belongs to the auth facade. */
+/** The JS view of a Rust provider's auth. */
 function authOf(handle: ProviderHandle): ProviderAuth {
 	const auth: ProviderAuth = {};
 	const apiKey = handle.apiKeyAuth();
 	if (apiKey) auth.apiKey = apiKeyAuthOf(apiKey);
 	const oauth = handle.oauthAuth();
-	if (oauth) {
-		auth.oauth = {
-			name: oauth.name,
-			...(oauth.isSubscription !== undefined && { isSubscription: oauth.isSubscription }),
-			...(oauth.loginLabel !== undefined && { loginLabel: oauth.loginLabel }),
-			login: () => notBridged("oauth.login"),
-			refresh: (credential, signal) => oauth.refresh(credential, signal).catch(rethrow),
-			toAuth: (credential) => oauth.toAuth(credential).catch(rethrow),
-		};
-	}
+	if (oauth) auth.oauth = oauthAuthOf(oauth);
 	return auth;
-}
-
-/** The JS `ApiKeyAuth` of a Rust one. `login` belongs to the auth facade. */
-export function apiKeyAuthOf(apiKey: ApiKeyAuthHandle): ApiKeyAuth {
-	return {
-		name: apiKey.name,
-		resolve: (input) => apiKey.resolve(input).catch(rethrow),
-		...(apiKey.hasCheck() && { check: (input) => apiKey.check(input).catch(rethrow) }),
-		...(apiKey.hasLogin() && { login: () => notBridged("apiKey.login") }),
-	};
 }
 
 /** The entries of an implementation map, without the `undefined` ones. */
@@ -220,12 +201,12 @@ export class RustModels implements ts.MutableModels {
 		return this.#handle.getAuth(target, overrides).catch(rethrow);
 	}
 
-	login(): never {
-		return notBridged("Models.login");
+	async login(...[providerId, type, interaction, options]: Parameters<ts.Models["login"]>): Promise<Credential> {
+		return this.#handle.login(providerId, type, interaction, options);
 	}
 
-	logout(): never {
-		return notBridged("Models.logout");
+	async logout(...[providerId, options]: Parameters<ts.Models["logout"]>): Promise<void> {
+		return this.#handle.logout(providerId, options);
 	}
 
 	stream<TApi extends Api>(

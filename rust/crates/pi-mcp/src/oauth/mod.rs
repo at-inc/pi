@@ -1,7 +1,7 @@
 //! Port of `packages/mcp/src/oauth/index.ts`.
 //! PORT-STATUS: reviewed
 //!
-//! Re-exports the OAuth API. `OAuthCallbackServer` needs the `native` feature.
+//! Re-exports the OAuth API.
 
 // <generated-modules>
 pub mod callback;
@@ -12,7 +12,6 @@ pub mod provider;
 pub mod types;
 // </generated-modules>
 
-#[cfg(feature = "native")]
 pub use callback::{OAuthCallback, OAuthCallbackPage, OAuthCallbackServer, OAuthCallbackServerOptions};
 pub use discovery::{
 	build_authorization_server_discovery_urls, discover_authorization_server_metadata, discover_oauth_server_info,

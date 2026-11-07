@@ -1,6 +1,9 @@
 //! Native host: reqwest for `fetch`, tokio for timers and local tasks, `std::env` for the environment, and
 //! tokio-tungstenite for `WebSocket` (rustls with the webpki roots, like reqwest; no HTTP proxy support).
-//! Must run inside a tokio `LocalSet` (see `run`), because ported code spawns `!Send` futures.
+//! Must run inside a tokio `LocalSet` (see `run`), because ported code spawns `!Send` futures. `listen_http` is a
+//! tokio `TcpListener` (see `native/server.rs`).
+
+mod server;
 
 use std::cell::Cell;
 use std::future::Future;
@@ -14,6 +17,7 @@ use crate::LocalBoxFuture;
 use crate::error::{PiError, PiResult};
 use crate::host::{Host, set_host};
 use crate::http::{HttpRequest, HttpResponse, RedirectMode};
+use crate::server::{HttpServer, HttpServerErrorHandler, HttpServerHandler};
 
 use crate::websocket::{
 	CLOSED, CLOSING, CONNECTING, OPEN, WebSocket, WebSocketData, WebSocketEvent, WebSocketListener,
@@ -186,6 +190,25 @@ impl Host for NativeHost {
 
 	fn websocket(&self, url: &str, headers: &IndexMap<String, String>) -> Option<PiResult<Rc<dyn WebSocket>>> {
 		Some(NativeWebSocket::connect(url, headers))
+	}
+
+	fn spawn_process(
+		&self,
+		options: crate::process::SpawnOptions,
+		listeners: crate::process::ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::process::ChildProcess>>> {
+		let spawned = crate::native_process::spawn(options, listeners);
+		Box::pin(async move { spawned })
+	}
+
+	fn listen_http(
+		&self,
+		host: &str,
+		port: u16,
+		handler: HttpServerHandler,
+		on_error: HttpServerErrorHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn HttpServer>>> {
+		Box::pin(server::listen(host.to_string(), port, handler, on_error))
 	}
 }
 

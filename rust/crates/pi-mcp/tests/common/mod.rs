@@ -508,6 +508,16 @@ impl Host for NetworkHost {
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
 		self.native.spawn_local(future);
 	}
+
+	fn listen_http(
+		&self,
+		host: &str,
+		port: u16,
+		handler: pi_host::server::HttpServerHandler,
+		on_error: pi_host::server::HttpServerErrorHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn pi_host::server::HttpServer>>> {
+		self.native.listen_http(host, port, handler, on_error)
+	}
 }
 
 /// Runs `test` on a current-thread tokio runtime inside a `LocalSet`, with a `NetworkHost` installed.

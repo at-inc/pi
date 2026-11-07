@@ -1,8 +1,7 @@
 //! Port of `packages/mcp/src/index.ts`.
 //! PORT-STATUS: reviewed
 //!
-//! Re-exports the public API. TS type-only exports map to the Rust types of the same names; `StdioTransport`
-//! needs the `native` feature.
+//! Re-exports the public API. TS type-only exports map to the Rust types of the same names.
 
 // <generated-modules>
 pub mod auth_provider;
@@ -30,7 +29,6 @@ pub use protocol::types::{
 	ReadResourceResult, Resource, ResourceTemplate, Root, SUPPORTED_PROTOCOL_VERSIONS, ServerCapabilities,
 	SupportedProtocolVersion, Tool, ToolAnnotations, ToolExecution,
 };
-#[cfg(feature = "native")]
 pub use transports::stdio::{StdioTransport, StdioTransportOptions};
 pub use transports::streamable_http::{
 	McpAuthRequiredError, McpHttpError, McpSessionExpiredError, StreamableHttpTransport, StreamableHttpTransportOptions,

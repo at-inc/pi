@@ -1,0 +1,49 @@
+{
+	"name": "@at-inc/pi-mcp-rs",
+	"version": "1.5.0",
+	"description": "@earendil-works/pi-mcp backed by the pi Rust core: the same exports and module layout, runtime in wasm, types from @earendil-works/pi-mcp",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./oauth": {
+			"types": "./dist/oauth/index.d.ts",
+			"import": "./dist/oauth/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test:vitest": "node ../../../node_modules/vitest/vitest.mjs --run --config vitest.config.ts",
+		"test:workers": "node test/workers/smoke.ts"
+	},
+	"dependencies": {
+		"@at-inc/pi-core": "1.5.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-mcp": "1.5.0"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/at-inc/pi.git",
+		"directory": "rust/npm/pi-mcp"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	}
+}

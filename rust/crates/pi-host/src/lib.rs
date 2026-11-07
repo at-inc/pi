@@ -14,11 +14,16 @@ pub mod error;
 pub mod host;
 pub mod http;
 pub mod js;
+pub mod process;
+pub mod server;
 pub mod sse;
 pub mod websocket;
 
 #[cfg(feature = "native")]
 pub mod native;
+#[cfg(feature = "native")]
+#[cfg(feature = "native")]
+mod native_process;
 #[cfg(feature = "testing")]
 pub mod testing;
 

@@ -7,6 +7,7 @@ use crate::LocalBoxFuture;
 use crate::abort::AbortSignal;
 use crate::error::{PiError, PiResult};
 use crate::http::{HttpRequest, HttpResponse};
+use crate::server::{HttpServer, HttpServerErrorHandler, HttpServerHandler};
 use crate::websocket::WebSocket;
 
 /// Platform services. One implementation per embedding: napi (Node), wasm (Workers/browsers), native tokio,
@@ -47,6 +48,32 @@ pub trait Host {
 	fn read_file(&self, path: &str) -> LocalBoxFuture<'static, PiResult<String>> {
 		let error = file_not_found(path);
 		Box::pin(async move { Err(error) })
+	}
+	/// `child_process.spawn(command, args, options)` with piped stdio. Hosts without processes (browsers, Workers)
+	/// fail with `process::processes_unsupported`. See `process::spawn_process`.
+	fn spawn_process(
+		&self,
+		_options: crate::process::SpawnOptions,
+		_listeners: crate::process::ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::process::ChildProcess>>> {
+		Box::pin(async { Err(crate::process::processes_unsupported()) })
+	}
+	/// `http.createServer(handler).listen(port, host)`, resolving once it listens; see `server`. Hosts without an
+	/// HTTP listener reject with `server::listen_unsupported()`.
+	fn listen_http(
+		&self,
+		_host: &str,
+		_port: u16,
+		_handler: HttpServerHandler,
+		_on_error: HttpServerErrorHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn HttpServer>>> {
+		Box::pin(async { Err(crate::server::listen_unsupported()) })
+	}
+	/// The JS runtime as pi-ai's detailed `User-Agent` describes it, `"<platform>; <runtime>/<version>; <arch>"` (for
+	/// example `"linux; node/v24.0.0; x64"`). Hosts that are not a JS runtime with `process` (browsers, native) return
+	/// `None`.
+	fn runtime_description(&self) -> Option<String> {
+		None
 	}
 }
 
@@ -126,4 +153,9 @@ pub fn home_dir() -> Option<String> {
 /// `await fs.promises.readFile(path, "utf-8")`; fails as for a missing file on hosts without a file system.
 pub async fn read_file(path: &str) -> PiResult<String> {
 	current().read_file(path).await
+}
+
+/// The installed host's `runtime_description`; `None` when no host is installed.
+pub fn runtime_description() -> Option<String> {
+	HOST.with(|slot| slot.borrow().as_ref().and_then(|host| host.runtime_description()))
 }

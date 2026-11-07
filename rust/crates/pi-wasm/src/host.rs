@@ -6,8 +6,11 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use js_sys::{Function, Object, Promise, Reflect};
+use pi_host::process::{ChildProcess, ProcessListeners, SpawnOptions};
+use pi_host::server::{HttpServer, HttpServerErrorHandler, HttpServerHandler};
 use pi_host::websocket::WebSocket;
 use pi_host::{Host, HttpRequest, HttpResponse, LocalBoxFuture, PiResult};
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -23,8 +26,9 @@ export interface PiHost {
 	monotonic(): number;
 	/** `process.env[name]`; `undefined` without an environment. */
 	env(name: string): string | undefined;
-	/** Resolves after `ms` milliseconds (`setTimeout`). */
-	sleep(ms: number): Promise<void>;
+	/** Resolves after `ms` milliseconds (`setTimeout`), or at once with the timer cleared when `signal` aborts: the core
+	 * aborts it when it stops waiting. */
+	sleep(ms: number, signal?: AbortSignal): Promise<void>;
 	/** `fs.existsSync(path)`; `false` without a file system. */
 	fileExists(path: string): boolean;
 	/** `os.homedir()`; `undefined` without a file system. */
@@ -33,6 +37,78 @@ export interface PiHost {
 	readFile(path: string): Promise<string>;
 	/** `new WebSocket(url, { headers })`; `undefined` without a WebSocket client. */
 	webSocket(url: string, headers: Record<string, string>): WebSocket | undefined;
+	/** `"<platform>; <runtime>/<version>; <arch>"` for the detailed `User-Agent`; `undefined` outside Node.js and Bun. */
+	runtimeDescription?(): string | undefined;
+	/**
+	 * `child_process.spawn(command, args, options)` with piped stdin and stdout, in its own process group on Unix
+	 * (`detached: true`); resolves on `spawn` and rejects with the `error` of a process that could not start.
+	 * `undefined` without processes.
+	 */
+	spawnProcess(options: PiSpawnOptions, listeners: PiProcessListeners): Promise<PiChildProcess> | undefined;
+	/**
+	 * `http.createServer(handler).listen(port, host)`: resolves with the server once it listens and rejects with the
+	 * listen error. `onError` receives the server's later `error` events.
+	 */
+	listen(
+		host: string,
+		port: number,
+		handler: (request: PiHttpRequest) => Promise<PiHttpResponse>,
+		onError: (error: unknown) => void,
+	): Promise<PiHttpServer>;
+}
+
+/** The options of `PiHost.spawnProcess`. `env` is set on top of the host's environment unless `clearEnv` is set. */
+export interface PiSpawnOptions {
+	command: string;
+	args: string[];
+	cwd?: string;
+	env: Record<string, string>;
+	clearEnv: boolean;
+	/** `stdio[2]`: `"inherit"` instead of `"pipe"`. */
+	inheritStderr: boolean;
+}
+
+/** What a spawned process reports: stdout and stderr `data`, stream and process errors, and `close` once. */
+export interface PiProcessListeners {
+	onStdout(chunk: Uint8Array): void;
+	onStderr(chunk: Uint8Array): void;
+	onError(error: unknown): void;
+	onClose(): void;
+}
+
+/** A process `PiHost.spawnProcess` started. */
+export interface PiChildProcess {
+	readonly pid: number | undefined;
+	/** `stdin.write(data, callback)`: resolves once written, rejects with the write error. */
+	write(data: Uint8Array): Promise<void>;
+	/** `stdin.end()`. */
+	endStdin(): void;
+	/** `stdin.writable`. */
+	readonly stdinWritable: boolean;
+	/** `exitCode !== null || signalCode !== null`. */
+	readonly exited: boolean;
+	/** Signals the process and its children: the process group on Unix, `taskkill /T /F` on Windows. */
+	kill(signal: "SIGTERM" | "SIGKILL"): void;
+}
+
+/** A request of `PiHost.listen`: its method and raw target. */
+export interface PiHttpRequest {
+	method: string;
+	url: string;
+}
+
+/** `response.writeHead(status, headers)` plus `response.end(body)`. */
+export interface PiHttpResponse {
+	status: number;
+	headers: Record<string, string>;
+	body: string;
+}
+
+/** A server of `PiHost.listen`. */
+export interface PiHttpServer {
+	readonly port: number;
+	close(): void;
+	closeAllConnections(): void;
 }
 "#;
 
@@ -50,7 +126,7 @@ extern "C" {
 	#[wasm_bindgen(method)]
 	fn env(this: &JsHostObject, name: &str) -> Option<String>;
 	#[wasm_bindgen(method)]
-	fn sleep(this: &JsHostObject, ms: f64) -> Promise;
+	fn sleep(this: &JsHostObject, ms: f64, signal: &JsValue) -> Promise;
 	#[wasm_bindgen(method, js_name = fileExists)]
 	fn file_exists(this: &JsHostObject, path: &str) -> bool;
 	#[wasm_bindgen(method, js_name = homeDir)]
@@ -59,6 +135,16 @@ extern "C" {
 	fn read_file(this: &JsHostObject, path: &str) -> Result<Promise, JsValue>;
 	#[wasm_bindgen(method, catch, js_name = webSocket)]
 	fn web_socket(this: &JsHostObject, url: &str, headers: &JsValue) -> Result<JsValue, JsValue>;
+	#[wasm_bindgen(method, catch)]
+	fn listen(
+		this: &JsHostObject,
+		host: &str,
+		port: u16,
+		handler: &JsValue,
+		on_error: &JsValue,
+	) -> Result<Promise, JsValue>;
+	#[wasm_bindgen(method, catch, js_name = spawnProcess)]
+	fn spawn_process(this: &JsHostObject, options: &JsValue, listeners: &JsValue) -> Result<JsValue, JsValue>;
 
 	#[wasm_bindgen(js_namespace = console, js_name = error)]
 	fn console_error(message: &str);
@@ -99,9 +185,16 @@ impl Host for JsHost {
 		} else {
 			1.0
 		};
-		let timer = JsFuture::from(self.object.sleep(ms));
+		// The host's timer is cleared when the core drops the wait (an abort won the race), as the TS clears its
+		// `setTimeout`, so no timer outlives the wait.
+		let cancel = CancelOnDrop(Some(pi_host::AbortController::new()));
+		let signal = crate::abort::to_js(&cancel.0.as_ref().expect("set above").signal());
+		let timer = JsFuture::from(self.object.sleep(ms, &signal.js));
 		Box::pin(async move {
+			let mut cancel = cancel;
 			let _ = timer.await;
+			cancel.0 = None;
+			drop(signal);
 		})
 	}
 
@@ -135,6 +228,46 @@ impl Host for JsHost {
 			Err(error) => Some(Err(crate::error::from_js(error))),
 			Ok(socket) if socket.is_undefined() || socket.is_null() => None,
 			Ok(socket) => Some(Ok(crate::websocket::JsWebSocket::open(socket))),
+		}
+	}
+
+	fn spawn_process(
+		&self,
+		options: SpawnOptions,
+		listeners: ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn ChildProcess>>> {
+		let spawned = self.object.spawn_process(
+			&crate::process::options_to_js(&options),
+			&crate::process::listeners_to_js(listeners),
+		);
+		crate::process::spawned(spawned)
+	}
+
+	fn listen_http(
+		&self,
+		host: &str,
+		port: u16,
+		handler: HttpServerHandler,
+		on_error: HttpServerErrorHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn HttpServer>>> {
+		let (handler, on_error) = crate::server::callbacks(handler, on_error);
+		crate::server::listening(self.object.listen(host, port, &handler, &on_error))
+	}
+
+	fn runtime_description(&self) -> Option<String> {
+		let method = Reflect::get(&self.object, &"runtimeDescription".into()).ok()?;
+		let method = method.dyn_ref::<Function>()?;
+		method.call0(&self.object).ok()?.as_string()
+	}
+}
+
+/// Aborts its controller when dropped while still set.
+struct CancelOnDrop(Option<pi_host::AbortController>);
+
+impl Drop for CancelOnDrop {
+	fn drop(&mut self) {
+		if let Some(controller) = self.0.take() {
+			controller.abort();
 		}
 	}
 }

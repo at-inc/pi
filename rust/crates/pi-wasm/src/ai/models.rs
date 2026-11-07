@@ -7,10 +7,7 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 use js_sys::{Array, Function, Object, Promise, Reflect};
 use pi_ai::auth::resolve::AuthResolutionOverrides;
-use pi_ai::auth::types::{
-	ApiKeyAuth, ApiKeyAuthInput, AuthContext, AuthOperationOptions, Credential, OAuthAuth, OAuthCredential,
-	ProviderAuth,
-};
+use pi_ai::auth::types::{AuthOperationOptions, AuthType, Credential};
 use pi_ai::utils::diagnostics::Thrown;
 use pi_ai::utils::models_error::{ModelsError, ModelsErrorCode};
 use pi_ai::{
@@ -19,14 +16,15 @@ use pi_ai::{
 	ModelsDeferredFetchOptions, ModelsImagesOptions, ModelsRefreshOptions, ModelsSimpleStreamOptions, MutableModels,
 	Provider, ProviderApi, ProviderClassifier, ProviderImages, ProviderModel, ProviderStreams, Usage,
 };
-use pi_host::{AbortController, AbortSignal, PiError, PiResult};
+use pi_host::{PiError, PiResult};
 use serde::Serialize;
 use serde_json::Value;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
+use super::auth::{ApiKeyAuthHandle, OAuthAuthHandle};
 use super::provider_bridge::{
-	JsAuthContext, JsClassifier, JsImages, classifier_options, images_options, js_provider, refresh_context_from_js,
+	JsClassifier, JsImages, classifier_options, images_options, js_provider, refresh_context_from_js,
 };
 use crate::events::EventSink;
 use crate::options::{JsOptions, arg, provider_stream_options, simple_stream_options, throw};
@@ -401,7 +399,7 @@ pub fn create_provider(
 		name: optional(field("name"))?,
 		base_url: optional(field("baseUrl"))?,
 		headers: optional(field("headers"))?,
-		auth: provider_auth(&field("auth")),
+		auth: super::auth::provider_auth(&field("auth")),
 		models: optional::<Vec<ProviderModel>>(field("models"))?.unwrap_or_default(),
 		fetch_models: function("fetchModels").map(|fetch| super::provider_bridge::fetch_models(fetch, input.clone())),
 		filter_models: function("filterModels")
@@ -423,132 +421,6 @@ fn optional<T: serde::de::DeserializeOwned>(value: JsValue) -> Result<Option<T>,
 		Ok(None)
 	} else {
 		arg(value).map(Some)
-	}
-}
-
-/// `ProviderAuth` of a JS `auth` object: `apiKey.resolve`/`check` and `oauth.refresh`/`toAuth` call the JS methods.
-/// The `login` flows belong to the auth facade and are not bridged yet.
-pub fn provider_auth(auth: &JsValue) -> ProviderAuth {
-	ProviderAuth {
-		api_key: api_key_auth(&Reflect::get(auth, &"apiKey".into()).unwrap_or(JsValue::UNDEFINED)),
-		oauth: oauth_auth(&Reflect::get(auth, &"oauth".into()).unwrap_or(JsValue::UNDEFINED)),
-	}
-}
-
-/// `OAuthAuth` of a JS `oauth` object.
-fn oauth_auth(oauth: &JsValue) -> Option<OAuthAuth> {
-	if !oauth.is_object() {
-		return None;
-	}
-	let field = |name: &str| Reflect::get(oauth, &name.into()).unwrap_or(JsValue::UNDEFINED);
-	let (refresh_this, to_auth_this) = (oauth.clone(), oauth.clone());
-	Some(OAuthAuth {
-		name: field("name").as_string().unwrap_or_default(),
-		is_subscription: field("isSubscription").as_bool(),
-		login_label: field("loginLabel").as_string(),
-		login: Rc::new(|_, _| Box::pin(async { Err(PiError::new("oauth.login is not bridged to the Rust core yet")) })),
-		refresh: Rc::new(move |credential: OAuthCredential, signal: AbortSignal| {
-			let this = refresh_this.clone();
-			Box::pin(async move {
-				let signal = crate::abort::to_js(&signal);
-				let credential = crate::json::to_js(&credential)?;
-				crate::json::from_js(call_method(&this, "refresh", &[credential, signal.js.clone()]).await?)
-			})
-		}),
-		to_auth: Rc::new(move |credential: OAuthCredential| {
-			let this = to_auth_this.clone();
-			Box::pin(async move {
-				let credential = crate::json::to_js(&credential)?;
-				crate::json::from_js(call_method(&this, "toAuth", &[credential]).await?)
-			})
-		}),
-	})
-}
-
-/// `await object[key](...args)`.
-async fn call_method(object: &JsValue, key: &str, args: &[JsValue]) -> PiResult<JsValue> {
-	let function: Function = Reflect::get(object, &key.into())
-		.map_err(crate::error::from_js)?
-		.dyn_into()
-		.map_err(|_| PiError::type_error(format!("{key} is not a function")))?;
-	crate::callback::call(&function, object, args).await
-}
-
-/// `ApiKeyAuth` of a JS `apiKey` object.
-fn api_key_auth(api_key: &JsValue) -> Option<ApiKeyAuth> {
-	if !api_key.is_object() {
-		return None;
-	}
-	let method = |name: &str| Reflect::get(api_key, &name.into()).ok()?.dyn_into::<Function>().ok();
-	let name = Reflect::get(api_key, &"name".into())
-		.ok()
-		.and_then(|name| name.as_string())
-		.unwrap_or_default();
-	let resolve = method("resolve");
-	let check = method("check");
-	let this = api_key.clone();
-	Some(ApiKeyAuth {
-		name,
-		login: None,
-		check: check.map(|check| {
-			let this = this.clone();
-			Rc::new(move |input: ApiKeyAuthInput| {
-				let (check, this) = (check.clone(), this.clone());
-				Box::pin(async move { optional_result(&check, &this, input).await }) as pi_host::LocalBoxFuture<_>
-			}) as pi_ai::auth::types::ApiKeyCheckFunction
-		}),
-		resolve: match resolve {
-			Some(resolve) => Rc::new(move |input: ApiKeyAuthInput| {
-				let (resolve, this) = (resolve.clone(), this.clone());
-				Box::pin(async move { optional_result(&resolve, &this, input).await })
-			}),
-			None => Rc::new(|_| Box::pin(async { Ok(None) })),
-		},
-	})
-}
-
-/// Calls an api-key auth method with `{ ctx, credential, signal }`; `undefined` is `None`.
-async fn optional_result<T: serde::de::DeserializeOwned>(
-	function: &Function,
-	this: &JsValue,
-	input: ApiKeyAuthInput,
-) -> PiResult<Option<T>> {
-	let object = Object::new();
-	let ctx: JsValue = AuthContextHandle { inner: input.ctx }.into();
-	let _ = Reflect::set(&object, &"ctx".into(), &ctx);
-	if let Some(credential) = &input.credential {
-		let _ = Reflect::set(&object, &"credential".into(), &crate::json::to_js(credential)?);
-	}
-	let signal = crate::abort::to_js(&input.signal);
-	let _ = Reflect::set(&object, &"signal".into(), &signal.js);
-	let result = crate::callback::call(function, this, &[object.into()]).await?;
-	if result.is_undefined() || result.is_null() {
-		return Ok(None);
-	}
-	crate::json::from_js(result).map(Some)
-}
-
-/// The `AuthContext` an api-key auth method receives as `ctx`.
-#[wasm_bindgen]
-pub struct AuthContextHandle {
-	inner: Rc<dyn AuthContext>,
-}
-
-#[wasm_bindgen]
-impl AuthContextHandle {
-	/// `ctx.env(name)`.
-	pub fn env(&self, name: String) -> Promise {
-		let pending = self.inner.env(&name);
-		wasm_bindgen_futures::future_to_promise(
-			async move { Ok(pending.await.map_or(JsValue::UNDEFINED, JsValue::from)) },
-		)
-	}
-
-	/// `ctx.fileExists(path)`.
-	#[wasm_bindgen(js_name = fileExists)]
-	pub fn file_exists(&self, path: String) -> Promise {
-		let pending = self.inner.file_exists(&path);
-		wasm_bindgen_futures::future_to_promise(async move { Ok(JsValue::from(pending.await)) })
 	}
 }
 
@@ -611,13 +483,13 @@ impl ProviderHandle {
 	/// The provider's api-key auth, for the JS view of `provider.auth`.
 	#[wasm_bindgen(js_name = apiKeyAuth)]
 	pub fn api_key_auth(&self) -> Option<ApiKeyAuthHandle> {
-		self.inner.auth.api_key.clone().map(|inner| ApiKeyAuthHandle { inner })
+		self.inner.auth.api_key.clone().map(ApiKeyAuthHandle::new)
 	}
 
 	/// The provider's OAuth auth, for the JS view of `provider.auth`.
 	#[wasm_bindgen(js_name = oauthAuth)]
 	pub fn oauth_auth(&self) -> Option<OAuthAuthHandle> {
-		self.inner.auth.oauth.clone().map(|inner| OAuthAuthHandle { inner })
+		self.inner.auth.oauth.clone().map(OAuthAuthHandle::new)
 	}
 
 	/// `provider.getModels()`.
@@ -760,114 +632,6 @@ impl ProviderHandle {
 	}
 }
 
-/// A Rust provider's api-key auth, behind `provider.auth.apiKey` of a Rust provider.
-#[wasm_bindgen]
-pub struct ApiKeyAuthHandle {
-	inner: ApiKeyAuth,
-}
-
-impl ApiKeyAuthHandle {
-	pub fn new(inner: ApiKeyAuth) -> Self {
-		Self { inner }
-	}
-}
-
-#[wasm_bindgen]
-impl ApiKeyAuthHandle {
-	/// `apiKey.name`.
-	#[wasm_bindgen(getter)]
-	pub fn name(&self) -> String {
-		self.inner.name.clone()
-	}
-
-	/// Whether the auth has `login`.
-	#[wasm_bindgen(js_name = hasLogin)]
-	pub fn has_login(&self) -> bool {
-		self.inner.login.is_some()
-	}
-
-	/// Whether the auth has `check`.
-	#[wasm_bindgen(js_name = hasCheck)]
-	pub fn has_check(&self) -> bool {
-		self.inner.check.is_some()
-	}
-
-	/// `apiKey.resolve({ ctx, credential, signal })`.
-	pub fn resolve(&self, input: JsValue) -> Promise {
-		let resolve = self.inner.resolve.clone();
-		let input = api_key_input(&input);
-		promise(async move { to_js_optional(resolve(input?).await?) })
-	}
-
-	/// `apiKey.check({ ctx, credential, signal })`.
-	pub fn check(&self, input: JsValue) -> Promise {
-		let check = self.inner.check.clone();
-		let input = api_key_input(&input);
-		promise(async move {
-			let check = check.ok_or_else(|| PiError::type_error("check is not a function"))?;
-			to_js_optional(check(input?).await?)
-		})
-	}
-}
-
-/// The Rust `ApiKeyAuthInput` of a JS `{ ctx, credential, signal }`.
-fn api_key_input(input: &JsValue) -> PiResult<ApiKeyAuthInput> {
-	let field = |name: &str| Reflect::get(input, &name.into()).unwrap_or(JsValue::UNDEFINED);
-	let credential = field("credential");
-	Ok(ApiKeyAuthInput {
-		ctx: Rc::new(JsAuthContext { object: field("ctx") }),
-		credential: if credential.is_undefined() || credential.is_null() {
-			None
-		} else {
-			Some(crate::json::from_js(credential)?)
-		},
-		signal: signal_or_never(&field("signal")),
-	})
-}
-
-/// A Rust provider's OAuth auth, behind `provider.auth.oauth` of a Rust provider. `login` belongs to the auth facade.
-#[wasm_bindgen]
-pub struct OAuthAuthHandle {
-	inner: OAuthAuth,
-}
-
-#[wasm_bindgen]
-impl OAuthAuthHandle {
-	/// `oauth.name`.
-	#[wasm_bindgen(getter)]
-	pub fn name(&self) -> String {
-		self.inner.name.clone()
-	}
-
-	/// `oauth.isSubscription`.
-	#[wasm_bindgen(getter, js_name = isSubscription)]
-	pub fn is_subscription(&self) -> Option<bool> {
-		self.inner.is_subscription
-	}
-
-	/// `oauth.loginLabel`.
-	#[wasm_bindgen(getter, js_name = loginLabel)]
-	pub fn login_label(&self) -> Option<String> {
-		self.inner.login_label.clone()
-	}
-
-	/// `oauth.refresh(credential, signal)`.
-	pub fn refresh(&self, credential: JsValue, signal: JsValue) -> Promise {
-		let refresh = self.inner.refresh.clone();
-		let credential = crate::json::from_js::<OAuthCredential>(credential);
-		let signal = signal_or_never(&signal);
-		promise(async move { crate::json::to_js(&refresh(credential?, signal).await?) })
-	}
-
-	/// `oauth.toAuth(credential)`.
-	#[wasm_bindgen(js_name = toAuth)]
-	pub fn to_auth(&self, credential: JsValue) -> Promise {
-		let to_auth = self.inner.to_auth.clone();
-		let credential = crate::json::from_js::<OAuthCredential>(credential);
-		promise(async move { crate::json::to_js(&to_auth(credential?).await?) })
-	}
-}
-
 /// `createModels(options)`.
 #[wasm_bindgen(js_name = aiCreateModels)]
 pub fn create_models(options: JsValue) -> Result<ModelsHandle, JsValue> {
@@ -881,12 +645,9 @@ pub fn models_options(options: &JsValue) -> Result<CreateModelsOptions, JsValue>
 	let field = |name: &str| Reflect::get(options, &name.into()).unwrap_or(JsValue::UNDEFINED);
 	let object = |name: &str| Some(field(name)).filter(JsValue::is_object);
 	Ok(CreateModelsOptions {
-		credentials: object("credentials").map(|object| {
-			Rc::new(super::stores::JsCredentialStore { object }) as Rc<dyn pi_ai::auth::types::CredentialStore>
-		}),
-		models_store: object("modelsStore")
-			.map(|object| Rc::new(super::stores::JsModelsStore { object }) as Rc<dyn pi_ai::ModelsStore>),
-		auth_context: object("authContext").map(|object| Rc::new(JsAuthContext { object }) as Rc<dyn AuthContext>),
+		credentials: object("credentials").map(|store| super::auth::credential_store_from_js(&store)),
+		models_store: object("modelsStore").map(|store| super::auth::models_store_from_js(&store)),
+		auth_context: object("authContext").map(|context| super::auth::auth_context_from_js(&context)),
 		identity: optional(field("identity"))?,
 	})
 }
@@ -1093,6 +854,35 @@ impl ModelsHandle {
 		})
 	}
 
+	/// `models.login(providerId, type, interaction, options)`.
+	pub fn login(
+		&self,
+		provider_id: &str,
+		r#type: JsValue,
+		interaction: JsValue,
+		options: JsValue,
+	) -> Result<Promise, JsValue> {
+		let r#type: AuthType = arg(r#type)?;
+		let login = self.inner.login(
+			provider_id,
+			r#type,
+			super::auth::interaction_from_js(&interaction),
+			super::auth::login_options_from_js(&options),
+		);
+		Ok(super::auth::promise(async move { crate::json::to_js(&login.await?) }))
+	}
+
+	/// `models.logout(providerId, options)`.
+	pub fn logout(&self, provider_id: &str, options: JsValue) -> Promise {
+		let logout = self
+			.inner
+			.logout(provider_id, super::auth::auth_operation_options(&options));
+		super::auth::promise(async move {
+			logout.await?;
+			Ok(JsValue::UNDEFINED)
+		})
+	}
+
 	/// `models.stream(model, context, options)`.
 	pub fn stream(&self, model: JsValue, context: JsValue, options: JsValue, sink: EventSink) -> Result<(), JsValue> {
 		let parsed = super::entry_model(&model, CHAT_FILL)?;
@@ -1211,11 +1001,6 @@ fn operation_options(options: &JsValue) -> Option<AuthOperationOptions> {
 	options.is_object().then(|| AuthOperationOptions {
 		signal: crate::abort::from_js(&signal),
 	})
-}
-
-/// The Rust signal of a JS signal, or one that never aborts.
-fn signal_or_never(signal: &JsValue) -> AbortSignal {
-	crate::abort::from_js(signal).unwrap_or_else(|| AbortController::new().signal())
 }
 
 /// A value as JS, `None` as `undefined`.

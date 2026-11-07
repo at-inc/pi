@@ -135,10 +135,14 @@ jobs:
         working-directory: rust/npm
         run: npm run check
 
-      - name: Facade vitest (TS openai-completions tests)
+      - name: Facade vitest (the TS packages' tests)
         working-directory: rust/npm
         run: npm run test:vitest
 
       - name: Facade on workerd
         working-directory: rust/npm
         run: npm run test:workers --workspace=@at-inc/pi-ai-rs
+
+      - name: MCP facade on workerd
+        working-directory: rust/npm
+        run: npm run test:workers --workspace=@at-inc/pi-mcp-rs

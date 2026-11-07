@@ -6,8 +6,11 @@
 
 ## Bridged
 
-- `.`: `createProvider`, `createModels`, `normalizeContext`, `EventStream`, `AssistantMessageEventStream`,
-  `createAssistantMessageEventStream`.
+- `.`: `createProvider`, `createModels`, `EventStream`, `AssistantMessageEventStream`,
+  `createAssistantMessageEventStream`, and the values the TS index re-exports from `utils/diagnostics`, `identity`,
+  `json-parse`, `overflow`, `retry`, `streaming-json`, `string-enum`, `text` (`contentText`, `getSystemMessageText`,
+  `renderSystemMessageUpdate`), `transcript`, `uuid` (`uuidv7`), `validation` and `version` (`PI_AI_VERSION`), and from
+  `providers/faux`.
 - `./compat`: the above, plus `getModel`, `stream`, `complete`, `streamSimple`, `completeSimple` (dispatch by
   `model.api` with env API keys) and `openAICompletionsApi`.
 - `./api/openai-completions`: `stream`, `streamSimple`, `convertMessages`.
@@ -15,11 +18,17 @@
 - `./models`: `createProvider` (static providers with api-key auth, Rust or JS API implementations) and `createModels`
   (`setProvider`, `deleteProvider`, `clearProviders`, `getProviders`, `getProvider`, `getModels`, `getModel`,
   `stream`, `complete`, `streamSimple`, `completeSimple`).
-- `./utils/transcript`: `normalizeContext`.
 - `./api/bedrock-converse-stream`: `stream`, `streamSimple`.
 - `./api/bedrock-converse-stream.lazy`: `bedrockConverseStreamApi`, `setBedrockProviderModule` (a facade module
   object keeps its Rust implementation; any other `{ stream, streamSimple }` is called through JS).
 - `./bedrock-provider`: `bedrockProviderModule`.
+- `./utils/*`: every export of `abort`, `abort-signals`, `diagnostics`, `error-body`, `estimate`, `event-stream`, `hash`,
+  `headers`, `identity`, `json-parse`, `node-http-proxy`, `oauth-page`, `openrouter-cost`, `overflow`, `provider-env`,
+  `provider-retry`, `retry`, `sanitize-unicode`, `sleep`, `streaming-json`, `string-enum`, `text`, `transcript`, `uuid`,
+  `validation`, `version`, and `kimiCodingEndpoints` of `kimi-coding`. `abort`, `abort-signals` and `sleep` are JS, as
+  in the TS: they work on the caller's `AbortSignal` objects and timers, and return them (`operationSignal(signal)` is
+  `signal`), which a crossing into the core would replace. `withClientIdentity` is a JS wrapper of the caller's
+  `Models` that merges identities in Rust.
 - `./types`: types only.
 - `./api/anthropic-messages`: `stream` (including `options.client`, a pre-built SDK client called through JS),
   `streamSimple`.
@@ -64,18 +73,22 @@
 
 ## Not bridged yet
 
-These throw `<name> is not bridged to the Rust core yet`; they belong to the auth facade:
+These throw `<name> is not bridged to the Rust core yet`:
 
-- `Models.login`, `Models.logout`
-- `login` of a Rust provider's `auth.apiKey` and `auth.oauth`
+- `selectKimiCodingEndpoints` (`utils/kimi-coding`): it prompts through the auth interaction (pi-ai auth slice)
 
 `options.telemetry` is not passed to the core yet: a JS `TelemetrySpan` does not reach implementations.
 
-The other modules and exports of `@at-inc/pi-ai` are not in this package yet. No runtime value comes from the TS
-package. `getModel` reads the Rust catalog, which is built from the same catalog data.
+The other modules of `@at-inc/pi-ai` are not in this package yet: `session-resources` (whose values the root index
+also exports) and `utils/model-operations`. No runtime value comes from the TS package. `getModel` reads the Rust
+catalog, which is built from the same catalog data.
 
 ## Differences from the TS
 
+- `Models` returns copies of models (`getModel`, `getModels`, ...): models cross the boundary as JSON, so
+  `models.getModel(provider, id)` is not the object the provider was created with.
+- A Rust provider's `auth.oauth.refresh` resolves with a copy of the credential where the TS may return the caller's
+  object (OpenRouter keeps its permanent credential).
 - An event's `partial` holds the text up to that event. In the TS, the live partial may already hold text from
   later deltas of the same network chunk when an async consumer reads it. Both converge at `text_end`,
   `thinking_end` and `done`. `toolCall.arguments` reads the core's current arguments, as the TS's live object does.
@@ -112,3 +125,22 @@ package. `getModel` reads the Rust catalog, which is built from the same catalog
   Both report the same aborted result.
 - `createAiBindingFetch` is written in the facade: the Rust module only checks that the binding has `fetch` and returns
   it, which is what the facade does with the JS binding.
+- Strings cross as Rust strings, which cannot hold an unpaired surrogate. One in an argument reads as U+FFFD (for
+  example in `validateToolArguments`, `parseStreamingJson` and messages), except in `sanitizeSurrogates`, which works
+  on the UTF-16 code units. `StreamingJsonParser` and `ToolCallArgumentsStream` join a surrogate pair split across
+  pieces, but hold back a high surrogate at the end of the text read so far, where the TS shows it alone.
+- `StreamingJsonParser.snapshot()` returns the same object while the value is unchanged, but each changed snapshot
+  crosses whole, so it does not share completed containers with the previous one and a long stream costs time and
+  memory quadratic in its length. `ToolCallArgumentsStream` shows every piece at once (no preview lag). The core's
+  own providers parse arguments in Rust and do not pay this.
+- Parsed JSON with a number that overflows (`1e400`) has `null` where the TS has `Infinity` (`parseStreamingJson`,
+  `StreamingJsonParser`).
+- Messages, tools and identities cross as JSON text (`JSON.stringify`), so functions and `undefined` fields are
+  dropped and TypeBox's non-enumerable kind marks are not read; a result that holds them is a JSON copy. Transcript
+  helpers read only system messages and return the caller's other message objects.
+
+## `Type`
+
+The TS index has not exported `Type` since 6536f801 (`Type`, `Static` and `TSchema` were removed, breaking), so the
+facade exports none. Tool schemas from TypeBox or `@earendil-works/pi-schema`'s builders are plain JSON Schema at the
+boundary; `validateToolArguments` compiles them with the Rust pi-schema.

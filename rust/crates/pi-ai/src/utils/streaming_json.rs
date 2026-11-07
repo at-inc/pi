@@ -710,22 +710,32 @@ impl ToolCallArgumentsStream {
 	/// Append a piece of argument text and update `arguments`, the partial arguments of the text before it, to the
 	/// partial arguments of the whole text.
 	pub fn append(&mut self, delta: &str, arguments: &mut JsonObject) {
+		self.append_written(delta, arguments);
+	}
+
+	/// `append`, returning whether `arguments` was written: `false` when the piece changed nothing it shows.
+	pub fn append_written(&mut self, delta: &str, arguments: &mut JsonObject) -> bool {
 		self.text.push_str(delta);
+		let mut written = false;
 		if let Some((path, covered)) = self.pending.take() {
 			restore_path(arguments, &path, covered);
+			written = true;
 		}
 		for change in self.parser.append(delta) {
 			self.apply(change, arguments);
+			written = true;
 		}
 		if !self.root_is_object {
-			return;
+			return written;
 		}
 		if let Some((slot, value)) = self.parser.pending_scalar()
 			&& let Some(path) = self.parser.reported_path(Some(&slot))
 		{
 			let covered = set_path(arguments, &path, value);
 			self.pending = Some((path, covered));
+			written = true;
 		}
+		written
 	}
 
 	/// Take the provider's complete argument text and update `arguments` to its partial arguments. When it continues
@@ -946,7 +956,7 @@ fn clone_deep(value: &Value) -> Value {
 }
 
 /// Drops `value` without recursion, so arbitrarily deep values do not overflow the stack.
-fn drop_deep(value: Value) {
+pub fn drop_deep(value: Value) {
 	let mut values = vec![value];
 	while let Some(value) = values.pop() {
 		match value {

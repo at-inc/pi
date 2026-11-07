@@ -129,11 +129,21 @@ pub fn get_client_version(identity: Option<&ClientIdentity>) -> String {
 		.unwrap_or_else(|| PI_AI_VERSION.to_string())
 }
 
+/// The part of the detailed `User-Agent` in parentheses: the host's JS runtime when it is one (the wasm build on Node.js
+/// or Bun), otherwise `<platform>; rust/<version>; <arch>` natively and none (`(browser)`) in other wasm hosts.
 fn runtime_description() -> Option<String> {
+	if let Some(description) = pi_host::host::runtime_description() {
+		return Some(description);
+	}
 	if cfg!(target_arch = "wasm32") {
 		return None;
 	}
-	Some(format!("rust/{}", env!("CARGO_PKG_RUST_VERSION")))
+	Some(format!(
+		"{}; rust/{}; {}",
+		platform(),
+		env!("CARGO_PKG_RUST_VERSION"),
+		arch()
+	))
 }
 
 fn platform() -> &'static str {
@@ -166,7 +176,7 @@ pub fn format_user_agent(identity: Option<&ClientIdentity>) -> String {
 	}
 	let product = format!("pi/{}", get_client_version(identity));
 	match runtime_description() {
-		Some(runtime) if !runtime.is_empty() => format!("{product} ({}; {runtime}; {})", platform(), arch()),
+		Some(runtime) if !runtime.is_empty() => format!("{product} ({runtime})"),
 		_ => format!("{product} (browser)"),
 	}
 }

@@ -1,0 +1,43 @@
+{
+	"name": "@at-inc/pi-agent-core-rs",
+	"version": "1.5.0",
+	"description": "@at-inc/pi-agent-core backed by the pi Rust core: the same exports and module layout, runtime in wasm, types from @at-inc/pi-agent-core",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"test:vitest": "node ../../../node_modules/vitest/vitest.mjs --run --config vitest.config.ts"
+	},
+	"dependencies": {
+		"@at-inc/pi-ai-rs": "1.5.0",
+		"@at-inc/pi-core": "1.5.0"
+	},
+	"peerDependencies": {
+		"@at-inc/pi-agent-core": "1.5.0",
+		"@at-inc/pi-ai": "1.5.0"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/at-inc/pi.git",
+		"directory": "rust/npm/pi-agent-core"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	}
+}

@@ -7,7 +7,8 @@ use pi_ai::providers::radius_config::RadiusGatewayConfig;
 use pi_ai::{AnyModel, ModelType};
 use wasm_bindgen::prelude::*;
 
-use super::models::{ApiKeyAuthHandle, ModelsHandle, ProviderHandle, provider_handle};
+use super::auth::ApiKeyAuthHandle;
+use super::models::{ModelsHandle, ProviderHandle, provider_handle};
 use crate::options::{arg, throw};
 
 /// `<name>Provider()` of `providers/<module>`, by the module's name (`"amazon-bedrock"`, `"openai-codex"`, ...).
