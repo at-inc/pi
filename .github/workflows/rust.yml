@@ -76,3 +76,69 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo check --locked --target wasm32-unknown-unknown -p pi-ai -p pi-agent -p pi-mcp
+
+  wasm:
+    name: wasm facade
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            rust/npm/package-lock.json
+
+      # The facade tests run the TS package's tests, so the root workspaces are installed too.
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --ignore-scripts --prefix rust/npm
+
+      - name: Hydrate pinned model data
+        run: node scripts/update-model-catalog-pin.mjs --hydrate
+
+      - name: Install toolchain
+        working-directory: rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+
+      - name: Cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: rust
+          key: wasm
+
+      # The CLI must be the version of the wasm-bindgen crate in Cargo.lock (build-wasm.mjs checks it).
+      - name: Install wasm-bindgen CLI
+        working-directory: rust
+        run: |
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          if [ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]; then
+            cargo install wasm-bindgen-cli --version "$version" --locked --force
+          fi
+
+      - name: Lint wasm32
+        working-directory: rust
+        run: cargo clippy --locked --target wasm32-unknown-unknown -p pi-wasm -- -D warnings
+
+      - name: Build wasm
+        working-directory: rust/npm
+        run: npm run build:wasm
+
+      - name: Check facades
+        working-directory: rust/npm
+        run: npm run check
+
+      - name: Facade vitest (TS openai-completions tests)
+        working-directory: rust/npm
+        run: npm run test:vitest
+
+      - name: Facade on workerd
+        working-directory: rust/npm
+        run: npm run test:workers --workspace=@at-inc/pi-ai-rs
