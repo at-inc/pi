@@ -26,9 +26,9 @@ use bytes::Bytes;
 use futures::StreamExt;
 use indexmap::IndexMap;
 use pi_ai::api::openai_codex_responses::{
-	OpenAICodexResponsesOptions, close_openai_codex_websocket_sessions, get_openai_codex_websocket_debug_stats,
-	reset_openai_codex_websocket_debug_stats, stream as stream_openai_codex_responses,
-	stream_simple as stream_simple_openai_codex_responses,
+	OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats, close_openai_codex_websocket_sessions,
+	get_openai_codex_websocket_debug_stats, reset_openai_codex_websocket_debug_stats,
+	stream as stream_openai_codex_responses, stream_simple as stream_simple_openai_codex_responses,
 };
 use pi_ai::providers::model_schema::{CacheRetention, ThinkingLevel};
 use pi_ai::types::{
@@ -2264,4 +2264,33 @@ mod review_regressions {
 			assert_eq!(calls, 1);
 		});
 	}
+}
+
+// getOpenAICodexWebSocketDebugStats returns the TS object: camelCase counters, no absent optional fields.
+#[test]
+fn websocket_debug_stats_serialize_as_the_ts_object() {
+	let stats = OpenAICodexWebSocketDebugStats {
+		requests: 2,
+		connections_created: 1,
+		last_previous_response_id: Some("resp_1".into()),
+		last_websocket_error: Some("boom".into()),
+		..OpenAICodexWebSocketDebugStats::default()
+	};
+	assert_eq!(
+		serde_json::to_value(&stats).unwrap(),
+		json!({
+			"requests": 2,
+			"connectionsCreated": 1,
+			"connectionsReused": 0,
+			"cachedContextRequests": 0,
+			"storeTrueRequests": 0,
+			"fullContextRequests": 0,
+			"deltaRequests": 0,
+			"lastInputItems": 0,
+			"lastPreviousResponseId": "resp_1",
+			"websocketFailures": 0,
+			"sseFallbacks": 0,
+			"lastWebSocketError": "boom",
+		})
+	);
 }

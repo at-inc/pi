@@ -1468,8 +1468,9 @@ struct CachedWebSocketConnection {
 	continuation: RefCell<Option<CachedWebSocketContinuationState>>,
 }
 
-/// Per-session WebSocket counters for debugging.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Per-session WebSocket counters for debugging. Serializes as the TS object, without the absent optional fields.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenAICodexWebSocketDebugStats {
 	pub requests: u64,
 	pub connections_created: u64,
@@ -1479,11 +1480,15 @@ pub struct OpenAICodexWebSocketDebugStats {
 	pub full_context_requests: u64,
 	pub delta_requests: u64,
 	pub last_input_items: u64,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub last_delta_input_items: Option<u64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub last_previous_response_id: Option<String>,
 	pub websocket_failures: u64,
 	pub sse_fallbacks: u64,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub websocket_fallback_active: Option<bool>,
+	#[serde(rename = "lastWebSocketError", skip_serializing_if = "Option::is_none")]
 	pub last_websocket_error: Option<String>,
 }
 

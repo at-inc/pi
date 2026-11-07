@@ -1,66 +1,172 @@
-//! Exports of `providers/faux`: the message builders. Blocks cross as JSON text.
+//! Exports of `providers/faux` and compat's `registerFauxProvider`: the faux core behind a handle, with JS response
+//! factories bridged as Rust ones.
 
-use js_sys::Reflect;
-use pi_ai::providers::faux::{self, FauxAssistantContent, FauxAssistantMessageOptions, FauxToolCallOptions};
-use pi_ai::{AssistantContent, DeferredHandle, JsonObject, StopReason};
-use serde::Deserialize;
+use std::rc::Rc;
+
+use js_sys::{Array, Function};
+use pi_ai::{
+	AssistantMessage, FauxAssistantContent, FauxAssistantMessageOptions, FauxCore, FauxResponseFactory,
+	FauxResponseStep, FauxToolCallOptions, JsonObject, RegisterFauxProviderOptions,
+};
+use pi_host::PiResult;
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-use crate::json::{from_js_text, to_js_text};
-use crate::options::throw;
+use super::models::ProviderHandle;
+use crate::options::{arg, throw};
 
 /// `fauxText(text)`.
 #[wasm_bindgen(js_name = aiFauxText)]
 pub fn faux_text(text: &str) -> Result<JsValue, JsValue> {
-	throw(to_js_text(&AssistantContent::Text(faux::faux_text(text))))
+	throw(crate::json::to_js(&pi_ai::faux_text(text)))
 }
 
 /// `fauxThinking(thinking)`.
 #[wasm_bindgen(js_name = aiFauxThinking)]
 pub fn faux_thinking(thinking: &str) -> Result<JsValue, JsValue> {
-	throw(to_js_text(&AssistantContent::Thinking(faux::faux_thinking(thinking))))
+	throw(crate::json::to_js(&pi_ai::faux_thinking(thinking)))
 }
 
 /// `fauxToolCall(name, arguments, options)`.
 #[wasm_bindgen(js_name = aiFauxToolCall)]
 pub fn faux_tool_call(name: &str, arguments: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
-	let arguments: JsonObject = throw(from_js_text(&arguments))?;
-	let id = if options.is_object() {
-		Reflect::get(&options, &"id".into())?.as_string()
-	} else {
-		None
-	};
-	let call = faux::faux_tool_call(name, arguments, Some(FauxToolCallOptions { id }));
-	throw(to_js_text(&AssistantContent::ToolCall(call)))
+	let arguments: JsonObject = arg(arguments)?;
+	let options: Option<FauxToolCallOptions> = arg(options)?;
+	throw(crate::json::to_js(&pi_ai::faux_tool_call(name, arguments, options)))
 }
 
-/// `fauxAssistantMessage(content, options)`: `content` is a string, a block or a block list.
+/// `fauxAssistantMessage(content, options)`.
 #[wasm_bindgen(js_name = aiFauxAssistantMessage)]
 pub fn faux_assistant_message(content: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
 	let content = if let Some(text) = content.as_string() {
 		FauxAssistantContent::Text(text)
-	} else if js_sys::Array::is_array(&content) {
-		FauxAssistantContent::Blocks(throw(from_js_text(&content))?)
+	} else if content.is_array() {
+		FauxAssistantContent::Blocks(arg(content)?)
 	} else {
-		FauxAssistantContent::Block(throw(from_js_text(&content))?)
+		FauxAssistantContent::Block(arg(content)?)
 	};
-	let options: Option<Options> = throw(from_js_text(&options))?;
-	let options = options.map(|options| FauxAssistantMessageOptions {
-		stop_reason: options.stop_reason,
-		deferred: options.deferred,
-		error_message: options.error_message,
-		response_id: options.response_id,
-		timestamp: options.timestamp,
-	});
-	throw(to_js_text(&faux::faux_assistant_message(content, options)))
+	let options: Option<FauxAssistantMessageOptions> = arg(options)?;
+	throw(crate::json::to_js(&pi_ai::faux_assistant_message(content, options)))
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Options {
-	stop_reason: Option<StopReason>,
-	deferred: Option<DeferredHandle>,
-	error_message: Option<String>,
-	response_id: Option<String>,
-	timestamp: Option<f64>,
+/// `createFauxCore(options)`'s result, shared by `fauxProvider()` and `registerFauxProvider()`.
+#[wasm_bindgen]
+pub struct FauxCoreHandle {
+	core: FauxCore,
+	provider: Option<ProviderHandle>,
+	unregister: Option<Rc<dyn Fn()>>,
+}
+
+#[wasm_bindgen]
+impl FauxCoreHandle {
+	#[wasm_bindgen(getter)]
+	pub fn api(&self) -> String {
+		self.core.api.clone()
+	}
+
+	/// The models, as JS objects.
+	pub fn models(&self) -> Result<JsValue, JsValue> {
+		throw(crate::json::to_js(&self.core.models))
+	}
+
+	/// `state.callCount`.
+	#[wasm_bindgen(js_name = callCount)]
+	pub fn call_count(&self) -> usize {
+		self.core.state.borrow().call_count
+	}
+
+	/// `state.deferredFetchCount`.
+	#[wasm_bindgen(js_name = deferredFetchCount)]
+	pub fn deferred_fetch_count(&self) -> usize {
+		self.core.state.borrow().deferred_fetch_count
+	}
+
+	/// `state.cancelledDeferred`, as new JS objects.
+	#[wasm_bindgen(js_name = cancelledDeferred)]
+	pub fn cancelled_deferred(&self) -> Result<JsValue, JsValue> {
+		throw(crate::json::to_js(&self.core.state.borrow().cancelled_deferred))
+	}
+
+	/// `setResponses(responses)`; a function step is called as `step(context, options, model)`.
+	#[wasm_bindgen(js_name = setResponses)]
+	pub fn set_responses(&self, responses: Array) -> Result<(), JsValue> {
+		self.core.set_responses(steps(responses)?);
+		Ok(())
+	}
+
+	/// `appendResponses(responses)`.
+	#[wasm_bindgen(js_name = appendResponses)]
+	pub fn append_responses(&self, responses: Array) -> Result<(), JsValue> {
+		self.core.append_responses(steps(responses)?);
+		Ok(())
+	}
+
+	/// `getPendingResponseCount()`.
+	#[wasm_bindgen(js_name = getPendingResponseCount)]
+	pub fn get_pending_response_count(&self) -> usize {
+		self.core.get_pending_response_count()
+	}
+
+	/// `fauxProvider()`'s `provider`.
+	pub fn provider(&self) -> Option<ProviderHandle> {
+		self.provider.as_ref().map(ProviderHandle::share)
+	}
+
+	/// `registerFauxProvider()`'s `unregister()`.
+	pub fn unregister(&self) {
+		if let Some(unregister) = &self.unregister {
+			unregister();
+		}
+	}
+}
+
+/// `fauxProvider(options)`.
+#[wasm_bindgen(js_name = aiFauxProvider)]
+pub fn faux_provider(options: JsValue) -> Result<FauxCoreHandle, JsValue> {
+	let handle = pi_ai::faux_provider(arg::<Option<RegisterFauxProviderOptions>>(options)?);
+	Ok(FauxCoreHandle {
+		core: handle.core,
+		provider: Some(ProviderHandle::from_provider(handle.provider)),
+		unregister: None,
+	})
+}
+
+/// `registerFauxProvider(options)`.
+#[wasm_bindgen(js_name = aiRegisterFauxProvider)]
+pub fn register_faux_provider(options: JsValue) -> Result<FauxCoreHandle, JsValue> {
+	let registration = pi_ai::compat::register_faux_provider(arg::<Option<RegisterFauxProviderOptions>>(options)?);
+	Ok(FauxCoreHandle {
+		core: registration.core,
+		provider: None,
+		unregister: Some(registration.unregister),
+	})
+}
+
+/// The Rust steps of a JS `FauxResponseStep[]`.
+fn steps(responses: Array) -> Result<Vec<FauxResponseStep>, JsValue> {
+	responses
+		.iter()
+		.map(|step| match step.dyn_into::<Function>() {
+			Ok(function) => Ok(FauxResponseStep::Factory(factory(function))),
+			Err(message) => arg::<AssistantMessage>(message).map(FauxResponseStep::Message),
+		})
+		.collect()
+}
+
+/// A JS factory as a Rust one. The facade binds its live `state` view into the function, so the Rust state is not
+/// passed.
+fn factory(function: Function) -> FauxResponseFactory {
+	Rc::new(move |context, options, _state, model| {
+		let function = function.clone();
+		let inputs = (|| -> PiResult<_> {
+			let options = options.map(crate::options::simple_options_to_js).transpose()?;
+			Ok((crate::json::to_js(context)?, options, crate::json::to_js(model)?))
+		})();
+		Box::pin(async move {
+			let (context, options, model) = inputs?;
+			let (options, _signal) = options.unwrap_or((JsValue::UNDEFINED, None));
+			let message = crate::callback::call(&function, &JsValue::UNDEFINED, &[context, options, model]).await?;
+			crate::json::from_js::<AssistantMessage>(message)
+		})
+	})
 }

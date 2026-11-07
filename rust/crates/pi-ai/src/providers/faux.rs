@@ -52,6 +52,7 @@ use std::task::{Context as TaskContext, Poll};
 use indexmap::IndexMap;
 use pi_host::js::{json_stringify, number_to_string, utf16_len};
 use pi_host::{AbortSignal, LocalBoxFuture, PiError, PiResult};
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -101,7 +102,8 @@ fn zero_cost() -> UsageCost {
 	}
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FauxModelDefinition {
 	pub id: String,
 	pub name: Option<String>,
@@ -130,7 +132,8 @@ pub fn faux_thinking(thinking: &str) -> ThinkingContent {
 }
 
 /// The options of `fauxToolCall`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FauxToolCallOptions {
 	pub id: Option<String>,
 }
@@ -204,7 +207,8 @@ fn normalize_faux_assistant_content(content: FauxAssistantContent) -> Vec<FauxCo
 }
 
 /// The options of `fauxAssistantMessage`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FauxAssistantMessageOptions {
 	pub stop_reason: Option<StopReason>,
 	pub deferred: Option<DeferredHandle>,
@@ -263,7 +267,8 @@ impl From<AssistantMessage> for FauxResponseStep {
 }
 
 /// `RegisterFauxProviderOptions.deferred`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FauxDeferredOptions {
 	/// Number of fetches that return the original handle before the scripted response becomes ready.
 	pub pending_fetches: Option<f64>,
@@ -271,13 +276,15 @@ pub struct FauxDeferredOptions {
 }
 
 /// `RegisterFauxProviderOptions.tokenSize`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct FauxTokenSize {
 	pub min: Option<f64>,
 	pub max: Option<f64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct RegisterFauxProviderOptions {
 	pub api: Option<String>,
 	pub provider: Option<String>,

@@ -11,7 +11,7 @@ use wasm_bindgen::prelude::*;
 extern "C" {
 	/// `String(value)`.
 	#[wasm_bindgen(js_name = String)]
-	fn js_string(value: &JsValue) -> String;
+	pub(crate) fn js_string(value: &JsValue) -> String;
 }
 
 /// Properties of a JS error that are not data.

@@ -1,9 +1,8 @@
 //! Exports of `api/openai-completions` and `api/openai-completions.lazy`.
 
-use std::rc::Rc;
-
 use pi_ai::Model;
 use pi_ai::api::openai_completions::{self, OpenAICompletionsOptions};
+use pi_ai::api::openai_completions_lazy;
 use serde_json::{Map, Value};
 use wasm_bindgen::prelude::*;
 
@@ -51,5 +50,5 @@ pub fn convert_messages(model: JsValue, context: JsValue, compat: JsValue) -> Re
 /// `openAICompletionsApi()`: the module as `ProviderStreams`.
 #[wasm_bindgen(js_name = aiOpenAICompletionsApi)]
 pub fn openai_completions_api() -> NativeStreams {
-	NativeStreams::new(Rc::new(openai_completions::OpenAICompletionsStreams))
+	NativeStreams::new(openai_completions_lazy::openai_completions_api())
 }

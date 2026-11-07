@@ -1,7 +1,13 @@
 //! Abort signals across the boundary, both ways: a JS `AbortSignal` the caller passes becomes a Rust `AbortSignal`
 //! that aborts with the same reason, and a Rust signal becomes a JS `AbortSignal` for JS `fetch` and callbacks.
+//!
+//! One Rust signal is one JS signal for as long as it lives, as one JS object is in the TS: callbacks that compare the
+//! signals they receive (`===`) see the same object, and a Rust signal made from a caller's JS signal crosses back as
+//! that JS signal.
 
-use pi_host::abort::ListenerId;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use pi_host::{AbortController, AbortSignal};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -51,54 +57,58 @@ pub fn from_js(signal: &JsValue) -> Option<AbortSignal> {
 	let options = js_sys::Object::new();
 	let _ = js_sys::Reflect::set(&options, &"once".into(), &JsValue::TRUE);
 	js.add_event_listener("abort", &listener, &options);
+	remember(&rust, signal.clone(), |_| {});
 	Some(rust)
 }
 
-/// A JS `AbortSignal` that follows a Rust signal while this value lives. Dropping it removes the listener from the Rust
-/// signal, so a long-lived signal does not collect one listener per request.
-pub struct JsSignal {
-	pub js: JsValue,
-	source: AbortSignal,
-	listener: Option<ListenerId>,
+thread_local! {
+	/// The JS signal of each live Rust signal, by `AbortSignal::id`.
+	static JS_SIGNALS: RefCell<HashMap<usize, JsValue>> = RefCell::new(HashMap::new());
 }
 
-/// A JS `AbortSignal` that aborts with the Rust signal's reason, already aborted when the Rust signal is.
-pub fn to_js(signal: &AbortSignal) -> JsSignal {
-	let controller = JsAbortController::new();
-	let js = controller.signal();
-	let listener = match signal.reason() {
-		Some(reason) => {
-			controller.abort(&crate::error::to_js(&reason));
-			None
-		}
-		None => Some(signal.add_listener(move |reason| controller.abort(&crate::error::to_js(reason)))),
-	};
-	JsSignal {
-		js,
-		source: signal.clone(),
-		listener,
+/// Records `js` as the JS signal of `rust`. The entry is owned by a listener on the Rust signal, so it goes when the
+/// signal aborts (after `on_abort` ran) or is dropped, and the id cannot be reused while the entry exists.
+fn remember(rust: &AbortSignal, js: JsValue, on_abort: impl FnOnce(&pi_host::PiError) + 'static) {
+	let entry = Entry(rust.id());
+	JS_SIGNALS.with(|signals| signals.borrow_mut().insert(entry.0, js));
+	rust.add_listener(move |reason| {
+		on_abort(reason);
+		drop(entry);
+	});
+}
+
+struct Entry(usize);
+
+impl Drop for Entry {
+	fn drop(&mut self) {
+		let _ = JS_SIGNALS.try_with(|signals| signals.borrow_mut().remove(&self.0));
 	}
 }
 
-/// A JS `AbortSignal` that follows a Rust signal for the Rust signal's whole life, for a signal JS may keep after the
-/// call that received it settles (a prompt's signal aborts once the login settles). The listener leaves the Rust
-/// signal when it fires or when the signal is dropped.
-pub fn to_js_lasting(signal: &AbortSignal) -> JsValue {
+/// The JS `AbortSignal` of a Rust signal, for a JS call that takes one.
+pub struct JsSignal {
+	pub js: JsValue,
+}
+
+/// The JS `AbortSignal` of a Rust signal: the one it was made from or got before, else a new one that aborts with the
+/// Rust signal's reason (already aborted when the Rust signal is).
+pub fn to_js(signal: &AbortSignal) -> JsSignal {
+	if let Some(js) = JS_SIGNALS.with(|signals| signals.borrow().get(&signal.id()).cloned()) {
+		return JsSignal { js };
+	}
 	let controller = JsAbortController::new();
 	let js = controller.signal();
 	match signal.reason() {
 		Some(reason) => controller.abort(&crate::error::to_js(&reason)),
-		None => {
-			signal.add_listener(move |reason| controller.abort(&crate::error::to_js(reason)));
-		}
+		None => remember(signal, js.clone(), move |reason| {
+			controller.abort(&crate::error::to_js(reason))
+		}),
 	}
-	js
+	JsSignal { js }
 }
 
-impl Drop for JsSignal {
-	fn drop(&mut self) {
-		if let Some(listener) = self.listener {
-			self.source.remove_listener(listener);
-		}
-	}
+/// The JS `AbortSignal` of a Rust signal for a signal JS may keep after the call that received it settles (a prompt's
+/// signal aborts once the login settles). It is the signal `to_js` gives, which follows the Rust signal for its life.
+pub fn to_js_lasting(signal: &AbortSignal) -> JsValue {
+	to_js(signal).js
 }
