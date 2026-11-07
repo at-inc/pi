@@ -1232,7 +1232,6 @@ mod openai_completions_tool_choice {
 	}
 
 	#[test]
-	#[ignore = "needs w3-openai-responses: opencode's grok-build-0.1 is an openai-responses model (api/openai_responses.rs)"]
 	fn omits_reasoning_effort_for_opencode_grok_build() {
 		run(|host| async move {
 			let params =
