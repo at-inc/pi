@@ -5,19 +5,22 @@
 //! executor, like the TS promise, and a failed lookup evicts its entry when it settles. The TS `HttpError` is a
 //! `PiError` with `status` and `data: { headers, body }`, as in `classifier_shared.rs`. `answer_from_probabilities`
 //! reads a missing `true` key's probability as NaN where TS would leave `probability` undefined. `classify` starts at
-//! once on the host executor, like the TS async function, and takes `timestamp` when called.
+//! once on the host executor, like the TS async function, and takes `timestamp` when called. `json_parse` reads a
+//! number that overflows f64 (`-1e400`) as `null`, so such a token id or logprob counts as missing where V8 reads
+//! `-Infinity`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use bytes::Bytes;
 use futures::FutureExt;
-use futures::future::{LocalBoxFuture, Shared, join, try_join, try_join_all};
+use futures::future::{Either, LocalBoxFuture, Shared, select, try_join, try_join_all};
 use indexmap::IndexMap;
 use pi_host::js::{json_stringify, json_stringify_pretty, math_max, math_min, number_to_string};
 use pi_host::{AbortSignal, HttpRequest, PiError, PiResult};
 use serde_json::{Value, json};
 
+use super::constrained_sampling::OBJECT_PROTOTYPE_MEMBERS;
 use super::lazy::start_now;
 use crate::types::{
 	ClassifierAnswer, ClassifierBoolAnswer, ClassifierChoiceAnswer, ClassifierContext, ClassifierModel,
@@ -27,7 +30,7 @@ use crate::types::{
 use crate::utils::error_body::{format_provider_error, normalize_provider_error};
 use crate::utils::headers::{headers_to_record, provider_headers_to_record};
 use crate::utils::identity::{ClientIdentityTarget, get_identity_headers};
-use crate::utils::json_parse::json_parse;
+use crate::utils::json_parse::{json_parse, number_value};
 use crate::utils::provider_retry::{ProviderRetryOptions, retry_provider_request};
 use crate::utils::text::js_entries;
 
@@ -232,6 +235,12 @@ fn render_overview(context: &ClassifierContext) -> String {
 /// the server's prompt cache evaluates it once.
 pub fn render_question(context: &ClassifierContext, id: &str) -> PiResult<LabeledQuestion> {
 	let Some(question) = context.questions.get(id) else {
+		// `context.questions[id]` finds an inherited member, which renders as a bool question without criteria.
+		if OBJECT_PROTOTYPE_MEMBERS.contains(&id) {
+			return Err(PiError::type_error(
+				"Cannot read properties of undefined (reading 'true')",
+			));
+		}
 		return Err(PiError::new(format!("Unknown question: {id}")));
 	};
 	let (labels, keys) = question_labels(question)?;
@@ -459,14 +468,38 @@ thread_local! {
 /// one: tokenizers that add a leading-space marker at the start of a text would
 /// otherwise return a different token than the model emits there.
 async fn resolve_label_token(request: &RequestContext, label: &str) -> PiResult<Option<f64>> {
-	// `Promise.all` leaves the other tokenize running when one fails.
-	let (newline, with_label) = join(tokenize(request, "\n"), tokenize(request, &format!("\n{label}"))).await;
-	let (newline, with_label) = (newline?, with_label?);
+	let owned = request.clone();
+	let newline: LocalBoxFuture<'static, PiResult<Vec<f64>>> = Box::pin(async move { tokenize(&owned, "\n").await });
+	let (owned, content) = (request.clone(), format!("\n{label}"));
+	let with_label: LocalBoxFuture<'static, PiResult<Vec<f64>>> =
+		Box::pin(async move { tokenize(&owned, &content).await });
+	let (newline, with_label) = promise_all(newline, with_label).await?;
 	if with_label.len() == newline.len() + 1 && newline.iter().zip(&with_label).all(|(id, other)| id == other) {
 		return Ok(Some(with_label[newline.len()]));
 	}
 	let alone = tokenize(request, label).await?;
 	Ok(if alone.len() == 1 { Some(alone[0]) } else { None })
+}
+
+/// `Promise.all([first, second])`: both run in this task, the first failure rejects at once, and the other
+/// request keeps running on the host executor.
+async fn promise_all<T: 'static>(
+	first: LocalBoxFuture<'static, PiResult<T>>,
+	second: LocalBoxFuture<'static, PiResult<T>>,
+) -> PiResult<(T, T)> {
+	let detach = |other: LocalBoxFuture<'static, PiResult<T>>| {
+		pi_host::spawn_local(async move {
+			let _ = other.await;
+		});
+	};
+	match select(first, second).await {
+		Either::Left((Ok(first), second)) => Ok((first, second.await?)),
+		Either::Right((Ok(second), first)) => Ok((first.await?, second)),
+		Either::Left((Err(error), other)) | Either::Right((Err(error), other)) => {
+			detach(other);
+			Err(error)
+		}
+	}
 }
 
 fn label_token(request: &RequestContext, label: &str) -> LabelTokenLookup {
@@ -561,7 +594,7 @@ async fn next_token_logprobs(
 			"model": request.model.id,
 			"prompt": prompt,
 			"n_predict": 1,
-			"n_probs": depth,
+			"n_probs": number_value(depth),
 			"post_sampling_probs": false,
 			"cache_prompt": true,
 			"temperature": 0,

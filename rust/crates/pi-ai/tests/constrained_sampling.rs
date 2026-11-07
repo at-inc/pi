@@ -232,6 +232,24 @@ mod grammar_input_property {
 			error(json!({ "type": "object", "required": ["0"], "properties": ["x"] })),
 			"Tool \"grammar_tool\" cannot use grammar constrained sampling: grammar constrained sampling property 0 must have type string."
 		);
+		for (properties, key) in [
+			(json!("x"), "hasOwnProperty"),
+			(json!(5), "toFixed"),
+			(json!(true), "constructor"),
+			(json!([]), "map"),
+			(json!("abc"), "slice"),
+		] {
+			assert_eq!(
+				error(json!({ "type": "object", "required": [key], "properties": properties })),
+				format!(
+					"Tool \"grammar_tool\" cannot use grammar constrained sampling: grammar constrained sampling property {key} must have type string."
+				)
+			);
+		}
+		assert_eq!(
+			error(json!({ "type": "object", "required": ["missing"], "properties": "abc" })),
+			"Tool \"grammar_tool\" cannot use grammar constrained sampling: grammar constrained sampling requires a properties entry for missing."
+		);
 		assert_eq!(
 			error(json!({ "type": "object", "required": ["missing"], "properties": {} })),
 			"Tool \"grammar_tool\" cannot use grammar constrained sampling: grammar constrained sampling requires a properties entry for missing."

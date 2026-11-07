@@ -429,7 +429,7 @@ enum JsProperty<'a> {
 }
 
 /// The members `k in Object.prototype` is true for.
-const OBJECT_PROTOTYPE_MEMBERS: [&str; 12] = [
+pub(crate) const OBJECT_PROTOTYPE_MEMBERS: [&str; 12] = [
 	"constructor",
 	"__defineGetter__",
 	"__defineSetter__",
@@ -444,32 +444,159 @@ const OBJECT_PROTOTYPE_MEMBERS: [&str; 12] = [
 	"toLocaleString",
 ];
 
-/// `value?.[key]` for a JSON value, including inherited `Object.prototype` members and array and string indices.
-/// `Array.prototype` and `String.prototype` methods are not modeled.
+/// `Object.getOwnPropertyNames(Array.prototype)` in Node 24.
+const ARRAY_PROTOTYPE_MEMBERS: [&str; 40] = [
+	"length",
+	"constructor",
+	"at",
+	"concat",
+	"copyWithin",
+	"fill",
+	"find",
+	"findIndex",
+	"findLast",
+	"findLastIndex",
+	"lastIndexOf",
+	"pop",
+	"push",
+	"reverse",
+	"shift",
+	"unshift",
+	"slice",
+	"sort",
+	"splice",
+	"includes",
+	"indexOf",
+	"join",
+	"keys",
+	"entries",
+	"values",
+	"forEach",
+	"filter",
+	"flat",
+	"flatMap",
+	"map",
+	"every",
+	"some",
+	"reduce",
+	"reduceRight",
+	"toReversed",
+	"toSorted",
+	"toSpliced",
+	"with",
+	"toLocaleString",
+	"toString",
+];
+
+/// `Object.getOwnPropertyNames(String.prototype)` in Node 24.
+const STRING_PROTOTYPE_MEMBERS: [&str; 52] = [
+	"length",
+	"constructor",
+	"anchor",
+	"at",
+	"big",
+	"blink",
+	"bold",
+	"charAt",
+	"charCodeAt",
+	"codePointAt",
+	"concat",
+	"endsWith",
+	"fontcolor",
+	"fontsize",
+	"fixed",
+	"includes",
+	"indexOf",
+	"isWellFormed",
+	"italics",
+	"lastIndexOf",
+	"link",
+	"localeCompare",
+	"match",
+	"matchAll",
+	"normalize",
+	"padEnd",
+	"padStart",
+	"repeat",
+	"replace",
+	"replaceAll",
+	"search",
+	"slice",
+	"small",
+	"split",
+	"strike",
+	"sub",
+	"substr",
+	"substring",
+	"sup",
+	"startsWith",
+	"toString",
+	"toWellFormed",
+	"trim",
+	"trimStart",
+	"trimLeft",
+	"trimEnd",
+	"trimRight",
+	"toLocaleLowerCase",
+	"toLocaleUpperCase",
+	"toLowerCase",
+	"toUpperCase",
+	"valueOf",
+];
+
+/// `Object.getOwnPropertyNames(Number.prototype)` in Node 24.
+const NUMBER_PROTOTYPE_MEMBERS: [&str; 7] = [
+	"constructor",
+	"toExponential",
+	"toFixed",
+	"toPrecision",
+	"toString",
+	"valueOf",
+	"toLocaleString",
+];
+
+/// `Object.getOwnPropertyNames(Boolean.prototype)` in Node 24.
+const BOOLEAN_PROTOTYPE_MEMBERS: [&str; 3] = ["constructor", "toString", "valueOf"];
+
+/// `value?.[key]` for a JSON value: own properties, array and string indices and `length`, then the members the
+/// value inherits from its prototype chain, which are all functions or prototype objects.
 fn js_property<'a>(value: &'a Value, key: &str) -> JsProperty<'a> {
 	let index = || key.parse::<usize>().ok().filter(|index| index.to_string() == key);
-	match value {
-		Value::Object(object) => match object.get(key) {
-			Some(property) => JsProperty::Value(property),
-			None if OBJECT_PROTOTYPE_MEMBERS.contains(&key) => JsProperty::Opaque { truthy: true },
-			None => JsProperty::Missing,
-		},
-		Value::Array(array) if key == "length" => JsProperty::Opaque {
-			truthy: !array.is_empty(),
-		},
-		Value::Array(array) => match index().and_then(|index| array.get(index)) {
-			Some(property) => JsProperty::Value(property),
-			None if OBJECT_PROTOTYPE_MEMBERS.contains(&key) => JsProperty::Opaque { truthy: true },
-			None => JsProperty::Missing,
-		},
-		Value::String(text) if key == "length" => JsProperty::Opaque {
-			truthy: !text.is_empty(),
-		},
-		Value::String(text) => match index() {
-			Some(index) if index < pi_host::js::utf16_len(text) => JsProperty::Opaque { truthy: true },
-			_ => JsProperty::Missing,
-		},
-		_ => JsProperty::Missing,
+	let (own, inherited): (Option<JsProperty<'a>>, &[&str]) = match value {
+		Value::Null => return JsProperty::Missing,
+		Value::Object(object) => (object.get(key).map(JsProperty::Value), &[]),
+		Value::Array(array) if key == "length" => (
+			Some(JsProperty::Opaque {
+				truthy: !array.is_empty(),
+			}),
+			&[],
+		),
+		Value::Array(array) => (
+			index().and_then(|index| array.get(index)).map(JsProperty::Value),
+			&ARRAY_PROTOTYPE_MEMBERS,
+		),
+		Value::String(text) if key == "length" => (
+			Some(JsProperty::Opaque {
+				truthy: !text.is_empty(),
+			}),
+			&[],
+		),
+		Value::String(text) => (
+			index()
+				.filter(|index| *index < pi_host::js::utf16_len(text))
+				.map(|_| JsProperty::Opaque { truthy: true }),
+			&STRING_PROTOTYPE_MEMBERS,
+		),
+		Value::Number(_) => (None, &NUMBER_PROTOTYPE_MEMBERS),
+		Value::Bool(_) => (None, &BOOLEAN_PROTOTYPE_MEMBERS),
+	};
+	if let Some(own) = own {
+		return own;
+	}
+	if inherited.contains(&key) || OBJECT_PROTOTYPE_MEMBERS.contains(&key) {
+		JsProperty::Opaque { truthy: true }
+	} else {
+		JsProperty::Missing
 	}
 }
 

@@ -287,7 +287,7 @@ mod llama_cpp_classifier {
 				.find(|request| request.url.ends_with("/completion"))
 				.unwrap();
 			assert_eq!(completion.body["n_predict"], 1);
-			assert_eq!(completion.body["n_probs"].as_f64(), Some(256.0));
+			assert_eq!(completion.body["n_probs"], 256);
 			assert_eq!(completion.body["post_sampling_probs"], false);
 			assert_eq!(completion.body["cache_prompt"], true);
 			let template = requests
@@ -752,5 +752,46 @@ mod request_order {
 				]
 			);
 		});
+	}
+
+	/// Rust-only: `Promise.all` over the two label tokenizes rejects with whichever fails first.
+	#[test]
+	fn reports_the_first_tokenize_failure() {
+		run(|_| async {
+			let fetch: FetchFunction = Rc::new(|request: HttpRequest| {
+				Box::pin(async move {
+					let body: Value = serde_json::from_slice(request.body.as_deref().unwrap()).unwrap();
+					if body["content"] == "\n" {
+						pi_host::sleep(50.0, None).await?;
+						return Ok(HttpResponse::from_bytes(500, IndexMap::new(), "slow newline"));
+					}
+					Ok(HttpResponse::from_bytes(400, IndexMap::new(), "fast label"))
+				})
+			});
+			let mut request_options = options(fetch);
+			request_options.max_retries = Some(0.0);
+
+			let result = classify(&model(), &questions_context(pick()), Some(request_options))
+				.await
+				.unwrap();
+
+			assert_eq!(result.stop_reason, ClassifierStopReason::Error);
+			let message = result.error_message.unwrap();
+			assert!(message.contains("llama.cpp error (400): fast label"), "{message}");
+		});
+	}
+
+	/// Rust-only: `context.questions[id]` finds inherited members, which render as a bool question without criteria.
+	#[test]
+	fn renders_inherited_question_ids_like_js() {
+		for id in ["constructor", "__proto__"] {
+			let error = render_question(&context(), id).unwrap_err();
+			assert_eq!(error.name, "TypeError");
+			assert_eq!(error.message, "Cannot read properties of undefined (reading 'true')");
+		}
+		assert_eq!(
+			render_question(&context(), "missing").unwrap_err().message,
+			"Unknown question: missing"
+		);
 	}
 }
