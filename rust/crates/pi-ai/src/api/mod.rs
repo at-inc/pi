@@ -15,6 +15,7 @@ pub mod cloudflare_workers_ai_system_one;
 pub mod cloudflare_workers_ai_system_one_lazy;
 pub mod constrained_sampling;
 pub mod github_copilot_headers;
+pub mod google_client;
 pub mod google_generative_ai;
 pub mod google_generative_ai_lazy;
 pub mod google_shared;
