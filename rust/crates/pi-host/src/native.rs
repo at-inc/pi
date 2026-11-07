@@ -80,9 +80,27 @@ impl Host for NativeHost {
 				PiError::type_error("terminated").with_data(serde_json::json!({ "cause": error.to_string() }))
 			});
 			let body = match signal {
-				Some(signal) => body
-					.take_while(move |_| futures::future::ready(!signal.aborted()))
-					.boxed_local(),
+				// undici errors the body with the signal's reason once the request aborts, dropping unread chunks.
+				Some(signal) => futures::stream::unfold(Some((body.boxed_local(), signal)), |state| async move {
+					let (mut body, signal) = state?;
+					if let Some(reason) = signal.reason() {
+						return Some((Err(reason), None));
+					}
+					let next = {
+						let aborted = signal.aborted_future();
+						futures::pin_mut!(aborted);
+						match futures::future::select(body.next(), aborted).await {
+							futures::future::Either::Left((chunk, _)) => Ok(chunk),
+							futures::future::Either::Right((reason, _)) => Err(reason),
+						}
+					};
+					match next {
+						Ok(Some(chunk)) => Some((chunk, Some((body, signal)))),
+						Ok(None) => None,
+						Err(reason) => Some((Err(reason), None)),
+					}
+				})
+				.boxed_local(),
 				None => body.boxed_local(),
 			};
 			Ok(HttpResponse {
@@ -144,4 +162,43 @@ where
 		.expect("tokio runtime");
 	set_host(Rc::new(NativeHost::new()));
 	tokio::task::LocalSet::new().block_on(&runtime, main())
+}
+
+#[cfg(test)]
+mod tests {
+	use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+	use super::*;
+	use crate::abort::AbortController;
+
+	#[test]
+	fn aborting_errors_the_body_with_the_signal_reason() {
+		run(|| async {
+			let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+			let url = format!("http://{}/", listener.local_addr().unwrap());
+			tokio::task::spawn_local(async move {
+				let (mut socket, _) = listener.accept().await.unwrap();
+				let mut request = [0u8; 1024];
+				let _ = socket.read(&mut request).await.unwrap();
+				socket
+					.write_all(b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n5\r\nfirst\r\n")
+					.await
+					.unwrap();
+				tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+			});
+			let controller = AbortController::new();
+			let mut request = HttpRequest::new("GET", url);
+			request.signal = Some(controller.signal());
+			let mut response = crate::http::fetch(request, None).await.unwrap();
+			let first = response.body.next().await.unwrap().unwrap();
+			assert_eq!(&first[..], b"first");
+			controller.abort();
+			let error = response.body.next().await.unwrap().unwrap_err();
+			assert_eq!(
+				(error.name.as_str(), error.message.as_str()),
+				("AbortError", "This operation was aborted")
+			);
+			assert!(response.body.next().await.is_none());
+		});
+	}
 }
