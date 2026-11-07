@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/pkce.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `crypto.getRandomValues` is `rand`'s thread RNG and `crypto.subtle.digest` is `sha2`. TS returns an anonymous
 //! `{ verifier, challenge }` object; the port returns `Pkce`.

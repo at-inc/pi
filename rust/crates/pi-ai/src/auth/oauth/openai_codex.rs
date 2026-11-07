@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/auth/oauth/openai-codex.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! OpenAI Codex (ChatGPT OAuth) flow
 //!

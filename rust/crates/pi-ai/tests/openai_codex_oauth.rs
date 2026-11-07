@@ -1,8 +1,7 @@
 //! Port of `packages/ai/test/openai-codex-oauth.test.ts`.
 //!
 //! The device-code tests run on `pi_host::testing`'s fake timers and check the recorded poll times instead of
-//! stepping the clock. The browser-login tests read `PI_OAUTH_CALLBACK_HOST` through `utils/provider_env.rs`
-//! (w2-ai-core) and wait for it.
+//! stepping the clock. The browser-login tests try the fixed callback port 1455 and hold `common::sequential()`.
 
 mod common;
 
@@ -536,7 +535,6 @@ mod openai_codex_oauth_suite {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn uses_the_app_s_agent_name_as_the_browser_login_originator() {
 		let _sequential = common::sequential();
 		let auth_url = Rc::new(RefCell::new(String::new()));
@@ -570,7 +568,6 @@ mod openai_codex_oauth_suite {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn falls_back_to_the_pasted_redirect_url_when_the_fixed_callback_port_is_taken() {
 		let _sequential = common::sequential();
 		// Port 1455 is registered with OpenAI; the Codex CLI may hold it. Occupy it unless it already is.

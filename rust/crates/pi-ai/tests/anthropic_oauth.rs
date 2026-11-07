@@ -1,7 +1,6 @@
 //! Port of `packages/ai/test/anthropic-oauth.test.ts`.
 //!
-//! The browser-callback tests need the `native` feature (a real loopback socket). Tests that start the browser
-//! login read `PI_OAUTH_CALLBACK_HOST` through `utils/provider_env.rs` (w2-ai-core) and wait for it.
+//! The browser-callback tests need the `native` feature (a real loopback socket).
 
 mod common;
 
@@ -55,7 +54,6 @@ mod anthropic_oauth_suite {
 	use super::*;
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn keeps_the_localhost_redirect_uri_for_manual_callback_login() {
 		let _sequential = common::sequential();
 		let calls = Rc::new(RefCell::new(0));
@@ -233,7 +231,6 @@ mod anthropic_oauth_suite {
 	}
 
 	#[test]
-	#[ignore = "PORT-STUB: needs utils/provider_env.rs from w2-ai-core"]
 	fn anthropic_oauth_login_resolves_through_the_manual_code_prompt_and_aborts_it_after_settling() {
 		let _sequential = common::sequential();
 		let handler: common::FetchHandler = Rc::new(|request| {
@@ -386,7 +383,6 @@ mod anthropic_oauth_suite {
 		}
 
 		#[test]
-		#[ignore = "PORT-STUB: needs utils/provider_env.rs and utils/oauth_page.rs from w2-ai-core"]
 		fn completes_login_through_the_browser_callback_and_shows_the_sign_in_page() {
 			let _sequential = common::sequential();
 			let login = login_through_browser_callback();
@@ -403,7 +399,6 @@ mod anthropic_oauth_suite {
 
 		// #10571
 		#[test]
-		#[ignore = "PORT-STUB: needs utils/provider_env.rs and utils/oauth_page.rs from w2-ai-core"]
 		fn falls_back_to_a_free_callback_port_when_the_preferred_port_cannot_be_bound() {
 			let _sequential = common::sequential();
 			let blocker = std::net::TcpListener::bind("127.0.0.1:53692").unwrap();
