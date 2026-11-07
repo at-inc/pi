@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/model-operations.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TS reads `model.type`, `model.id` and `model.provider` off any model object. The port reads them through
 //! [`ModelRef`], implemented by `Model`, `ImageModel`, `ClassifierModel` and `AnyModel`. `getModelType` returns

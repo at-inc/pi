@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/overflow.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The patterns are the TypeScript regular expression literals, compiled by pi-schema's [`JsRegex`] so `\s`, `\d`,
 //! `\w` and `.` keep their JavaScript meaning. `getOverflowPatterns` returns the shared compiled patterns instead of

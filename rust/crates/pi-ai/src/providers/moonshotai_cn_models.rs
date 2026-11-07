@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/moonshotai-cn.models.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS file imports `./data/moonshotai-cn.json`; `build.rs` copies it into `OUT_DIR` and this file embeds it. Each
 //! catalog is parsed and flattened on first use.

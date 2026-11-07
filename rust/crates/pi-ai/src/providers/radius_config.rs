@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/radius-config.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `RadiusOAuthCredential` is `OAuthCredential`: its `gatewayConfig` lives in the credential's `extra` fields.

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/image-models.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Compat reads of the generated catalog restricted to image models. New code
 //! uses `Models.getModelOfType("image", ...)` or `getBuiltinImageModel()` from `providers/all`.

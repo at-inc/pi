@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/models-error.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `ModelsError` is a TS `Error` subclass. The port represents a thrown `ModelsError` as a `PiError` whose `name` is
 //! `"ModelsError"` and whose `data` holds `{ code, cause? }`; `ModelsError::code_of` stands in for

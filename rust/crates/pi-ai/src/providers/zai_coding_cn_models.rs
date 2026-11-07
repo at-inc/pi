@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/zai-coding-cn.models.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS file imports `./data/zai-coding-cn.json`; `build.rs` copies it into `OUT_DIR` and this file embeds it. Each
 //! catalog is parsed and flattened on first use.

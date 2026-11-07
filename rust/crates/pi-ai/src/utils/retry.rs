@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/retry.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The patterns are compiled by pi-schema's [`JsRegex`] from the TypeScript sources, so the lookarounds and `\s`,
 //! `\S` keep their JavaScript meaning (case-insensitive matching uses Unicode simple case folding, see `JsRegex`).

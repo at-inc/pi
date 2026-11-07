@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/provider-env.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The Bun sandbox fallback (`getBunSandboxEnvValue`, a workaround for Bun compiled binaries with an empty
 //! `process.env`) is not ported: the Rust core reads the environment through `pi_host::env`, whose embedding supplies

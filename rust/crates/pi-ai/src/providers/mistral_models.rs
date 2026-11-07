@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/mistral.models.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS file imports `./data/mistral.json`; `build.rs` copies it into `OUT_DIR` and this file embeds it. Each
 //! catalog is parsed and flattened on first use.

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/legacy-api-aliases.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS module builds each lazy API once at import; the port builds it once per thread on first use, which is not
 //! observable because building one has no side effects. The TS casts each `stream` to the API's own options type

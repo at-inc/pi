@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/session-resources.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The `Set` of cleanups is a per-thread list that keeps insertion order and skips a cleanup that is already in it
 //! (`Rc` identity). Like `Set` iteration, a cleanup pass sees cleanups registered during it and skips the ones

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/kimi-coding.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - The inline input and result types of `kimiCodingEndpoints` are named `KimiCodingEndpointsInput` and

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/env-api-keys.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS loads `node:fs`, `node:os` and `node:path` lazily and treats a runtime without them as a browser. The
 //! port reads the file system through the host (`pi_host::file_exists`, `pi_host::home_dir`), which is always loaded:

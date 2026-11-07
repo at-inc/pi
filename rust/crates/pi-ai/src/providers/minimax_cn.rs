@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/minimax-cn.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `Provider<TApi>`'s type parameter only narrows the API type, so the factory returns a plain `Provider`.

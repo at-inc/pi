@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/model-catalog.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The mapped catalog types (`ChatModelCatalog`, `ImageModelCatalog`, `ClassifierModelCatalog` and their key helpers)
 //! only narrow ids and APIs at the type level; each catalog is an `IndexMap` from model id to the model, in the order

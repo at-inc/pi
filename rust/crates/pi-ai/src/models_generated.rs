@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/models.generated.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The aggregation over the per-provider catalogs that `build.rs` embeds. Each map lists providers in the
 //! generated file's key order and borrows the provider's static catalog.

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/openrouter-api.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `OpenRouterModel.top_provider`'s inline type is named `OpenRouterTopProvider`.

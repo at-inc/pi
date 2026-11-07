@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/opencode-headers.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - The wrapper is a private struct implementing `ProviderStreams`; the TS `...streams` spread is its forwarding of

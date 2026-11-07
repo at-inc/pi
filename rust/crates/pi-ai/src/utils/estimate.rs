@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/estimate.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `estimateContextTokens` takes `TranscriptContext | readonly Message[]` in TS; the Rust port takes the messages
 //! (pass `&context.messages` for a `TranscriptContext`). `string | Array<TextContent | ImageContent>` parameters take

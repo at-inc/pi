@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/openrouter-cost.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TS casts the raw OpenRouter `usage` object to `OpenRouterUsageAccounting` and checks each field at runtime, so
 //! the reported accounting is the raw JSON value here: a field that is absent or of another type fails the same

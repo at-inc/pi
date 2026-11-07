@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/images-api-registry.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The registry is per thread. `generateImages` functions take `ProviderImagesOptions` (`ImagesOptions` plus the
 //! extra keys of `images.ts`'s `options`), which is how the TS object reaches the API module; the `TOptions`

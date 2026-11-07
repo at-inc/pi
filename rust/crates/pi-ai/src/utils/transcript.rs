@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/transcript.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `TranscriptMessages = readonly { role: string }[]` becomes a slice of any [`TranscriptMessage`]: the replay helpers
 //! only read system messages, so agent transcripts with custom message roles implement the trait and pass through

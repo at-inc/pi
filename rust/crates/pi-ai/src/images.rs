@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/images.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS import of `providers/images/register-builtins.ts` is the registry's first-access registration (see
 //! `images_api_registry.rs`).

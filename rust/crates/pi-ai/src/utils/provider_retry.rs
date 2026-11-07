@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/provider-retry.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! A TS `ProviderError` is an `Error` with own `status` and `headers` properties (the OpenAI and Anthropic SDK
 //! `APIError` shape). The Rust port reads `status` from `PiError.status` and the headers from `PiError.data.headers`:

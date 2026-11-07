@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/all.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `BuiltinProvider` and the catalog id/API helper types only narrow types; providers and model ids are `&str`.

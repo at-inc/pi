@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/images/register-builtins.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - Rust has no dynamic import, so the cached module promises are direct calls into `api/openai_codex_images.rs` and

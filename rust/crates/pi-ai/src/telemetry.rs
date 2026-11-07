@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/telemetry.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `observeModelRequest`'s `options` (`{ telemetry?, reasoning?: unknown }`) becomes the two values it reads:
 //! the span and the request's `reasoning` when it is a string. The `WeakMap` instrument cache is a thread-local

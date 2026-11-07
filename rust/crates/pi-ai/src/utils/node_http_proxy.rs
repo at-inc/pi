@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/node-http-proxy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `targetUrl: string | URL` is a `&str`; the proxy URL is a `url::Url`, which implements the WHATWG URL standard
 //! like Node's `URL` (`Url::as_str` is `URL.href`). An invalid proxy URL reports Node's `TypeError` message,

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/vercel-ai-gateway.models.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS file imports `./data/vercel-ai-gateway.json`; `build.rs` copies it into `OUT_DIR` and this file embeds it. Each
 //! catalog is parsed and flattened on first use.

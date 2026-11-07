@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/cloudflare-stream.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `resolveCloudflareModel<TModel extends { baseUrl: string }>` is generic over the model structs that deref to

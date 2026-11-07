@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/faux.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `createFauxCore()` returns a `FauxCore` struct (shared state behind an `Rc`, so clones are the same core) whose

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/validation.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS cache holds one compiled validator per schema object in a `WeakMap`. A `serde_json::Value` has no
 //! identity, so the Rust cache is keyed by the schema's JSON (`pi_host::js::json_stringify`) and keeps the most

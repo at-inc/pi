@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/providers/cloudflare-auth.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the TS:
 //! - `resolveCloudflareEnv`'s anonymous result type is the private `ResolvedCloudflareEnv` struct.

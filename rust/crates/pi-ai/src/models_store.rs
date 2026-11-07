@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/models-store.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `structuredClone` of an entry is a Rust `clone`.
 

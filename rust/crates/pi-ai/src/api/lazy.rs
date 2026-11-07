@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/lazy.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `lazyStream`'s `setup` is a closure returning a future: it is called synchronously, like the TS `setup()` call,
 //! so the part of a TS async setup body before its first `await` belongs in the closure, and the future it returns runs

@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The crate root re-exports the core surface like the TS index: no generated catalogs, no provider factories, no
 //! api-registry, no OAuth implementations, no compat. Those stay reachable through their modules

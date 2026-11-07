@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/simple-options.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `thinkingBudgetForLevel`'s `{ ...DEFAULT_THINKING_BUDGETS, ...customBudgets }` lets a present `undefined` or `null`
 //! budget override the default; `ThinkingBudgets` reads both as absent, so the default applies. Likewise

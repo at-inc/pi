@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/transform-messages.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The TS normalizes `null` or missing `content` from untyped callers to `[]` before anything else (#6259, #6276). The
 //! Rust message types do that when they deserialize (see `types.rs`), so messages arrive here normalized and that
