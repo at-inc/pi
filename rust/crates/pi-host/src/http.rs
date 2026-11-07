@@ -112,12 +112,14 @@ impl HttpResponse {
 pub type FetchFunction = Rc<dyn Fn(HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>>>;
 
 /// `fetch(request)` through `override_fetch` when given, else the current host.
+/// An override is called even when the signal is already aborted, as a JS `options.fetch` is; only the host's own
+/// `fetch` rejects up front.
 pub async fn fetch(request: HttpRequest, override_fetch: Option<&FetchFunction>) -> PiResult<HttpResponse> {
+	if let Some(fetch) = override_fetch {
+		return fetch(request).await;
+	}
 	if let Some(signal) = &request.signal {
 		signal.throw_if_aborted()?;
 	}
-	match override_fetch {
-		Some(fetch) => fetch(request).await,
-		None => crate::host::current().fetch(request).await,
-	}
+	crate::host::current().fetch(request).await
 }
