@@ -57,7 +57,7 @@ fn formats_user_agents() {
 		format!("pi/{PI_AI_VERSION} ({platform}; {runtime}; {arch})")
 	);
 	let versioned = ClientIdentity {
-		version: Some("9.9.9".into()),
+		version: Some(Some("9.9.9".into())),
 		..ClientIdentity::default()
 	};
 	assert_eq!(
@@ -65,15 +65,15 @@ fn formats_user_agents() {
 		format!("pi/9.9.9 ({platform}; {runtime}; {arch})")
 	);
 	let short = ClientIdentity {
-		user_agent: Some(UserAgentMode::Named(UserAgentModeName::Short)),
-		version: Some("9.9.9".into()),
+		user_agent: Some(Some(UserAgentMode::Named(UserAgentModeName::Short))),
+		version: Some(Some("9.9.9".into())),
 		..ClientIdentity::default()
 	};
 	assert_eq!(format_user_agent(Some(&short)), "pi");
 	let custom = ClientIdentity {
-		user_agent: Some(UserAgentMode::Custom {
+		user_agent: Some(Some(UserAgentMode::Custom {
 			custom: "acme/1.0".into(),
-		}),
+		})),
 		..ClientIdentity::default()
 	};
 	assert_eq!(format_user_agent(Some(&custom)), "acme/1.0");
@@ -84,19 +84,19 @@ fn merges_identities_field_by_field() {
 	assert_eq!(merge_client_identity(&[None, None]), None);
 	let base = ClientIdentity {
 		attribution: Some(Some(PI_ATTRIBUTION.clone())),
-		user_agent: Some(UserAgentMode::Named(UserAgentModeName::Short)),
+		user_agent: Some(Some(UserAgentMode::Named(UserAgentModeName::Short))),
 		..ClientIdentity::default()
 	};
 	let versioned = ClientIdentity {
-		version: Some("1.0.0".into()),
+		version: Some(Some("1.0.0".into())),
 		..ClientIdentity::default()
 	};
 	assert_eq!(
 		merge_client_identity(&[Some(&base), Some(&versioned)]),
 		Some(ClientIdentity {
 			attribution: Some(Some(PI_ATTRIBUTION.clone())),
-			user_agent: Some(UserAgentMode::Named(UserAgentModeName::Short)),
-			version: Some("1.0.0".into()),
+			user_agent: Some(Some(UserAgentMode::Named(UserAgentModeName::Short))),
+			version: Some(Some("1.0.0".into())),
 		})
 	);
 	let off = ClientIdentity {
@@ -114,13 +114,16 @@ fn parses_identities_from_json() {
 	assert_eq!(
 		identity,
 		ClientIdentity {
-			user_agent: Some(UserAgentMode::Custom { custom: "acme".into() }),
+			user_agent: Some(Some(UserAgentMode::Custom { custom: "acme".into() })),
 			attribution: Some(None),
 			version: None,
 		}
 	);
 	let short: ClientIdentity = serde_json::from_value(json!({ "userAgent": "short" })).unwrap();
-	assert_eq!(short.user_agent, Some(UserAgentMode::Named(UserAgentModeName::Short)));
+	assert_eq!(
+		short.user_agent,
+		Some(Some(UserAgentMode::Named(UserAgentModeName::Short)))
+	);
 	let unset: ClientIdentity = serde_json::from_value(json!({})).unwrap();
 	assert_eq!(unset.attribution, None);
 }
@@ -237,7 +240,7 @@ fn keeps_unknown_user_agent_modes_and_formats_them_as_detailed() {
 	let identity: ClientIdentity = serde_json::from_value(json!({ "userAgent": "long" })).unwrap();
 	assert_eq!(
 		identity.user_agent,
-		Some(UserAgentMode::Named(UserAgentModeName::Other("long".into())))
+		Some(Some(UserAgentMode::Named(UserAgentModeName::Other("long".into()))))
 	);
 	assert_eq!(format_user_agent(Some(&identity)), format_user_agent(None));
 	assert_eq!(serde_json::to_value(&identity).unwrap(), json!({ "userAgent": "long" }));
@@ -265,4 +268,18 @@ fn throws_like_the_ts_for_null_open_router_categories() {
 		serde_json::to_value(&identity).unwrap()["attribution"]["categories"],
 		Value::Null
 	);
+}
+
+// Rust-only regression: `mergeClientIdentity` copies every defined field, so a `null` `userAgent` or `version` from
+// JSON replaces the earlier value and formats as the default. Expected values come from running the TS.
+#[test]
+fn null_user_agent_and_version_replace_merged_values() {
+	let base: ClientIdentity = serde_json::from_value(json!({ "userAgent": "short", "version": "9.9.9" })).unwrap();
+	let cleared: ClientIdentity = serde_json::from_value(json!({ "userAgent": null, "version": null })).unwrap();
+	let merged = merge_client_identity(&[Some(&base), Some(&cleared)]).unwrap();
+	assert_eq!(
+		serde_json::to_value(&merged).unwrap(),
+		json!({ "userAgent": null, "version": null })
+	);
+	assert_eq!(format_user_agent(Some(&merged)), format_user_agent(None));
 }

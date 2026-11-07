@@ -4,7 +4,9 @@
 //! The schemas are JSON values (see `schema_builders.rs`). Each `Static<typeof XSchema>` type becomes a Rust
 //! struct or enum of the values the schema accepts. `OpenRouterRouting` and `VercelGatewayRouting` stay raw JSON
 //! objects because providers send them verbatim; their schemas document the known keys. The type-level helpers
-//! `UnionToIntersection` and `MergedCompatProperties` are dropped.
+//! `UnionToIntersection` and `MergedCompatProperties` are dropped. A `chatTemplateKwargs` variable value
+//! (`ChatTemplateVar`) stays raw JSON, because TS resolves any non-null object as a variable even when the schema
+//! would reject it.
 
 use std::sync::LazyLock;
 
@@ -971,14 +973,31 @@ pub enum ChatTemplateKwargValue {
 	Var(ChatTemplateVar),
 }
 
-/// A pi-controlled chat template value: `{ $var, omitWhenOff? }`.
+/// A pi-controlled chat template value: `{ $var, omitWhenOff? }`. Kept as the configured JSON object or array: TS
+/// resolves every non-null object as a variable, whatever its keys, so one the schema would reject still reaches the
+/// request.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatTemplateVar {
-	#[serde(rename = "$var")]
-	pub var: ChatTemplateVarName,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub omit_when_off: Option<bool>,
+#[serde(transparent)]
+pub struct ChatTemplateVar(pub Value);
+
+impl ChatTemplateVar {
+	/// `value.$var` when it names a known variable. Any other value resolves like `thinking.effort`.
+	pub fn var(&self) -> Option<ChatTemplateVarName> {
+		self.0
+			.get("$var")
+			.and_then(|name| ChatTemplateVarName::deserialize(name).ok())
+	}
+
+	/// Whether `value.omitWhenOff` is truthy.
+	pub fn omit_when_off(&self) -> bool {
+		match self.0.get("omitWhenOff") {
+			None | Some(Value::Null) => false,
+			Some(Value::Bool(value)) => *value,
+			Some(Value::Number(value)) => value.as_f64().is_some_and(|value| value != 0.0),
+			Some(Value::String(value)) => !value.is_empty(),
+			Some(Value::Array(_) | Value::Object(_)) => true,
+		}
+	}
 }
 
 /// The `$var` names of a chat template value.

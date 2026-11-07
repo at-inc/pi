@@ -21,9 +21,8 @@
 //! - A `done`/`error` event whose `reason` is not a stop reason fails the stream; a missing or malformed `usage`
 //!   keeps the empty usage where the TS stores `undefined`; non-string `responseId`, `errorMessage`, `responseModel`
 //!   and `providerThinkingLevel` are dropped.
-//! - `streamSimple`'s `debug` comes from the `SimpleStreamOptions` extra keys in TS; `SimpleStreamOptions` has none in
-//!   Rust, so `stream_simple` never sets it. `stream` reads `reasoning`, `toolChoice` and `debug` from
-//!   `ProviderStreamOptions.extra`.
+//! - `stream` reads `reasoning`, `toolChoice` and `debug` from `ProviderStreamOptions.extra`, and `streamSimple` reads
+//!   `debug` from `SimpleStreamOptions.extra`.
 //! - A `text_end`/`thinking_end` without `content` fails the stream; the TS stores `text`/`thinking: undefined`.
 //! - The payload's `context` is serialized from typed messages, so its keys follow the struct order rather than the
 //!   order of the caller's objects.
@@ -114,7 +113,7 @@ pub fn stream_simple(
 		Some(PiMessagesOptions {
 			reasoning: options.reasoning.as_ref().map(|reasoning| json!(reasoning)),
 			tool_choice: options.tool_choice.as_ref().map(|tool_choice| json!(tool_choice)),
-			debug: None,
+			debug: options.extra.get("debug").cloned(),
 			base: options.base,
 		}),
 	)

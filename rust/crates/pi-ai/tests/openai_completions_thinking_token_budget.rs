@@ -250,3 +250,40 @@ mod openai_completions_thinking_token_budget {
 		});
 	}
 }
+
+/// Rust-only regression: TS resolves every non-null object or array in `chatTemplateKwargs` as a variable, so values
+/// the compat schema would reject still reach the request. Expected values come from running the TS.
+mod lenient_chat_template_values {
+	use super::*;
+
+	fn lenient_model() -> Model {
+		vllm_model(json!({
+			"thinkingFormat": "chat-template",
+			"chatTemplateKwargs": {
+				"enable_thinking": { "$var": "thinking.enabled", "omitWhenOff": 1 },
+				"effort": { "$var": "thinking.future" },
+				"bare": { "note": "x" },
+				"list": [1, 2],
+			},
+		}))
+	}
+
+	#[test]
+	fn resolves_unknown_variables_and_plain_objects_as_the_effort() {
+		run(|host| async move {
+			let params = capture(&host, lenient_model(), Some(ThinkingLevel::High), None, None).await;
+			assert_eq!(
+				params["chat_template_kwargs"],
+				json!({ "enable_thinking": true, "effort": "high", "bare": "high", "list": "high" })
+			);
+		});
+	}
+
+	#[test]
+	fn omits_them_with_truthy_omit_when_off_when_thinking_is_off() {
+		run(|host| async move {
+			let params = capture(&host, lenient_model(), None, None, None).await;
+			assert_eq!(params.get("chat_template_kwargs"), None);
+		});
+	}
+}

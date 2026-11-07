@@ -40,7 +40,10 @@
 //! than in TS, while the total work stays linear. `ToolCallArgumentsStream` does not use snapshots: it updates the tool
 //! call block's arguments in place from `append()`'s changes and the unterminated number or literal, so tool-call
 //! previews never lag, at a cost linear in each piece; only the inside of a container nested more than 32 levels deep
-//! shows late, when it closes. Its `append()` and `replace()` take the arguments to update instead of returning them. Snapshots are `Rc<Value>`: an unchanged snapshot is the same `Rc`. A
+//! shows late, when it closes. Because the arguments follow the text, a pending number or literal that a delimiter
+//! turns invalid (`{"a":tru` then `,`) leaves the arguments at once; TS keeps showing the stale `{ a: true }` until a
+//! later piece changes the snapshot. Its `append()` and `replace()` take the arguments to update instead of returning
+//! them. Snapshots are `Rc<Value>`: an unchanged snapshot is the same `Rc`. A
 //! Rust string cannot hold a lone surrogate: a high surrogate escape is held back until its low half arrives, and an
 //! unpaired one becomes U+FFFD. Values nested so deep that recursion would overflow the stack are copied and dropped
 //! without recursion inside the parser; a caller that keeps such a snapshot must drop it the same way.

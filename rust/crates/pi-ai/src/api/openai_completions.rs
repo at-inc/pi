@@ -1636,13 +1636,13 @@ fn resolve_chat_template_kwarg_value(
 		ChatTemplateKwargValue::Var(variable) => variable,
 	};
 
-	if reasoning_effort.is_none() && variable.omit_when_off == Some(true) {
+	if reasoning_effort.is_none() && variable.omit_when_off() {
 		return None;
 	}
-	match variable.var {
-		ChatTemplateVarName::ThinkingEnabled => return Some(Value::Bool(reasoning_effort.is_some())),
-		ChatTemplateVarName::ThinkingBudget => return thinking_budget.map(number_value),
-		ChatTemplateVarName::ThinkingEffort => {}
+	match variable.var() {
+		Some(ChatTemplateVarName::ThinkingEnabled) => return Some(Value::Bool(reasoning_effort.is_some())),
+		Some(ChatTemplateVarName::ThinkingBudget) => return thinking_budget.map(number_value),
+		Some(ChatTemplateVarName::ThinkingEffort) | None => {}
 	}
 
 	let mapped_value = match reasoning_effort {
