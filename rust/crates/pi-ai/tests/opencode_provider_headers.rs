@@ -1,17 +1,17 @@
 //! Port of `packages/ai/test/opencode-provider-headers.test.ts`.
 //!
-//! `fauxAssistantMessage("ok")` (providers/faux.ts, pending) is built inline as a text-only assistant message.
 //! `it.each` cases run as one test per case.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use pi_ai::providers::faux::faux_assistant_message;
 use pi_ai::providers::opencode_headers::with_open_code_session_header;
 use pi_ai::types::{
-	AssistantContent, AssistantMessage, AssistantMessageEvent, BaseModel, CacheRetention, Context, Message, Model,
-	ModelCost, ModelInputModality, ProviderHeaders, ProviderStreamOptions, ProviderStreams, SimpleStreamOptions,
-	StopReason, StreamOptions, TextContent, TranscriptContext, UserMessage, UserMessageContent,
+	AssistantMessageEvent, BaseModel, CacheRetention, Context, Message, Model, ModelCost, ModelInputModality,
+	ProviderHeaders, ProviderStreamOptions, ProviderStreams, SimpleStreamOptions, StopReason, StreamOptions,
+	TranscriptContext, UserMessage, UserMessageContent,
 };
 use pi_ai::utils::event_stream::AssistantMessageEventStream;
 use pi_ai::utils::transcript::normalize_context;
@@ -47,23 +47,9 @@ fn context() -> TranscriptContext {
 	})
 }
 
-fn fake_assistant_message(text: &str) -> AssistantMessage {
-	AssistantMessage {
-		content: vec![AssistantContent::Text(TextContent {
-			text: text.into(),
-			..TextContent::default()
-		})],
-		api: "faux".into(),
-		provider: "faux".into(),
-		model: "faux-1".into(),
-		stop_reason: StopReason::Stop,
-		..AssistantMessage::default()
-	}
-}
-
 fn completed_stream() -> AssistantMessageEventStream {
 	let stream = AssistantMessageEventStream::new();
-	let message = Rc::new(RefCell::new(fake_assistant_message("ok")));
+	let message = Rc::new(RefCell::new(faux_assistant_message("ok", None)));
 	stream.push(AssistantMessageEvent::Start {
 		partial: message.clone(),
 	});
