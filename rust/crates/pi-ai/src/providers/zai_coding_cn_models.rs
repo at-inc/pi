@@ -16,11 +16,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 		.expect("generated model data zai-coding-cn.json is valid JSON")
 });
 
-pub static ZAI_CODING_CN_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static ZAI_CODING_CN_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("zai-coding-cn", &VALUES));
 
-pub static ZAI_CODING_CN_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static ZAI_CODING_CN_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("zai-coding-cn", &VALUES));
 
-pub static ZAI_CODING_CN_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static ZAI_CODING_CN_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("zai-coding-cn", &VALUES));

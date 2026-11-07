@@ -19,11 +19,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 	.expect("generated model data amazon-bedrock.json is valid JSON")
 });
 
-pub static AMAZON_BEDROCK_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static AMAZON_BEDROCK_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("amazon-bedrock", &VALUES));
 
-pub static AMAZON_BEDROCK_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static AMAZON_BEDROCK_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("amazon-bedrock", &VALUES));
 
-pub static AMAZON_BEDROCK_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static AMAZON_BEDROCK_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("amazon-bedrock", &VALUES));

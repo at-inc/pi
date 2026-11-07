@@ -19,11 +19,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 	.expect("generated model data cloudflare-workers-ai.json is valid JSON")
 });
 
-pub static CLOUDFLARE_WORKERS_AI_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static CLOUDFLARE_WORKERS_AI_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("cloudflare-workers-ai", &VALUES));
 
-pub static CLOUDFLARE_WORKERS_AI_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static CLOUDFLARE_WORKERS_AI_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("cloudflare-workers-ai", &VALUES));
 
-pub static CLOUDFLARE_WORKERS_AI_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("cloudflare-workers-ai", &VALUES));

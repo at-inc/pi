@@ -19,11 +19,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 	.expect("generated model data github-copilot.json is valid JSON")
 });
 
-pub static GITHUB_COPILOT_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static GITHUB_COPILOT_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("github-copilot", &VALUES));
 
-pub static GITHUB_COPILOT_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static GITHUB_COPILOT_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("github-copilot", &VALUES));
 
-pub static GITHUB_COPILOT_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static GITHUB_COPILOT_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("github-copilot", &VALUES));

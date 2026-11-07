@@ -16,11 +16,10 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 		.expect("generated model data groq.json is valid JSON")
 });
 
-pub static GROQ_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
-	LazyLock::new(|| flatten_chat_model_catalog("groq", &VALUES));
+pub static GROQ_MODELS: LazyLock<ChatModelCatalog> = LazyLock::new(|| flatten_chat_model_catalog("groq", &VALUES));
 
-pub static GROQ_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static GROQ_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("groq", &VALUES));
 
-pub static GROQ_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static GROQ_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("groq", &VALUES));

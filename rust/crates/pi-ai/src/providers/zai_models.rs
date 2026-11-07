@@ -16,10 +16,10 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 		.expect("generated model data zai.json is valid JSON")
 });
 
-pub static ZAI_IMAGE_MODELS: LazyLock<ChatModelCatalog> = LazyLock::new(|| flatten_chat_model_catalog("zai", &VALUES));
+pub static ZAI_MODELS: LazyLock<ChatModelCatalog> = LazyLock::new(|| flatten_chat_model_catalog("zai", &VALUES));
 
-pub static ZAI_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static ZAI_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("zai", &VALUES));
 
-pub static ZAI_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static ZAI_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("zai", &VALUES));

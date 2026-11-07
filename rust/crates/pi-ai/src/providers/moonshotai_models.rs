@@ -16,11 +16,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 		.expect("generated model data moonshotai.json is valid JSON")
 });
 
-pub static MOONSHOTAI_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static MOONSHOTAI_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("moonshotai", &VALUES));
 
-pub static MOONSHOTAI_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static MOONSHOTAI_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("moonshotai", &VALUES));
 
-pub static MOONSHOTAI_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static MOONSHOTAI_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("moonshotai", &VALUES));

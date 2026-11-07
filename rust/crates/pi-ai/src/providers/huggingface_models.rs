@@ -16,11 +16,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 		.expect("generated model data huggingface.json is valid JSON")
 });
 
-pub static HUGGINGFACE_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static HUGGINGFACE_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("huggingface", &VALUES));
 
-pub static HUGGINGFACE_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static HUGGINGFACE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("huggingface", &VALUES));
 
-pub static HUGGINGFACE_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static HUGGINGFACE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("huggingface", &VALUES));

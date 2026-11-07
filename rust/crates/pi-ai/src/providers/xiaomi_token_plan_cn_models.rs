@@ -19,11 +19,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 	.expect("generated model data xiaomi-token-plan-cn.json is valid JSON")
 });
 
-pub static XIAOMI_TOKEN_PLAN_CN_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static XIAOMI_TOKEN_PLAN_CN_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("xiaomi-token-plan-cn", &VALUES));
 
-pub static XIAOMI_TOKEN_PLAN_CN_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static XIAOMI_TOKEN_PLAN_CN_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("xiaomi-token-plan-cn", &VALUES));
 
-pub static XIAOMI_TOKEN_PLAN_CN_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static XIAOMI_TOKEN_PLAN_CN_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("xiaomi-token-plan-cn", &VALUES));

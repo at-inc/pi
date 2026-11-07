@@ -16,11 +16,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 		.expect("generated model data deepseek.json is valid JSON")
 });
 
-pub static DEEPSEEK_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static DEEPSEEK_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("deepseek", &VALUES));
 
-pub static DEEPSEEK_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static DEEPSEEK_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("deepseek", &VALUES));
 
-pub static DEEPSEEK_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static DEEPSEEK_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("deepseek", &VALUES));

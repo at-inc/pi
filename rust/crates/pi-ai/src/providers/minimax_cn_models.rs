@@ -16,11 +16,11 @@ static VALUES: LazyLock<ModelGroups> = LazyLock::new(|| {
 		.expect("generated model data minimax-cn.json is valid JSON")
 });
 
-pub static MINIMAX_CN_IMAGE_MODELS: LazyLock<ChatModelCatalog> =
+pub static MINIMAX_CN_MODELS: LazyLock<ChatModelCatalog> =
 	LazyLock::new(|| flatten_chat_model_catalog("minimax-cn", &VALUES));
 
-pub static MINIMAX_CN_IMAGE_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
+pub static MINIMAX_CN_IMAGE_MODELS: LazyLock<ImageModelCatalog> =
 	LazyLock::new(|| flatten_image_model_catalog("minimax-cn", &VALUES));
 
-pub static MINIMAX_CN_IMAGE_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
+pub static MINIMAX_CN_CLASSIFIER_MODELS: LazyLock<ClassifierModelCatalog> =
 	LazyLock::new(|| flatten_classifier_model_catalog("minimax-cn", &VALUES));
