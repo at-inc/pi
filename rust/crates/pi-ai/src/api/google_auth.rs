@@ -5,7 +5,7 @@
 //! universe), `authorized_user` refresh tokens, Compute Engine metadata tokens, `x-goog-user-project` from the quota
 //! project (and `GOOGLE_CLOUD_QUOTA_PROJECT` for ADC credentials), token expiry with the 5-minute eager refresh, and
 //! gaxios's retry policy for the token requests.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Differences from the library:
 //! - `impersonated_service_account`, `external_account` and `external_account_authorized_user` credential files fail

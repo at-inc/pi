@@ -5,7 +5,7 @@
 //! speech converters they call, including the "only supported in ... mode" errors) and response converters,
 //! `throwErrorIfNotOK` / `ApiError`, and the SDK's own SSE splitter (`processStreamResponse`, which is not a standard
 //! SSE parser, so `pi_host::sse` is not used). Vertex ADC lives in `google_auth.rs`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Request parameters are the JSON `GenerateContentParameters` value the adapters build and `onPayload` may replace;
 //! `config.abortSignal` is not JSON, so the signal is a separate argument. Header records are JS objects
