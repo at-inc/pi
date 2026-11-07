@@ -5,7 +5,16 @@ import type * as ts from "@at-inc/pi-ai/compat";
 import { streamFrom, wasm } from "@at-inc/pi-core";
 
 export type * from "@at-inc/pi-ai/compat";
+export { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
+export { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";
+export { bedrockConverseStreamApi } from "./api/bedrock-converse-stream.lazy.ts";
+export { googleGenerativeAIApi } from "./api/google-generative-ai.lazy.ts";
+export { googleVertexApi } from "./api/google-vertex.lazy.ts";
+export { mistralConversationsApi } from "./api/mistral-conversations.lazy.ts";
+export { openAICodexResponsesApi } from "./api/openai-codex-responses.lazy.ts";
 export { openAICompletionsApi } from "./api/openai-completions.lazy.ts";
+export { openAIResponsesApi } from "./api/openai-responses.lazy.ts";
+export { piMessagesApi } from "./api/pi-messages.lazy.ts";
 export {
 	AssistantMessageEventStream,
 	createAssistantMessageEventStream,
