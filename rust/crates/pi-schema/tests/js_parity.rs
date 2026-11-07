@@ -229,6 +229,29 @@ fn large_integers_round_like_javascript_numbers() {
 }
 
 #[test]
+fn references_resolve_like_the_url_standard() {
+	use pi_schema::resolver::resolve_uri;
+	assert_eq!(resolve_uri("////x?y", "http://example.com/root.json"), "http://x/?y");
+	assert_eq!(resolve_uri(r"/\/x", "http://a/"), "http://x/");
+	assert_eq!(resolve_uri("a^b?^#^", "tag:/x/y"), "tag:/x/a%5Eb?^#^");
+	assert_eq!(resolve_uri("a^b", "http://ex.com/^/c"), "http://ex.com/%5E/a%5Eb");
+	assert_eq!(resolve_uri("#a", "tag:x^y"), "tag:x^y#a");
+}
+
+// JSON.parse rounds every decimal correctly; serde_json does only with its float_roundtrip feature (without it,
+// "9.727837981879871e+26" parses one unit in the last place off).
+#[test]
+fn long_decimals_parse_like_json_parse() {
+	let schema: Value = serde_json::from_str(r#"{"exclusiveMaximum": 972783798187987123879878123.18878137}"#).unwrap();
+	let value: Value = serde_json::from_str("972783798187987123879878123.18878137").unwrap();
+	let short: Value = serde_json::from_str("9.727837981879871e+26").unwrap();
+	assert_eq!(value.as_f64(), short.as_f64());
+	let validator = compile(&schema, &CompileOptions::default()).unwrap();
+	let errors = validator.errors(&value).unwrap();
+	assert_eq!(errors[0].message, "expected < 9.727837981879871e+26");
+}
+
+#[test]
 fn a_reference_cycle_fails_instead_of_overflowing_the_stack() {
 	let validator = compile(&json!({"$ref": "#"}), &CompileOptions::default()).unwrap();
 	assert!(!validator.check(&json!(1)));

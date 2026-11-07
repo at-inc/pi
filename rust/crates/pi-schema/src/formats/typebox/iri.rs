@@ -4,6 +4,7 @@
 //! `URL.canParse` is the `url` crate's WHATWG parser; it can differ from V8's where rust-url lags the URL Standard.
 //! Known: rust-url rejects hosts V8 accepts, namely invalid `xn--` labels (`http://xn--a/`) and hosts failing the IDNA
 //! bidi rule.
+//! It accepts an empty host after `@` (`mailto://@`), which V8 rejects.
 
 // /*--------------------------------------------------------------------------
 //

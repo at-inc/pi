@@ -6,6 +6,12 @@
 //!
 //! Registered documents are copied into the schema tree (`Node`) when a reference first loads them. Maps keyed by
 //! schema object hold the object too, so its address stays its own (see `SchemaObject::id`).
+//!
+//! [`resolve_uri`] stands in for `new URL(ref, base).href` with rust-url, which departs from Node's parser on unusual
+//! input: it rejects invalid `xn--` labels and hosts failing the IDNA bidi rule (the reference then stays as it is),
+//! reads `\` as `/` in URLs of non-special schemes, keeps a `C:` segment against a following `..` in every
+//! scheme, and treats `file:` hosts and empty `file:` path segments differently. It does follow Node on references
+//! with extra leading slashes and on `^` in paths.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -327,8 +333,25 @@ pub fn is_schema_object(value: &Node) -> bool {
 
 /// `ref` resolved against `base`. URNs and other bases a URL parser rejects take fragment-only references.
 pub fn resolve_uri(reference: &str, base: &str) -> String {
-	match url::Url::parse(base).and_then(|base| base.join(reference)) {
-		Ok(url) => url.as_str().to_string(),
+	let joined = url::Url::parse(base).and_then(|base| {
+		// rust-url rejects three or more leading slashes, which the URL Standard reads against a special base other than
+		// `file:` as `//` (its special authority ignore slashes state).
+		let rest = reference.trim_start_matches(['/', '\\']);
+		if reference.len() - rest.len() > 2 && matches!(base.scheme(), "http" | "https" | "ws" | "wss" | "ftp") {
+			base.join(&format!("//{rest}"))
+		} else {
+			base.join(reference)
+		}
+	});
+	match joined {
+		Ok(mut url) => {
+			// The URL Standard's path percent-encode set has `^`; rust-url's does not yet.
+			if !url.cannot_be_a_base() && url.path().contains('^') {
+				let path = url.path().replace('^', "%5E");
+				url.set_path(&path);
+			}
+			url.as_str().to_string()
+		}
 		Err(_) => {
 			if reference.starts_with('#') {
 				format!("{}{reference}", document_of(base))
