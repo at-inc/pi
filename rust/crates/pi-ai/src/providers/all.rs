@@ -5,7 +5,7 @@
 // Signatures copied from w2-ai-core's port on `capy/rust-port-w2-ai-core` (c990cc571), which replaces this stub.
 use std::rc::Rc;
 
-use crate::models::{CreateModelsOptions, MutableModels};
+use crate::models::{CreateModelsOptions, MutableModels, Provider};
 use crate::types::Model;
 
 pub fn get_builtin_model(_provider: &str, _model_id: &str) -> Option<Model> {
@@ -17,6 +17,11 @@ pub fn get_builtin_providers() -> Vec<&'static str> {
 }
 
 pub fn get_builtin_models(_provider: &str) -> Vec<Model> {
+	todo!("PORT-STUB")
+}
+
+/// All built-in providers, freshly constructed.
+pub fn builtin_providers() -> Vec<Provider> {
 	todo!("PORT-STUB")
 }
 

@@ -116,7 +116,7 @@ packages/ai/src/auth/resolve.ts	rust/crates/pi-ai/src/auth/resolve.rs	pi-ai	218	
 packages/ai/src/auth/types.ts	rust/crates/pi-ai/src/auth/types.rs	pi-ai	260	w2-ai-auth	ported
 packages/ai/src/bedrock-provider.ts	rust/crates/pi-ai/src/bedrock_provider.rs	pi-ai	7	w3-bedrock-misc	pending
 packages/ai/src/bun-oauth.ts	rust/crates/pi-ai/src/bun_oauth.rs	pi-ai	26	w2-ai-auth	ported
-packages/ai/src/cli.ts	rust/crates/pi-ai/src/cli.rs	pi-ai	128	w2-ai-auth	pending
+packages/ai/src/cli.ts	rust/crates/pi-ai/src/cli.rs	pi-ai	128	w2-ai-auth	ported
 packages/ai/src/compat/extension-oauth-types.ts	rust/crates/pi-ai/src/compat/extension_oauth_types.rs	pi-ai	50	w2-ai-auth	ported
 packages/ai/src/compat.ts	rust/crates/pi-ai/src/compat/mod.rs	pi-ai	303	w2-ai-auth	ported
 packages/ai/src/env-api-keys.ts	rust/crates/pi-ai/src/env_api_keys.rs	pi-ai	196	w2-ai-core	pending

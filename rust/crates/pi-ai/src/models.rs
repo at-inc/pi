@@ -2,10 +2,11 @@
 //! PORT-STATUS: pending
 
 // PORT-STUB: w2-ai-core
-// Only the items `compat/mod.rs` uses, with the signatures of w2-ai-core's port on `capy/rust-port-w2-ai-core` (c990cc571), which replaces this stub.
+// Only the items `compat/mod.rs` and `cli.rs` use, with the signatures of w2-ai-core's port on `capy/rust-port-w2-ai-core` (c990cc571), which replaces this stub.
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+use crate::auth::types::ProviderAuth;
 use crate::types::{Context, Model, ProviderStreamOptions, SimpleStreamOptions, StreamFunction};
 use crate::utils::event_stream::AssistantMessageEventStream;
 
@@ -55,6 +56,16 @@ pub type GetModelsFunction = Rc<dyn Fn() -> Vec<Model>>;
 
 #[derive(Clone)]
 pub struct Provider {
+	pub id: String,
+	pub name: String,
+
+	/// Required: at least one of `apiKey`/`oauth`. Every provider has auth
+	/// semantics — even providers with only ambient credentials (env vars, AWS
+	/// profiles, ADC files) and keyless local servers provide `apiKey` auth
+	/// whose `resolve()` reports whether the provider is configured.
+	/// `Models.getAuth()` returns undefined when the provider is unconfigured.
+	pub auth: ProviderAuth,
+
 	pub get_models: GetModelsFunction,
 	pub stream: StreamFunction<ProviderStreamOptions>,
 	pub stream_simple: StreamFunction<SimpleStreamOptions>,
