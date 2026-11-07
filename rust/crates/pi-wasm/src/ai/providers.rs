@@ -261,3 +261,15 @@ pub fn personalize_open_router_catalog(catalog: js_sys::Array, context: JsValue)
 		Ok(output.into())
 	})
 }
+
+/// The generated `MODELS` (`IMAGE_MODELS`, `CLASSIFIER_MODELS`) of `models.generated`: every provider's catalog of one
+/// model type, keyed by provider.
+#[wasm_bindgen(js_name = aiBuiltinCatalogs)]
+pub fn builtin_catalogs(model_type: JsValue) -> Result<JsValue, JsValue> {
+	use pi_ai::models_generated::{CLASSIFIER_MODELS, IMAGE_MODELS, MODELS};
+	throw(match arg::<ModelType>(model_type)? {
+		ModelType::Chat => crate::json::to_js(&*MODELS),
+		ModelType::Image => crate::json::to_js(&*IMAGE_MODELS),
+		ModelType::Classifier => crate::json::to_js(&*CLASSIFIER_MODELS),
+	})
+}

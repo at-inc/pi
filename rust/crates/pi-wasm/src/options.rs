@@ -213,6 +213,11 @@ type FetchClosure = dyn Fn(HttpRequest) -> LocalBoxFuture<'static, PiResult<Http
 
 /// `options.fetch` as a `FetchFunction`, the same one for the same JS function while it is alive.
 pub fn fetch_function(fetch: Function) -> FetchFunction {
+	// `fetch: globalThis.fetch` is the host fetch itself, which adapters that refuse a custom fetch accept, as the TS
+	// compares `options.fetch !== globalThis.fetch`.
+	if Reflect::get(&js_sys::global(), &"fetch".into()).is_ok_and(|global| Object::is(&global, &fetch)) {
+		return pi_host::global_fetch();
+	}
 	let cached = LAST_FETCH.with_borrow(|last| {
 		let (function, fetch_function) = last.as_ref()?;
 		let function = function.upgrade()?;

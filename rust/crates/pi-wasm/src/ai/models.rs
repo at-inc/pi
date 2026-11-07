@@ -218,7 +218,7 @@ impl NativeClassifier {
 		let options = classifier_options(options, &model);
 		promise(async move {
 			let (model, context) = args.map_err(crate::error::from_js)?;
-			crate::json::to_js(&inner.classify(&model, &context, options).await?)
+			classifier_result_to_js(&inner.classify(&model, &context, options).await?)
 		})
 	}
 }
@@ -297,6 +297,32 @@ pub(super) fn provider_streams(native: Option<NativeStreams>, object: JsValue) -
 	match native {
 		Some(native) => native.inner,
 		None => Rc::new(JsStreams { object }),
+	}
+}
+
+/// The JS value of a classifier result. `answers` is keyed by question id and gets each answer as an own property,
+/// as the TS object does: assigning an id such as `__proto__` would set the prototype instead.
+fn classifier_result_to_js(result: &pi_ai::ClassifierResult) -> PiResult<JsValue> {
+	let value = crate::json::to_js(result)?;
+	let answers = Object::new();
+	for (id, answer) in &result.answers {
+		let descriptor = Object::new();
+		let _ = Reflect::set(&descriptor, &"value".into(), &crate::json::to_js(answer)?);
+		for flag in ["writable", "enumerable", "configurable"] {
+			let _ = Reflect::set(&descriptor, &flag.into(), &JsValue::TRUE);
+		}
+		let _ = Reflect::define_property(&answers, &id.into(), &descriptor);
+	}
+	let _ = Reflect::set(&value, &"answers".into(), &answers);
+	Ok(value)
+}
+
+/// A classifier implementation passed to a wrapper: a facade `*Api()` value carries its `NativeClassifier`; any other
+/// object is a JS implementation.
+pub(super) fn provider_classifier(native: Option<NativeClassifier>, object: JsValue) -> Rc<dyn ProviderClassifier> {
+	match native {
+		Some(native) => native.inner,
+		None => Rc::new(JsClassifier { object }),
 	}
 }
 
@@ -728,7 +754,7 @@ impl ProviderHandle {
 		promise(async move {
 			let classify = classify.ok_or_else(|| PiError::type_error("classify is not a function"))?;
 			let (model, context) = args.map_err(crate::error::from_js)?;
-			crate::json::to_js(&classify(&model, &context, options).await?)
+			classifier_result_to_js(&classify(&model, &context, options).await?)
 		})
 	}
 }
@@ -1155,7 +1181,7 @@ impl ModelsHandle {
 			base: options.classifier_options(&model),
 		});
 		let pending = args.map(|(model, context)| self.inner.classify(&model, &context, options));
-		promise(async move { crate::json::to_js(&pending.map_err(crate::error::from_js)?.await) })
+		promise(async move { classifier_result_to_js(&pending.map_err(crate::error::from_js)?.await) })
 	}
 }
 

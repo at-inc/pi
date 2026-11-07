@@ -75,7 +75,7 @@ const SYSTEM_PROMPT: &str = concat!(
 );
 
 /// One question rendered for the model.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct LabeledQuestion {
 	/// User message content: the state, the question and its answer labels.
 	pub content: String,
