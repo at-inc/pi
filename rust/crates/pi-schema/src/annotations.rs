@@ -3,6 +3,9 @@
 //!
 //! Annotation tracking for `unevaluatedProperties` and `unevaluatedItems`: annotating checks record which
 //! properties and items a schema evaluated. Only schemas that use those keywords compile into these closures.
+//!
+//! Accepted difference: as in `checks.rs`, a recorded throw still pops the `$dynamicRef` scope, where the TypeScript
+//! RangeError skips the pop and leaves the URI on the scope for later checks.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};

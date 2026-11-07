@@ -1,5 +1,7 @@
 //! Port of `packages/schema/src/formats/typebox/idna/idn-hostname.ts`.
 //! PORT-STATUS: ported
+//!
+//! `normalize("NFC")` is `unicode-normalization`, on Unicode 18 data where Node 24 has Unicode 17.
 
 // /*--------------------------------------------------------------------------
 //

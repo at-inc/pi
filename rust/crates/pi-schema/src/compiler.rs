@@ -12,6 +12,11 @@
 //! or a dynamic lookup exists, so a check stays valid while anything holds it. A schema that a `$dynamicRef` reaches
 //! at run time and that fails to compile there makes that check fail, where the TypeScript throws from the check.
 //! `RESTART` is a `PiError` named `"RESTART"` instead of a thrown symbol.
+//!
+//! Accepted difference: below `unevaluatedProperties`/`unevaluatedItems` the TypeScript copies a schema's other
+//! keywords with `rest[k] = node[k]`, so an own `"__proto__"` key holding an object (from `JSON.parse`) becomes the
+//! copy's prototype and its keywords apply: `{"unevaluatedProperties": true, "__proto__": {"required": ["a"]}}` rejects
+//! `{}` there. Here `__proto__` is an unknown keyword on every path, as it is in the TypeScript without `unevaluated*`.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};

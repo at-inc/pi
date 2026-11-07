@@ -7,8 +7,11 @@
 //! [`Node`] and [`SchemaObject`]: the TypeScript compiler keys its caches, resource index and memo
 //! tables by schema object identity (`Map<object, ...>`). A `serde_json::Value` tree has no stable identity that a
 //! closure built from it may keep, so compile() first copies the schema into a [`Node`] tree whose objects sit behind
-//! an `Rc`; the identity of a schema object is the address of its `Rc`. `ParseResult<T>` and `Static<T>` lose their
-//! type parameter (it has no runtime effect).
+//! an `Rc`; the identity of a schema object is the address of its `Rc`. Two consequences: changes to a schema after
+//! compile() reach neither `check` nor `errors` (the TypeScript explainer reads the live object), and a document
+//! registered in `schemas` that is the root object itself in TypeScript is a separate copy here, compiled under its
+//! registered URI (the TypeScript reuses the root's check, compiled under the default base). `ParseResult<T>` and
+//! `Static<T>` lose their type parameter (it has no runtime effect).
 
 use std::fmt;
 use std::rc::Rc;

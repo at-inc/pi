@@ -14,6 +14,13 @@
 //! without end (`{"$ref": "#"}`) runs out of stack (a RangeError), and the indirection of a subschema that failed to
 //! compile calls its empty slot (a TypeError). Here such a check fails and records the error, and [`catching`] returns
 //! it to the callers that can throw.
+//!
+//! Accepted differences:
+//! - [`js_string`] gives "[object Object]" for every object. In JavaScript, converting an object with an own `toString`
+//!   key from JSON throws a TypeError, so `{"dependentRequired": {"a": [{"toString": 1}]}}` (not a valid schema: the
+//!   entries must be strings) throws on `{"a": 1}` there and fails here.
+//! - A throw does not skip the `$dynamicRef` scope pop. In TypeScript, a RangeError inside a scoped check leaves that
+//!   resource's URI on the scope for good, so later checks on the same validator can resolve `$dynamicRef` to it.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
