@@ -103,7 +103,7 @@ impl Host for TestHost {
 	}
 
 	fn now_ms(&self) -> f64 {
-		*self.clock_ms.borrow()
+		self.clock_ms.borrow().floor()
 	}
 
 	fn monotonic_ms(&self) -> f64 {

@@ -61,16 +61,17 @@ impl Host for NativeHost {
 			}
 			.map_err(|error| PiError::type_error(format!("fetch failed: {error}")))?;
 			let status = response.status();
-			let headers = response
-				.headers()
-				.iter()
-				.map(|(name, value)| {
-					(
-						name.as_str().to_string(),
-						String::from_utf8_lossy(value.as_bytes()).into_owned(),
-					)
-				})
-				.collect();
+			let mut headers: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+			for (name, value) in response.headers() {
+				let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
+				headers
+					.entry(name.as_str().to_string())
+					.and_modify(|existing| {
+						existing.push_str(", ");
+						existing.push_str(&value);
+					})
+					.or_insert(value);
+			}
 			let url = response.url().to_string();
 			let signal = request.signal.clone();
 			let body = response
