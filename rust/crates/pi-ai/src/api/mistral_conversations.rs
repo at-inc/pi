@@ -7,9 +7,7 @@
 //!   `reasoningEffort` are read when they are strings.
 //! - Stream events are read with the JSON types of the Mistral wire format: a chunk `id`, `finish_reason` or content
 //!   text that is not a string is ignored, a `delta.content` that is neither a string nor an array is ignored, a usage
-//!   count that is not a number reads as 0, and a choice that is not an object is skipped. A missing `delta` or
-//!   `function` fails with the TypeError V8 reports for reading `name` from `undefined`, also when it is `null` or
-//!   when an open call's `function` is missing (V8 reads `arguments` first there). The TS throws where Rust is
+//!   count that is not a number reads as 0, and a choice that is not an object is skipped. The TS throws where Rust is
 //!   lenient: a `null` item in a `delta.content` array is skipped, a `delta.tool_calls` that is not an array is
 //!   ignored, a tool call `id` that is not a string gets the derived id, a `function.name` that is not a string reads
 //!   as `""`, and a content chunk that is not an object is passed through instead of spread. A tool call `index`
@@ -1098,23 +1096,19 @@ async fn consume_chat_stream(
 				Some(index) => ToolCallKey::String(js_string(index)),
 				None => ToolCallKey::String(call_id.clone()),
 			};
-			let Some(function) = tool_call.get("function").filter(|function| !function.is_null()) else {
-				return Err(PiError::type_error(
-					"Cannot read properties of undefined (reading 'name')",
-				));
-			};
+			let function = tool_call.get("function");
 			let open = match tool_calls_by_key.entry(key) {
 				indexmap::map::Entry::Occupied(entry) => entry.into_mut(),
 				indexmap::map::Entry::Vacant(entry) => {
+					let name = read_property(function, "name")?
+						.and_then(Value::as_str)
+						.unwrap_or_default()
+						.to_string();
 					let content_index = {
 						let mut message = output.borrow_mut();
 						message.content.push(AssistantContent::ToolCall(ToolCall {
 							id: call_id,
-							name: function
-								.get("name")
-								.and_then(Value::as_str)
-								.unwrap_or_default()
-								.to_string(),
+							name,
 							..ToolCall::default()
 						}));
 						message.content.len() - 1
@@ -1130,7 +1124,7 @@ async fn consume_chat_stream(
 				}
 			};
 
-			let args_delta = match function.get("arguments") {
+			let args_delta = match read_property(function, "arguments")? {
 				Some(Value::String(arguments)) => arguments.clone(),
 				Some(arguments) if js_truthy(arguments) => json_stringify(arguments),
 				_ => "{}".to_string(),
@@ -1166,6 +1160,20 @@ async fn consume_chat_stream(
 		});
 	}
 	Ok(())
+}
+
+/// `value[key]` for a JSON value: the TypeError V8 reports on `undefined` and `null`, and `undefined` for a key a
+/// non-object value lacks.
+fn read_property<'a>(value: Option<&'a Value>, key: &str) -> PiResult<Option<&'a Value>> {
+	match value {
+		None => Err(PiError::type_error(format!(
+			"Cannot read properties of undefined (reading '{key}')"
+		))),
+		Some(Value::Null) => Err(PiError::type_error(format!(
+			"Cannot read properties of null (reading '{key}')"
+		))),
+		Some(value) => Ok(value.get(key)),
+	}
 }
 
 /// `String(value)` of a JSON scalar.
@@ -1367,13 +1375,8 @@ fn map_tool_choice(choice: &Value) -> PiResult<Value> {
 	if let Some(choice @ ("auto" | "none" | "any" | "required")) = choice.as_str() {
 		return Ok(Value::String(choice.into()));
 	}
-	let Some(function) = choice.get("function").filter(|function| !function.is_null()) else {
-		return Err(PiError::type_error(
-			"Cannot read properties of undefined (reading 'name')",
-		));
-	};
 	let mut mapped_function = Map::new();
-	if let Some(name) = function.get("name") {
+	if let Some(name) = read_property(choice.get("function"), "name")? {
 		mapped_function.insert("name".into(), name.clone());
 	}
 	Ok(json!({ "type": "function", "function": mapped_function }))
