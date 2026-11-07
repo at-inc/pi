@@ -49,7 +49,7 @@ mod mistral_tool_schema_serialization {
 					parameters,
 					constrained_sampling: Some(ToolConstrainedSampling::Config(
 						ConstrainedSamplingConfig::JsonSchema {
-							strict: ConstrainedSamplingStrictness::Require,
+							strict: Some(ConstrainedSamplingStrictness::Require),
 						},
 					)),
 					..Tool::default()
