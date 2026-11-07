@@ -2183,7 +2183,6 @@ mod openai_codex_streaming {
 	}
 }
 
-
 /// Rust-only regressions from the adversarial review of `openai-codex-responses.ts`. The expected values come from
 /// running the same requests through the TS adapter under vitest with a stubbed `fetch`.
 mod review_regressions {
@@ -2243,7 +2242,10 @@ mod review_regressions {
 			let body = json!({ "error": { "code": "bad", "message": "rate\u{e9}limit" } });
 			let (result, calls) = first_response_fails(&host, 400, Some("2"), body, Some(1000.0)).await;
 			assert_eq!(result.stop_reason, StopReason::Error);
-			assert_eq!(result.error_message.as_deref(), Some("Server requested 2s retry delay (max: 1s)"));
+			assert_eq!(
+				result.error_message.as_deref(),
+				Some("Server requested 2s retry delay (max: 1s)")
+			);
 			assert_eq!(calls, 1);
 		});
 	}
