@@ -13,7 +13,7 @@ use pi_ai::models::get_supported_thinking_levels;
 use pi_ai::providers::model_schema::ModelThinkingLevel;
 use pi_ai::providers::xai::xai_provider;
 use pi_ai::providers::xai_models::XAI_MODELS;
-use pi_ai::types::{Model, ProviderStreamOptions, StopReason};
+use pi_ai::types::{Model, ProviderRequestOptions, ProviderStreamOptions, StopReason, StreamOptions};
 use pi_ai::utils::identity::format_user_agent;
 use pi_host::testing::{RecordedRequest, TestHost, run};
 use serde_json::{Map, Value, json};
@@ -78,9 +78,17 @@ async fn capture_completions_user_agent(host: &TestHost, headers: Option<Value>)
 			}),
 		],
 	);
-	let mut options = OpenAICompletionsOptions::default();
-	options.api_key = Some("xai-test-token".into());
-	options.headers = headers.map(|headers| serde_json::from_value(headers).expect("headers"));
+	let options = OpenAICompletionsOptions {
+		base: StreamOptions {
+			base: ProviderRequestOptions {
+				api_key: Some("xai-test-token".into()),
+				headers: headers.map(|headers| serde_json::from_value(headers).expect("headers")),
+				..ProviderRequestOptions::default()
+			},
+			..StreamOptions::default()
+		},
+		..OpenAICompletionsOptions::default()
+	};
 	let result = stream_open_ai_completions(
 		&custom_completions_model(),
 		&context(json!({ "messages": [{ "role": "user", "content": "hello", "timestamp": 1 }] })),

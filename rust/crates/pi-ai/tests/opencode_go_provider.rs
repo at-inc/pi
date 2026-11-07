@@ -9,7 +9,10 @@
 
 use indexmap::IndexMap;
 use pi_ai::providers::opencode_go::opencode_go_provider;
-use pi_ai::types::{Context, ProviderHeaders, ProviderStreamOptions, SimpleStreamOptions, StopReason, StreamOptions};
+use pi_ai::types::{
+	Context, ProviderHeaders, ProviderRequestOptions, ProviderStreamOptions, SimpleStreamOptions, StopReason,
+	StreamOptions,
+};
 use pi_ai::utils::transcript::normalize_context;
 use pi_host::HttpResponse;
 use pi_host::js::json_stringify;
@@ -60,13 +63,18 @@ mod open_code_go_gemini_dispatch {
 					)
 					.unwrap(),
 				);
-				let mut base = StreamOptions::default();
-				base.api_key = Some("test-key".into());
-				base.session_id = Some("conversation-1".into());
-				base.headers = Some(ProviderHeaders::from([(
-					"x-custom".to_string(),
-					Some("value".to_string()),
-				)]));
+				let base = StreamOptions {
+					base: ProviderRequestOptions {
+						api_key: Some("test-key".into()),
+						headers: Some(ProviderHeaders::from([(
+							"x-custom".to_string(),
+							Some("value".to_string()),
+						)])),
+						..ProviderRequestOptions::default()
+					},
+					session_id: Some("conversation-1".into()),
+					..StreamOptions::default()
+				};
 				let stream = match method {
 					"stream" => (provider.stream)(
 						&model,

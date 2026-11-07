@@ -55,8 +55,16 @@ mod provider_error_body_passthrough_per_tier_regression {
 			let response = json_response(403, &body);
 			Box::pin(async move { Ok(response) })
 		});
-		let mut options = OpenAICompletionsOptions::default();
-		options.api_key = Some("test".into());
+		let options = OpenAICompletionsOptions {
+			base: pi_ai::types::StreamOptions {
+				base: pi_ai::types::ProviderRequestOptions {
+					api_key: Some("test".into()),
+					..Default::default()
+				},
+				..Default::default()
+			},
+			..OpenAICompletionsOptions::default()
+		};
 		let stream = stream_open_ai_completions(&completions_model(), &regression_context(), Some(options));
 		while stream.next().await.is_some() {}
 		stream.result().await.expect("stream has a result")

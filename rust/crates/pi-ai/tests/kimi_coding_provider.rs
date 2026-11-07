@@ -15,6 +15,9 @@ use pi_ai::types::{Context, ProviderEnv, ProviderRequestOptions, SimpleStreamOpt
 use pi_host::{FetchFunction, HttpResponse};
 use serde_json::json;
 
+/// The url and `authorization` header of each request the fetch received.
+type Requests = Rc<RefCell<Vec<(String, Option<String>)>>>;
+
 fn kimi_models() -> Rc<dyn MutableModels> {
 	let models = create_models(None);
 	models.set_provider(Rc::new(kimi_coding_provider()));
@@ -103,7 +106,7 @@ mod kimi_code_api_key_regions {
 				let auth = get_auth(models.as_ref(), None).await.unwrap().auth;
 				assert_eq!(auth.api_key.as_deref(), Some("test-key"));
 				assert_eq!(auth.base_url, Some(format!("https://api.kimi.{domain}/coding/v1")));
-				let requests: Rc<RefCell<Vec<(String, Option<String>)>>> = Rc::default();
+				let requests: Requests = Rc::default();
 				let recorder = requests.clone();
 				let request: FetchFunction = Rc::new(move |request| {
 					recorder

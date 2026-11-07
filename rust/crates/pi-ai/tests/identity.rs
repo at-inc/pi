@@ -282,7 +282,9 @@ mod client_identity_in_requests {
 		CreateModelsOptions, CreateProviderOptions, ModelsSimpleStreamOptions, MutableModels, ProviderApi,
 		create_models, create_provider, with_client_identity_mutable,
 	};
-	use pi_ai::types::{Context, Model, ProviderHeaders, SimpleStreamOptions, TranscriptContext};
+	use pi_ai::types::{
+		Context, Model, ProviderHeaders, ProviderRequestOptions, SimpleStreamOptions, StreamOptions, TranscriptContext,
+	};
 	use pi_ai::utils::transcript::normalize_context;
 	use pi_host::{FetchFunction, HttpResponse};
 
@@ -409,15 +411,23 @@ mod client_identity_in_requests {
 				"https://openrouter.ai/api/v1",
 				Some(json!({ "X-OpenRouter-Title": "model-title" })),
 			);
-			let mut options = OpenAICompletionsOptions::default();
-			options.api_key = Some("key".into());
-			options.fetch = Some(capture.fetch.clone());
-			options.identity = Some(ClientIdentity {
-				attribution: Some(Some(PI_ATTRIBUTION.clone())),
-				user_agent: Some(UserAgentMode::Named(UserAgentModeName::Short)),
-				..ClientIdentity::default()
-			});
-			options.headers = Some(ProviderHeaders::from([("HTTP-Referer".to_string(), None)]));
+			let options = OpenAICompletionsOptions {
+				base: StreamOptions {
+					base: ProviderRequestOptions {
+						api_key: Some("key".into()),
+						fetch: Some(capture.fetch.clone()),
+						identity: Some(ClientIdentity {
+							attribution: Some(Some(PI_ATTRIBUTION.clone())),
+							user_agent: Some(UserAgentMode::Named(UserAgentModeName::Short)),
+							..ClientIdentity::default()
+						}),
+						headers: Some(ProviderHeaders::from([("HTTP-Referer".to_string(), None)])),
+						..ProviderRequestOptions::default()
+					},
+					..StreamOptions::default()
+				},
+				..OpenAICompletionsOptions::default()
+			};
 			stream_completions(&model, &context(), Some(options)).result().await;
 
 			assert_eq!(capture.header("user-agent").as_deref(), Some("pi"));
@@ -435,10 +445,18 @@ mod client_identity_in_requests {
 				"https://api.githubcopilot.com",
 				Some(json!({ "User-Agent": "GitHubCopilotChat/0.35.0" })),
 			);
-			let mut options = OpenAICompletionsOptions::default();
-			options.api_key = Some("key".into());
-			options.fetch = Some(capture.fetch.clone());
-			options.identity = Some(identity(json!({ "userAgent": { "custom": "acme" } })));
+			let options = OpenAICompletionsOptions {
+				base: StreamOptions {
+					base: ProviderRequestOptions {
+						api_key: Some("key".into()),
+						fetch: Some(capture.fetch.clone()),
+						identity: Some(identity(json!({ "userAgent": { "custom": "acme" } }))),
+						..ProviderRequestOptions::default()
+					},
+					..StreamOptions::default()
+				},
+				..OpenAICompletionsOptions::default()
+			};
 			stream_completions(&model, &context(), Some(options)).result().await;
 
 			assert_eq!(
@@ -464,9 +482,17 @@ mod client_identity_in_requests {
 				let model = model.clone();
 				async move {
 					let capture = capturing_fetch();
-					let mut options = SimpleStreamOptions::default();
-					options.fetch = Some(capture.fetch.clone());
-					options.identity = identity;
+					let options = SimpleStreamOptions {
+						base: StreamOptions {
+							base: ProviderRequestOptions {
+								fetch: Some(capture.fetch.clone()),
+								identity,
+								..ProviderRequestOptions::default()
+							},
+							..StreamOptions::default()
+						},
+						..SimpleStreamOptions::default()
+					};
 					target
 						.stream_simple(
 							&model,
@@ -512,10 +538,18 @@ mod client_identity_in_requests {
 				let (models, model) = (models.clone(), model.clone());
 				async move {
 					let capture = capturing_fetch();
-					let mut options = SimpleStreamOptions::default();
-					options.fetch = Some(capture.fetch.clone());
-					options.session_id = Some("session-1".into());
-					options.headers = headers;
+					let options = SimpleStreamOptions {
+						base: StreamOptions {
+							base: ProviderRequestOptions {
+								fetch: Some(capture.fetch.clone()),
+								headers,
+								..ProviderRequestOptions::default()
+							},
+							session_id: Some("session-1".into()),
+							..StreamOptions::default()
+						},
+						..SimpleStreamOptions::default()
+					};
 					models
 						.stream_simple(
 							&model,

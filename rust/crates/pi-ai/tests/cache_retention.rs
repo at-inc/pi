@@ -20,7 +20,9 @@ use pi_ai::api::anthropic_messages::{AnthropicOptions, stream};
 use pi_ai::api::openai_completions::{OpenAICompletionsOptions, stream as stream_open_ai_completions};
 use pi_ai::api::openai_responses::{OpenAIResponsesOptions, stream as stream_open_ai_responses};
 use pi_ai::providers::all::get_builtin_model;
-use pi_ai::types::{AssistantMessageEvent, CacheRetention, Model, OnPayload, StreamOptions, TranscriptContext};
+use pi_ai::types::{
+	AssistantMessageEvent, CacheRetention, Model, OnPayload, ProviderRequestOptions, StreamOptions, TranscriptContext,
+};
 use pi_host::PiError;
 use pi_host::testing::run;
 use serde_json::{Value, json};
@@ -295,12 +297,20 @@ mod cache_retention_pi_cache_retention {
 		) -> Value {
 			let captured = Rc::new(RefCell::new(None));
 			let target = captured.clone();
-			let mut options = OpenAICompletionsOptions::default();
-			options.api_key = Some("fake-key".into());
-			options.on_payload = Some(Rc::new(move |payload, _model| {
-				*target.borrow_mut() = Some(payload);
-				Box::pin(async { Err(PiError::named("PayloadCaptured", "payload captured")) })
-			}));
+			let mut options = OpenAICompletionsOptions {
+				base: StreamOptions {
+					base: ProviderRequestOptions {
+						api_key: Some("fake-key".into()),
+						on_payload: Some(Rc::new(move |payload, _model| {
+							*target.borrow_mut() = Some(payload);
+							Box::pin(async { Err(PiError::named("PayloadCaptured", "payload captured")) })
+						})),
+						..ProviderRequestOptions::default()
+					},
+					..StreamOptions::default()
+				},
+				..OpenAICompletionsOptions::default()
+			};
 			configure(&mut options);
 			let stream = stream_open_ai_completions(model, context, Some(options));
 			while let Some(event) = stream.next().await {

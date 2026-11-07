@@ -140,8 +140,13 @@ mod sampling_params {
 	#[test]
 	fn passes_request_sampling_params_through_stream_simple() {
 		run(|_| async {
-			let mut options = SimpleStreamOptions::default();
-			options.sampling_params = sampling(json!({ "top_p": 0.5 }));
+			let options = SimpleStreamOptions {
+				base: StreamOptions {
+					sampling_params: sampling(json!({ "top_p": 0.5 })),
+					..StreamOptions::default()
+				},
+				..SimpleStreamOptions::default()
+			};
 			let payload = capture_simple_payload(&make_model("openai-completions", None, json!({})), options).await;
 
 			assert_eq!(payload["top_p"], json!(0.5));
