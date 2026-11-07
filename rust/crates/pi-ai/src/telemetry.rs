@@ -3,7 +3,10 @@
 //!
 //! `observeModelRequest`'s `options` (`{ telemetry?, reasoning?: unknown }`) becomes the two values it reads:
 //! the span and the request's `reasoning` when it is a string. The `WeakMap` instrument cache is a thread-local
-//! list of weak adapter references, pruned when an adapter is dropped.
+//! list of weak adapter references. Instruments may hold their adapter strongly, so an entry counts as dead, and is
+//! pruned on the next lookup, once only its own instruments still hold the adapter. The 500-unit error message is cut
+//! at a character boundary, so a surrogate pair straddling unit 500 is dropped where TS keeps its high half.
+//! `AI_TELEMETRY_SCHEMA` is the typed pi-telemetry schema, which serializes attribute keys in struct order.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -145,20 +148,35 @@ fn create_instruments(adapter: Rc<dyn TelemetryMetrics>) -> Instruments {
 	}
 }
 
+/// A cached adapter, its instruments, and how many strong references to the adapter those instruments hold.
+struct CachedInstruments {
+	adapter: Weak<dyn TelemetryMetrics>,
+	instruments: Instruments,
+	self_references: usize,
+}
+
 thread_local! {
-	static INSTRUMENT_CACHE: RefCell<Vec<(Weak<dyn TelemetryMetrics>, Instruments)>> = const { RefCell::new(Vec::new()) };
+	static INSTRUMENT_CACHE: RefCell<Vec<CachedInstruments>> = const { RefCell::new(Vec::new()) };
 }
 
 fn cached_instruments(adapter: Rc<dyn TelemetryMetrics>) -> Instruments {
 	INSTRUMENT_CACHE.with(|cache| {
 		let mut cache = cache.borrow_mut();
-		cache.retain(|(key, _)| key.strong_count() > 0);
+		// A `WeakMap` value does not keep its key alive. Instruments may point back at their adapter, so an entry is
+		// dead once nothing but its own instruments holds the adapter.
+		cache.retain(|entry| entry.adapter.strong_count() > entry.self_references);
 		let key = Rc::downgrade(&adapter);
-		if let Some((_, instruments)) = cache.iter().find(|(entry, _)| Weak::ptr_eq(entry, &key)) {
-			return instruments.clone();
+		if let Some(entry) = cache.iter().find(|entry| Weak::ptr_eq(&entry.adapter, &key)) {
+			return entry.instruments.clone();
 		}
-		let instruments = create_instruments(adapter);
-		cache.push((key, instruments.clone()));
+		let before = Rc::strong_count(&adapter);
+		let instruments = create_instruments(adapter.clone());
+		let self_references = Rc::strong_count(&adapter).saturating_sub(before);
+		cache.push(CachedInstruments {
+			adapter: key,
+			instruments: instruments.clone(),
+			self_references,
+		});
 		instruments
 	})
 }
@@ -351,5 +369,23 @@ pub fn observe_model_request(
 	LazyStreamObserver {
 		on_event: Some(Rc::new(on_event)),
 		on_result: Some(Rc::new(on_result)),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn instrument_cache_lets_a_dropped_adapter_go() {
+		let telemetry = pi_telemetry::InMemoryTelemetryContext::new();
+		let adapter: Rc<dyn TelemetryMetrics> = telemetry.clone();
+		let first = cached_instruments(adapter.clone());
+		let again = cached_instruments(adapter.clone());
+		assert!(Rc::ptr_eq(&first.tokens, &again.tokens));
+		let weak = Rc::downgrade(&telemetry);
+		drop((first, again, adapter, telemetry));
+		cached_instruments(pi_telemetry::InMemoryTelemetryContext::new());
+		assert!(weak.upgrade().is_none());
 	}
 }
