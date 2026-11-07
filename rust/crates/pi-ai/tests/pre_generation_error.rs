@@ -1,11 +1,12 @@
 //! Port of `packages/ai/test/pre-generation-error.test.ts`.
 //!
-//! `throws synchronously when auth is missing` is ported for `anthropic-messages` only: its synchronous throw is the
-//! `Err` of `stream_simple`. Not ported: the same expectation for `azure-openai-responses`, `google-generative-ai`,
-//! `mistral-conversations`, `openai-codex-responses`, `openai-completions` and `openai-responses`, whose APIs
+//! `throws synchronously when auth is missing` is ported for `anthropic-messages`, `azure-openai-responses`,
+//! `openai-codex-responses` and `openai-responses`: the synchronous throw is the `Err` of `stream_simple`. Not ported:
+//! the same expectation for `google-generative-ai`, `mistral-conversations` and `openai-completions`, whose APIs
 //! belong to other w3 shards.
 
 use pi_ai::api::anthropic_messages::stream_simple as stream_anthropic;
+use pi_ai::api::{azure_openai_responses, openai_codex_responses, openai_responses};
 use pi_ai::types::{Model, SimpleStreamOptions};
 use pi_ai::utils::transcript::normalize_context;
 use pi_host::PiResult;
@@ -49,6 +50,27 @@ mod direct_api_authentication {
 			expect_missing_auth_throws(|| {
 				stream_anthropic(
 					&model("anthropic-messages"),
+					&context,
+					Some(SimpleStreamOptions::default()),
+				)
+			});
+			expect_missing_auth_throws(|| {
+				azure_openai_responses::stream_simple(
+					&model("azure-openai-responses"),
+					&context,
+					Some(SimpleStreamOptions::default()),
+				)
+			});
+			expect_missing_auth_throws(|| {
+				openai_codex_responses::stream_simple(
+					&model("openai-codex-responses"),
+					&context,
+					Some(SimpleStreamOptions::default()),
+				)
+			});
+			expect_missing_auth_throws(|| {
+				openai_responses::stream_simple(
+					&model("openai-responses"),
 					&context,
 					Some(SimpleStreamOptions::default()),
 				)

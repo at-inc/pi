@@ -122,6 +122,34 @@ impl AbortSignal {
 		signal
 	}
 
+	/// `AbortSignal.timeout(ms)` with Node's `validateUint32(delay)`: a `RangeError` with code `ERR_OUT_OF_RANGE` when
+	/// `ms` is not an integer in `0..=4294967295`.
+	pub fn try_timeout(ms: f64) -> PiResult<AbortSignal> {
+		let range = if ms.fract() != 0.0 || !ms.is_finite() {
+			"an integer"
+		} else if !(0.0..=4_294_967_295.0).contains(&ms) {
+			">= 0 && <= 4294967295"
+		} else {
+			return Ok(AbortSignal::timeout(ms));
+		};
+		let mut received = crate::js::number_to_string(ms);
+		if ms.fract() == 0.0 && ms.abs() > 4_294_967_296.0 {
+			let start = usize::from(received.starts_with('-'));
+			let mut end = received.len();
+			let mut grouped = String::new();
+			while end >= start + 4 {
+				grouped = format!("_{}{grouped}", &received[end - 3..end]);
+				end -= 3;
+			}
+			received = format!("{}{grouped}", &received[..end]);
+		}
+		Err(PiError::named(
+			"RangeError",
+			format!("The value of \"delay\" is out of range. It must be {range}. Received {received}"),
+		)
+		.with_data(serde_json::json!({ "code": "ERR_OUT_OF_RANGE" })))
+	}
+
 	/// `AbortSignal.any(signals)`.
 	pub fn any(signals: &[AbortSignal]) -> AbortSignal {
 		if let Some(reason) = signals.iter().find_map(AbortSignal::reason) {
@@ -230,5 +258,32 @@ mod tests {
 		controller.abort_with(PiError::new("stop"));
 		let reason = futures::executor::block_on(signal.aborted_future());
 		assert_eq!(reason.message, "stop");
+	}
+
+	#[test]
+	fn try_timeout_rejects_delays_node_rejects() {
+		let message = |ms: f64| {
+			AbortSignal::try_timeout(ms)
+				.err()
+				.map(|error| (error.name, error.message))
+		};
+		let range = |rule: &str, received: &str| {
+			Some((
+				"RangeError".to_string(),
+				format!("The value of \"delay\" is out of range. It must be {rule}. Received {received}"),
+			))
+		};
+		assert_eq!(message(25.7), range("an integer", "25.7"));
+		assert_eq!(message(f64::INFINITY), range("an integer", "Infinity"));
+		assert_eq!(message(4_294_967_296.0), range(">= 0 && <= 4294967295", "4294967296"));
+		assert_eq!(
+			message(4_294_967_297.0),
+			range(">= 0 && <= 4294967295", "4_294_967_297")
+		);
+		assert_eq!(message(1e21), range(">= 0 && <= 4294967295", "1e_+21"));
+		assert_eq!(
+			AbortSignal::try_timeout(0.5).unwrap_err().data,
+			Some(serde_json::json!({ "code": "ERR_OUT_OF_RANGE" }))
+		);
 	}
 }

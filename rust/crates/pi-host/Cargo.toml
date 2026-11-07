@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 default = []
-native = ["dep:tokio", "dep:reqwest"]
+native = ["dep:tokio", "dep:reqwest", "dep:tokio-tungstenite"]
 testing = ["futures/executor"]
 
 [dependencies]
@@ -20,6 +20,7 @@ ryu-js = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
 
 [lints]
 workspace = true

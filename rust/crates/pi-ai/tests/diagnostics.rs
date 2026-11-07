@@ -1,23 +1,29 @@
 //! Port of `packages/ai/test/provider-error-diagnostics.test.ts`, the cases that call `createProviderErrorDiagnostic`
-//! directly, and the Anthropic rows of the `$name` tables that stream through each API (`anthropic_` tests). The rows
-//! for the OpenAI Completions, Responses and Codex APIs, `preserves Codex stream error events` and `retains %s identity
-//! before output_item.done` move with those providers' w3 shards. The `JSON.parse(JSON.stringify(...))` round trip is
-//! `serde_json::to_value` of the diagnostic. The `Headers` instance, `undefined` values and the `1n` payload have no
-//! counterpart in a `PiError`, whose `data` is already JSON, so those inputs become plain JSON objects and the
-//! serialization fallback is not reachable.
+//! directly, the Anthropic rows of the `$name` tables that stream through each API (`anthropic_` tests), and the
+//! cases that stream through the Responses and Codex APIs (module `streaming_providers`, whose `it.each(providers)`
+//! lists hold "responses" and "codex"). The OpenAI Completions rows move with that provider's w3 shard. The
+//! `JSON.parse(JSON.stringify(...))` round trip is `serde_json::to_value` of the diagnostic. The `Headers` instance,
+//! `undefined` values and the `1n` payload have no counterpart in a `PiError`, whose `data` is already JSON, so those
+//! inputs become plain JSON objects and the serialization fallback is not reachable.
 //! `createProviderErrorDiagnostic(null)` becomes a thrown JSON `null`.
 
 use std::rc::Rc;
 
 use indexmap::IndexMap;
 use pi_ai::api::anthropic_messages::{AnthropicOptions, stream as stream_anthropic};
-use pi_ai::types::{AssistantMessage, Model, ProviderRequestOptions, StopReason, StreamOptions, Transport};
+use pi_ai::api::{openai_codex_responses, openai_responses};
+use pi_ai::types::{
+	AssistantContent, AssistantMessage, AssistantMessageEvent, Context, Message, Model, ProviderRequestOptions,
+	StopReason, StreamOptions, TranscriptContext, Transport, UserMessage,
+};
 use pi_ai::utils::diagnostics::{
 	AssistantMessageDiagnostic, DiagnosticErrorCode, append_assistant_message_diagnostic,
 	create_provider_error_diagnostic, extract_diagnostic_error, format_thrown_value,
 };
+use pi_ai::utils::event_stream::AssistantMessageEventStream;
 use pi_ai::utils::transcript::normalize_context;
 use pi_host::PiError;
+use pi_host::testing::run;
 use pi_host::{AbortController, FetchFunction, HttpResponse};
 use serde_json::{Value, json};
 
@@ -269,4 +275,248 @@ fn anthropic_does_not_classify_cancellation_as_a_provider_failure() {
 				.is_some_and(|diagnostics| diagnostics.iter().any(|item| item.r#type == "provider_error"))
 		);
 	});
+}
+
+mod streaming_providers {
+	use super::*;
+
+	// `test.${base64url(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test" } }))}.test`
+	const TOKEN: &str = "test.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoidGVzdCJ9fQ.test";
+
+	fn context() -> TranscriptContext {
+		normalize_context(&Context {
+			messages: vec![Message::User(
+				serde_json::from_value::<UserMessage>(json!({ "role": "user", "content": "Hello", "timestamp": 0 }))
+					.expect("user message"),
+			)],
+			..Context::default()
+		})
+	}
+
+	fn model(api: &str) -> Model {
+		serde_json::from_value(json!({
+			"id": "test-model",
+			"name": "Test",
+			"api": api,
+			"provider": "test",
+			"baseUrl": "https://provider.invalid/v1",
+			"reasoning": false,
+			"input": ["text"],
+			"cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+			"contextWindow": 10000,
+			"maxTokens": 1000,
+		}))
+		.expect("model JSON")
+	}
+
+	/// The `providers` list: `stream(options)` for each API this shard ports.
+	fn stream_with(name: &str, options: StreamOptions) -> AssistantMessageEventStream {
+		match name {
+			"responses" => openai_responses::stream(
+				&model("openai-responses"),
+				&context(),
+				Some(openai_responses::OpenAIResponsesOptions {
+					base: options,
+					..Default::default()
+				}),
+			),
+			"codex" => openai_codex_responses::stream(
+				&model("openai-codex-responses"),
+				&context(),
+				Some(openai_codex_responses::OpenAICodexResponsesOptions {
+					base: options,
+					..Default::default()
+				}),
+			),
+			_ => unreachable!("unknown provider {name}"),
+		}
+	}
+
+	const PROVIDERS: [&str; 2] = ["responses", "codex"];
+
+	fn response(status: u16, headers: &[(&str, &str)], body: String) -> HttpResponse {
+		let headers: IndexMap<String, String> = headers
+			.iter()
+			.map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+			.collect();
+		HttpResponse::from_bytes(status, headers, body)
+	}
+
+	fn options(fetch: FetchFunction, configure: impl FnOnce(&mut StreamOptions)) -> StreamOptions {
+		let mut options = StreamOptions {
+			transport: Some(Transport::Sse),
+			..StreamOptions::default()
+		};
+		options.api_key = Some(TOKEN.into());
+		options.fetch = Some(fetch);
+		configure(&mut options);
+		options
+	}
+
+	fn diagnostics_json(message: &AssistantMessage) -> Vec<Value> {
+		message
+			.diagnostics
+			.iter()
+			.flatten()
+			.map(|diagnostic| serde_json::to_value(diagnostic).expect("diagnostic serializes"))
+			.collect()
+	}
+
+	#[test]
+	fn name_preserves_http_metadata_through_json_serialization() {
+		for name in PROVIDERS {
+			run(|_| async move {
+				let error = json!({
+					"code": "usage_limit_reached",
+					"type": "rate_limit_error",
+					"message": "Plan limit",
+					"plan_type": "pro",
+					"resets_at": 2000000000,
+				});
+				let body = pi_host::js::json_stringify(&json!({ "error": error }));
+				let fetch: FetchFunction = Rc::new(move |_| {
+					let response = response(
+						429,
+						&[
+							("content-type", "application/json"),
+							("retry-after", "60"),
+							("x-request-id", "test-request"),
+						],
+						body.clone(),
+					);
+					Box::pin(async move { Ok(response) })
+				});
+				let output = stream_with(name, options(fetch, |options| options.max_retries = Some(0.0)))
+					.result()
+					.await
+					.expect("stream has a result");
+
+				assert_eq!(output.stop_reason, StopReason::Error, "{name}");
+				let diagnostic = diagnostics_json(&output)
+					.into_iter()
+					.find(|item| item["type"] == "provider_error")
+					.unwrap_or_else(|| panic!("{name}: provider_error diagnostic"));
+				let details = &diagnostic["details"];
+				assert_eq!(details["status"].as_f64(), Some(429.0), "{name}");
+				assert_eq!(details["headers"]["retry-after"], "60", "{name}");
+				assert_eq!(details["headers"]["x-request-id"], "test-request", "{name}");
+				// SDKs differ on whether .error includes the outer error envelope.
+				let payload = details["payload"].get("error").unwrap_or(&details["payload"]);
+				assert_eq!(payload, &error, "{name}");
+			});
+		}
+	}
+
+	#[test]
+	fn name_does_not_classify_cancellation_as_a_provider_failure() {
+		for name in PROVIDERS {
+			run(|_| async move {
+				let controller = AbortController::new();
+				controller.abort();
+				let fetch: FetchFunction = Rc::new(|_| Box::pin(async { Err(PiError::new("Request was aborted")) }));
+				let output = stream_with(
+					name,
+					options(fetch, |options| {
+						options.max_retries = Some(0.0);
+						options.signal = Some(controller.signal());
+					}),
+				)
+				.result()
+				.await
+				.expect("stream has a result");
+
+				assert_eq!(output.stop_reason, StopReason::Aborted, "{name}");
+				assert!(
+					!diagnostics_json(&output)
+						.iter()
+						.any(|item| item["type"] == "provider_error"),
+					"{name}"
+				);
+			});
+		}
+	}
+
+	#[test]
+	fn preserves_codex_stream_error_events() {
+		run(|_| async {
+			let event = json!({
+				"type": "error",
+				"code": "usage_limit_reached",
+				"message": "Plan limit",
+				"plan_type": "pro",
+				"resets_at": 2000000000,
+			});
+			let body = format!("data: {}\n\n", pi_host::js::json_stringify(&event));
+			let fetch: FetchFunction = Rc::new(move |_| {
+				let response = response(200, &[("content-type", "text/event-stream")], body.clone());
+				Box::pin(async move { Ok(response) })
+			});
+			let output = stream_with("codex", options(fetch, |_| {}))
+				.result()
+				.await
+				.expect("stream has a result");
+
+			assert!(
+				diagnostics_json(&output).iter().any(|item| {
+					item["type"] == "provider_error"
+						&& item["error"]["code"] == "usage_limit_reached"
+						&& item["details"]["payload"] == event
+				}),
+				"{:?}",
+				diagnostics_json(&output)
+			);
+		});
+	}
+
+	#[test]
+	fn retains_identity_before_output_item_done() {
+		for phase in ["commentary", "final_answer"] {
+			run(|_| async move {
+				let events = [
+					json!({
+						"type": "response.output_item.added",
+						"output_index": 0,
+						"item": { "type": "message", "id": "msg_test", "role": "assistant", "status": "in_progress", "phase": phase, "content": [] },
+					}),
+					json!({
+						"type": "response.output_text.delta",
+						"output_index": 0,
+						"content_index": 0,
+						"item_id": "msg_test",
+						"delta": "Partial answer",
+					}),
+				];
+				let body: String = events
+					.iter()
+					.map(|event| format!("data: {}\n\n", pi_host::js::json_stringify(event)))
+					.collect();
+				let fetch: FetchFunction = Rc::new(move |_| {
+					let response = response(200, &[("content-type", "text/event-stream")], body.clone());
+					Box::pin(async move { Ok(response) })
+				});
+				let mut stream_options = options(fetch, |_| {});
+				stream_options.api_key = Some("test".into());
+				stream_options.transport = None;
+				let stream = stream_with("responses", stream_options);
+				let mut starting_signature = None;
+				while let Some(event) = stream.next().await {
+					if let AssistantMessageEvent::TextStart { content_index, partial } = &event
+						&& let Some(AssistantContent::Text(block)) = partial.borrow().content.get(*content_index)
+					{
+						starting_signature = block.text_signature.clone();
+					}
+				}
+				let output = stream.result().await.expect("stream has a result");
+
+				assert_eq!(output.stop_reason, StopReason::Error, "{phase}");
+				let expected = pi_host::js::json_stringify(&json!({ "v": 1, "id": "msg_test", "phase": phase }));
+				assert_eq!(starting_signature.as_deref(), Some(expected.as_str()), "{phase}");
+				assert_eq!(
+					serde_json::to_value(&output.content).unwrap(),
+					json!([{ "type": "text", "text": "Partial answer", "textSignature": expected }]),
+					"{phase}"
+				);
+			});
+		}
+	}
 }

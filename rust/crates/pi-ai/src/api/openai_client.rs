@@ -76,6 +76,8 @@ pub struct ClientOptions {
 	pub default_headers: Option<ProviderHeaders>,
 	/// Query parameters of every request.
 	pub default_query: Option<IndexMap<String, String>>,
+	/// `AzureOpenAI`: send requests that carry an `api-key` header with `redirect: "manual"`.
+	pub manual_redirect_with_api_key: bool,
 }
 
 /// `RequestOptions` of one SDK call.
@@ -123,6 +125,7 @@ pub struct OpenAI {
 	fetch: Option<FetchFunction>,
 	default_headers: DefaultHeaders,
 	default_query: Option<IndexMap<String, String>>,
+	manual_redirect_with_api_key: bool,
 }
 
 /// `readEnv(name)`: trimmed, and `None` when empty.
@@ -183,6 +186,7 @@ impl OpenAI {
 			fetch: options.fetch,
 			default_headers,
 			default_query: options.default_query,
+			manual_redirect_with_api_key: options.manual_redirect_with_api_key,
 		})
 	}
 
@@ -374,6 +378,9 @@ impl OpenAI {
 		request.headers = headers.into_request_headers();
 		request.body = Some(Bytes::from(json_stringify(body)));
 		request.signal = options.signal.clone();
+		if self.manual_redirect_with_api_key && request.header("api-key").is_some() {
+			request.redirect = pi_host::RedirectMode::Manual;
+		}
 		Ok((request, timeout))
 	}
 

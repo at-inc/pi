@@ -7,6 +7,7 @@ use crate::LocalBoxFuture;
 use crate::abort::AbortSignal;
 use crate::error::{PiError, PiResult};
 use crate::http::{HttpRequest, HttpResponse};
+use crate::websocket::WebSocket;
 
 /// Platform services. One implementation per embedding: napi (Node), wasm (Workers/browsers), native tokio,
 /// and the scripted test host.
@@ -30,6 +31,15 @@ pub trait Host {
 	}
 	/// `os.homedir()`. Hosts without a file system (browsers, Workers) return `None`.
 	fn home_dir(&self) -> Option<String> {
+		None
+	}
+	/// `new WebSocket(url, { headers })`. Hosts without a WebSocket client return `None`; `Err` is a constructor
+	/// throw. See `websocket::connect`.
+	fn websocket(
+		&self,
+		_url: &str,
+		_headers: &indexmap::IndexMap<String, String>,
+	) -> Option<PiResult<std::rc::Rc<dyn WebSocket>>> {
 		None
 	}
 	/// `fs.promises.readFile(path, "utf-8")`: invalid UTF-8 decodes to U+FFFD and a BOM is kept. Hosts without a file
