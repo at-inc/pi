@@ -8,8 +8,13 @@
 //! - Stream events are read with the JSON types of the Mistral wire format: a chunk `id`, `finish_reason` or content
 //!   text that is not a string is ignored, a `delta.content` that is neither a string nor an array is ignored, a usage
 //!   count that is not a number reads as 0, and a choice that is not an object is skipped. A missing `delta` or
-//!   `function` fails with the TypeError V8 reports for the property read.
-//! - An event whose data is not valid JSON fails with serde_json's `SyntaxError` message instead of V8's.
+//!   `function` fails with the TypeError V8 reports for reading `name` from `undefined`, also when it is `null` or
+//!   when an open call's `function` is missing (V8 reads `arguments` first there). The TS throws where Rust is
+//!   lenient: a `null` item in a `delta.content` array is skipped, a `delta.tool_calls` that is not an array is
+//!   ignored, a tool call `id` that is not a string gets the derived id, a `function.name` that is not a string reads
+//!   as `""`, and a content chunk that is not an object is passed through instead of spread. A tool call `index`
+//!   that is neither a number nor a string is keyed by its string form.
+//! - A lone-surrogate escape in event JSON parses to U+FFFD; the TS removes it.
 //! - The `MistralHttpError` is a `PiError` named `MistralHttpError` whose `data` holds `statusCode` and `body`, the
 //!   fields `formatMistralError` and `normalizeProviderError` read. A Rust response always has a body, so
 //!   `Mistral response has no body` cannot occur.
@@ -46,6 +51,7 @@ use crate::utils::event_stream::AssistantMessageEventStream;
 use crate::utils::hash::short_hash;
 use crate::utils::headers::headers_to_record;
 use crate::utils::identity::{ClientIdentityTarget, get_identity_headers};
+use crate::utils::json_parse::json_parse;
 use crate::utils::sanitize_unicode::sanitize_surrogates;
 use crate::utils::streaming_json::ToolCallArgumentsStream;
 use crate::utils::text::{get_system_message_text, js_trim, render_system_message_update};
@@ -371,12 +377,14 @@ async fn request_mistral_stream(
 	// must not be cut off by a fixed deadline; body stalls are left to the HTTP client idle timeout.
 	let timeout_ms = options.timeout_ms.unwrap_or(60_000.0);
 	let header_timeout_signal = AbortSignal::timeout(timeout_ms);
+	// The body is built before the signals are combined, so a conversion error leaves no listener behind.
+	let body = json_stringify(&to_mistral_wire_payload(payload)?);
 	let combined_signal = combine_abort_signals(&[options.signal.as_ref(), Some(&header_timeout_signal)]);
 	let request = HttpRequest {
 		method: "POST".into(),
 		url: url.to_string(),
 		headers,
-		body: Some(json_stringify(&to_mistral_wire_payload(payload)?).into()),
+		body: Some(body.into()),
 		signal: combined_signal.signal.clone(),
 	};
 	let response = pi_host::fetch(request, options.fetch.as_ref()).await;
@@ -495,16 +503,25 @@ const PAYLOAD_PROPERTIES: [(&str, &str); 12] = [
 
 fn to_mistral_wire_payload(payload: &Value) -> PiResult<Value> {
 	let Some(payload) = payload.as_object() else {
-		return Err(PiError::type_error(
-			"Cannot read properties of undefined (reading 'map')",
-		));
+		return Err(PiError::type_error(if payload.is_null() {
+			"Cannot read properties of null (reading 'messages')"
+		} else {
+			"Cannot read properties of undefined (reading 'map')"
+		}));
 	};
 	let mut wire_payload = payload.clone();
 	for (source, target) in PAYLOAD_PROPERTIES {
 		remap_mistral_property(&mut wire_payload, source, target);
 	}
-	let Some(messages) = payload.get("messages").and_then(Value::as_array) else {
-		return Err(PiError::type_error("payload.messages.map is not a function"));
+	let messages = match payload.get("messages") {
+		Some(Value::Array(messages)) => messages,
+		None => {
+			return Err(PiError::type_error(
+				"Cannot read properties of undefined (reading 'map')",
+			));
+		}
+		Some(Value::Null) => return Err(PiError::type_error("Cannot read properties of null (reading 'map')")),
+		Some(_) => return Err(PiError::type_error("payload.messages.map is not a function")),
 	};
 	wire_payload.insert(
 		"messages".into(),
@@ -670,7 +687,7 @@ fn parse_mistral_event(raw: &str) -> PiResult<ParsedMistralEvent> {
 		return Ok(ParsedMistralEvent::Done);
 	}
 
-	let parsed: Value = serde_json::from_str(data).map_err(|error| PiError::named("SyntaxError", error.to_string()))?;
+	let parsed = json_parse(data)?;
 	if !parsed.get("choices").is_some_and(Value::is_array) {
 		return Err(PiError::new("Invalid Mistral streaming event"));
 	}
@@ -834,11 +851,12 @@ fn get_mistral_cached_prompt_tokens(usage: &Map<String, Value>, prompt_tokens: f
 	prompt_tokens.min(cached_tokens.max(0.0))
 }
 
-/// `toolCallsByKey`'s key: `toolCall.index ?? callId` (a JS `Map` tells `0` and `"0"` apart).
+/// `toolCallsByKey`'s key: `toolCall.index ?? callId`. A JS `Map` tells the number `0` from the string `"0"`, and a
+/// string index shares keys with call ids.
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum ToolCallKey {
-	Index(String),
-	Id(String),
+	Number(String),
+	String(String),
 }
 
 /// Stream state of one Mistral tool call, kept off the content blocks so it never reaches partials.
@@ -1073,8 +1091,11 @@ async fn consume_chat_stream(
 				),
 			};
 			let key = match index {
-				Some(index) => ToolCallKey::Index(js_string(index)),
-				None => ToolCallKey::Id(call_id.clone()),
+				Some(Value::Number(number)) => {
+					ToolCallKey::Number(number_to_string(number.as_f64().unwrap_or(f64::NAN)))
+				}
+				Some(index) => ToolCallKey::String(js_string(index)),
+				None => ToolCallKey::String(call_id.clone()),
 			};
 			let Some(function) = tool_call.get("function").filter(|function| !function.is_null()) else {
 				return Err(PiError::type_error(
