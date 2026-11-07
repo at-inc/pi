@@ -1,7 +1,7 @@
 //! Rust-only replacement for the parts of `@anthropic-ai/sdk` 1.1.0 that `api/anthropic-messages.ts` relies on
 //! (`BaseAnthropic` in `client.ts`, `internal/headers.ts`, `internal/detect-platform.ts`, `core/error.ts`, and the
 //! OIDC federation credentials in `lib/credentials/`). See "Provider SDKs" in `rust/PORTING.md`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! What it reproduces: `client.beta.messages.create(params, options).asResponse()` for a streaming request (URL,
 //! body, default, auth, platform and `x-stainless-*` headers, `buildHeaders` merge and null-suppression rules,
@@ -25,8 +25,14 @@
 //!   the SDK's normalization of Node's names, `X-Stainless-Runtime` is `rust` with the crate's `rust-version`. On
 //!   wasm32 they are the SDK's `Unknown`/`unknown` fallback.
 //! - When the request timeout fires, the request's signal aborts and the call fails at once instead of waiting for a
-//!   `fetch` that ignores its signal. The token exchange is sent without `redirect: "manual"`, which `HttpRequest`
-//!   cannot express.
+//!   `fetch` that ignores its signal.
+//! - The token exchange is sent without `redirect: "manual"`, which `HttpRequest` cannot express. This is a security
+//!   gap, not only a missing field: on a native host that follows redirects, a `307` from the token endpoint re-sends
+//!   the jwt-bearer body (the identity token assertion) to the redirect target, where the SDK fails with
+//!   `Token exchange failed with status 307`. Closing it needs a redirect option on `pi_host::HttpRequest`.
+//! - Without a `fetch` option the host's `fetch` is looked up on every request, where the SDK captures the global
+//!   `fetch` when the client is built. `Retry-After` dates go through `pi_host::js::date_parse`, which reads fewer date
+//!   forms than V8 (pi-ai passes `maxRetries: 0`, so it never waits on one).
 //! - Errors are `PiError`s named `Error` (the SDK classes do not set `name`). An `APIError` from a response has the
 //!   HTTP status in `PiError.status` and `data` `{ headers, error?, type }` with the response headers as
 //!   `Object.fromEntries(headers)`; connection, timeout and user-abort errors have `data.headers: null`, which marks
@@ -914,10 +920,7 @@ pub fn oidc_federation_provider(config: OidcFederationConfig) -> AccessTokenProv
 				)
 			})?;
 
-			let request_id = response
-				.header("Request-Id")
-				.filter(|request_id| !request_id.is_empty())
-				.map(str::to_string);
+			let request_id = response.header("Request-Id").map(str::to_string);
 
 			if !response.ok() {
 				let status = response.status;
@@ -941,6 +944,7 @@ pub fn oidc_federation_provider(config: OidcFederationConfig) -> AccessTokenProv
 				}
 				let request_id_text = request_id
 					.as_ref()
+					.filter(|request_id| !request_id.is_empty())
 					.map(|request_id| format!(" (request-id {request_id})"))
 					.unwrap_or_default();
 				return Err(workload_identity_error(
@@ -1034,6 +1038,14 @@ fn resolve_credentials_from_config(
 ) -> PiResult<CredentialResult> {
 	let effective_base_url = base_url.trim_end_matches('/').to_string();
 	let auth = &config.authentication;
+	if auth.r#type == "user_oauth" {
+		return Err(workload_identity_error(
+			"user_oauth config requires authentication.credentials_path (or load via a profile so it defaults to <config_dir>/credentials/<profile>.json)",
+			None,
+			Value::Null,
+			None,
+		));
+	}
 	if auth.r#type != "oidc_federation" {
 		return Err(workload_identity_error(
 			format!(
@@ -1368,9 +1380,9 @@ impl AnthropicClient {
 			};
 
 			if !response.ok() {
-				release();
 				let should_retry = self.should_retry(&response, &flags);
 				if retries_remaining > 0.0 && should_retry {
+					release();
 					let delay = self.retry_delay(&response.headers, retries_remaining, &options);
 					drop(response);
 					sdk_sleep(delay, options.signal.as_ref()).await;
@@ -1381,6 +1393,7 @@ impl AnthropicClient {
 				let status = response.status;
 				let response_headers = response.headers.clone();
 				let err_text = response.text().await.unwrap_or_else(|error| error.message);
+				release();
 				let err_json = json_parse(&err_text).ok();
 				let err_message = if err_json.as_ref().is_some_and(truthy) {
 					None
@@ -1622,7 +1635,7 @@ impl AnthropicClient {
 			}
 			let existing: Option<Vec<String>> = request
 				.header("anthropic-beta")
-				.map(|value| value.split(',').map(|beta| beta.trim().to_string()).collect());
+				.map(|value| value.split(',').map(|beta| js_trim(beta).to_string()).collect());
 			if !existing
 				.as_ref()
 				.is_some_and(|existing| existing.iter().any(|beta| beta == OAUTH_API_BETA_HEADER))
