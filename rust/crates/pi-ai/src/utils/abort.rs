@@ -23,10 +23,10 @@ pub fn operation_signal(signal: Option<&AbortSignal>) -> AbortSignal {
 
 /// Stop waiting for an operation when its signal aborts while continuing to
 /// observe the abandoned promise so a later rejection is always handled.
-pub fn race_with_abort_signal<T: 'static>(
-	operation: impl Future<Output = PiResult<T>> + 'static,
+pub fn race_with_abort_signal<T: 'static, F: Future<Output = PiResult<T>> + 'static>(
+	operation: F,
 	signal: &AbortSignal,
-) -> impl Future<Output = PiResult<T>> + 'static {
+) -> impl Future<Output = PiResult<T>> + 'static + use<T, F> {
 	// TS checks the signal when the race starts, not when it is first awaited.
 	let aborted_at_start = signal.aborted().then(|| abort_reason(signal));
 	let (sender, receiver) = oneshot::channel();
