@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Dropped type-level helpers with no runtime effect: `IsAny`, `IsExactlyJsonValue`, `IsJsonProperty`,
 //! `InvalidJsonKeys`, `IsJsonCompatible`, `JsonRepresentation`, `ApiOptionsMap`, `ApiStreamOptions`,
@@ -565,6 +565,9 @@ pub struct SimpleStreamOptions {
 	pub deferred: Option<DeferredOption>,
 	/// Custom token budgets for thinking levels (token-based providers only)
 	pub thinking_budgets: Option<ThinkingBudgets>,
+	/// Keys beyond `SimpleStreamOptions`. TS callers pass an API's own options (pi-messages' `debug`) through
+	/// `streamSimple`, and the adapters that spread the options read them.
+	pub extra: Map<String, Value>,
 }
 
 impl Deref for SimpleStreamOptions {

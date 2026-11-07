@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/abort.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! A JS promise runs whether or not anyone awaits it, so `raceWithAbortSignal` spawns the operation with
 //! `pi_host::spawn_local`: it keeps running to completion after the signal aborts, and its result is dropped.

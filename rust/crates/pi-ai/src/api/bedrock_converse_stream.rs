@@ -920,7 +920,7 @@ fn is_reserved_header(key: &str) -> bool {
 /// The client identity as AWS SDK user agent pairs. The SDK appends them to its own `User-Agent` and escapes characters
 /// that are not valid in a user agent token, so the detailed form is reduced to name and version.
 fn bedrock_user_agent(identity: Option<&ClientIdentity>) -> Vec<(String, Option<String>)> {
-	match identity.and_then(|identity| identity.user_agent.clone()) {
+	match identity.and_then(|identity| identity.user_agent.clone().flatten()) {
 		Some(UserAgentMode::Custom { custom }) => vec![(custom, None)],
 		Some(UserAgentMode::Named(UserAgentModeName::Short)) => vec![("pi".into(), None)],
 		_ => vec![("pi".into(), Some(get_client_version(identity)))],

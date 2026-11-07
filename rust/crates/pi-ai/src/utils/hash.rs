@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/hash.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 /// Fast deterministic hash to shorten long strings
 pub fn short_hash(text: &str) -> String {

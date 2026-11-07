@@ -5,10 +5,10 @@
 //! - `RadiusOAuthCredential` is `OAuthCredential`: its `gatewayConfig` lives in the credential's `extra` fields.
 //! - The foundation `Model` and `ModelCost` types (types shard) are stricter than the TS's raw objects, so a gateway
 //!   model that passes `isRadiusGatewayModel` but does not deserialize as `RadiusGatewayModel`, or whose `Model` built
-//!   from it does not deserialize, is dropped; the TS keeps the raw object. Examples: a `cost` object missing one of
-//!   `input`/`output`/`cacheRead`/`cacheWrite`, `input: ["audio"]`, a numeric `thinkingLevelMap` value, and a
-//!   `null` header value. Unknown keys at the top level of a gateway model survive in `extra` and become fields of
-//!   the `Model`, like the TS spreads; unknown keys nested in `cost` or `thinkingLevelMap` are lost.
+//!   from it does not deserialize, is dropped; the TS keeps the raw object. Examples: `input: ["audio"]`, a numeric
+//!   `thinkingLevelMap` value, and a `null` header value. Unknown keys at the top level of a gateway model survive in
+//!   `extra` and become fields of the `Model`, like the TS spreads, and so do unknown keys in `cost`; unknown keys in
+//!   `thinkingLevelMap` are lost.
 //! - An explicit `"thinkingLevelMap": null` survives in `RadiusGatewayModel`, but the `Model` built from it reads it
 //!   as absent (foundation type).
 //! - Serialized gateway models and the `Model`s built from them write the typed fields in declaration order, then the

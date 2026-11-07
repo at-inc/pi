@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/text.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `contentText` takes a string or any content block array in TS; in Rust it takes anything that implements
 //! [`ContentText`]. `js_trim` and `js_entries` are Rust-only: `String.prototype.trim` and `Object.entries` order, which

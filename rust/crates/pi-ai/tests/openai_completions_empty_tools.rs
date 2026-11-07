@@ -217,7 +217,6 @@ mod openai_completions_empty_tools_handling {
 	}
 
 	#[test]
-	#[ignore = "needs w3-openai-responses: the gateway's gpt-5.1 is an openai-responses model (api/openai_responses.rs)"]
 	fn preserves_inline_upstream_authorization_for_cloudflare_ai_gateway_byok_requests() {
 		run(|host| async move {
 			set_cloudflare_env(&host);

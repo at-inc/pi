@@ -281,8 +281,6 @@ mod pi_messages {
 		});
 	}
 
-	// The TS passes `debug` to `streamSimple` as an extra `SimpleStreamOptions` key; the Rust `SimpleStreamOptions`
-	// has no extra keys, so the port passes it to `stream`.
 	#[test]
 	fn appends_debug_1_and_reports_response_headers_via_on_response() {
 		run(|host| async move {
@@ -293,7 +291,7 @@ mod pi_messages {
 			);
 			let observed_headers = Rc::new(RefCell::new(None));
 			let observed = observed_headers.clone();
-			let message = result(Some(PiMessagesOptions {
+			let options = SimpleStreamOptions {
 				base: options(StreamOptions {
 					base: ProviderRequestOptions {
 						on_response: Some(Rc::new(move |response, _| {
@@ -304,10 +302,13 @@ mod pi_messages {
 					},
 					..StreamOptions::default()
 				}),
-				debug: Some(json!(true)),
-				..PiMessagesOptions::default()
-			}))
-			.await;
+				extra: json!({ "debug": true }).as_object().unwrap().clone(),
+				..SimpleStreamOptions::default()
+			};
+			let message = stream_simple(&model(), &context(), Some(options))
+				.result()
+				.await
+				.unwrap();
 
 			assert_eq!(message.stop_reason, StopReason::Stop);
 			assert_eq!(host.requests()[0].url, "http://127.0.0.1:4321/v1/messages?debug=1");

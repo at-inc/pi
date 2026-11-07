@@ -125,6 +125,7 @@ pub fn open_router_cost(pricing: Option<&OpenRouterPricing>) -> ModelCost {
 				output: per_million(price_override.completion.as_deref(), output),
 				cache_read: per_million(price_override.input_cache_read.as_deref(), cache_read),
 				cache_write: per_million(price_override.input_cache_write.as_deref(), cache_write),
+				..ModelCostTier::default()
 			})
 		})
 		.collect();
@@ -134,5 +135,6 @@ pub fn open_router_cost(pricing: Option<&OpenRouterPricing>) -> ModelCost {
 		cache_read,
 		cache_write,
 		tiers: if tiers.is_empty() { None } else { Some(tiers) },
+		..ModelCost::default()
 	}
 }

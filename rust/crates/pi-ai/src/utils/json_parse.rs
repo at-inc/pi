@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/json-parse.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! TS calls `JSON.parse`, whose error messages end up in `ToolCall.argumentsError`, and the `partial-json` package.
 //! Both are ported here: [`json_parse`] follows V8's JSON parser, including its error messages, positions in UTF-16
@@ -8,6 +8,14 @@
 //! escape decodes to U+FFFD, and the `Infinity`, `-Infinity` and `NaN` that `partial-json` accepts become `null`,
 //! which is what `JSON.stringify` writes for them (`parse_streaming_json` of a root `NaN` therefore returns `null`,
 //! where TS returns the number).
+//!
+//! Other differences, all on values a `serde_json::Value` or a Rust string cannot hold:
+//! - A number that overflows (`1e400`) is `null`; TS has `Infinity`. Both serialize as `null`, but a tool argument
+//!   validated against `type: "number"` passes in TS and fails here.
+//! - V8 cuts the unexpected token and the error context by UTF-16 code unit, so a non-BMP character there leaves a
+//!   lone surrogate in the TS message; here that half is U+FFFD.
+//! - partial-json assigns members with `obj[key] = value`, so an object value under `__proto__` becomes the TS
+//!   result's prototype and the member is not an own key; here the member is dropped, which serializes the same.
 
 use pi_host::js::number_to_string;
 use pi_host::{PiError, PiResult};
@@ -157,14 +165,8 @@ pub fn parse_streaming_json(partial_json: Option<&str>) -> Value {
 	let partial = partial_json_parse(partial_json).or_else(|()| partial_json_parse(&repair_json(partial_json)));
 	match partial {
 		// `partialParse(...) ?? {}` keeps a root `NaN` or `Infinity`, which reads as `null` here; only `null` itself
-		// becomes `{}`.
-		Ok(Value::Null)
-			if !partial_json
-				.trim_start_matches([' ', '\n', '\r', '\t'])
-				.starts_with('n') =>
-		{
-			Value::Null
-		}
+		// becomes `{}`. partial-json trims the text with `String.prototype.trim` before it reads the root value.
+		Ok(Value::Null) if !js_trim(partial_json).starts_with('n') => Value::Null,
 		Ok(Value::Null) | Err(()) => Value::Object(Map::new()),
 		Ok(value) => value,
 	}

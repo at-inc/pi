@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/string-enum.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The schema is a JSON value; the TS `Schema<T[number]>` type parameter has no Rust counterpart.
 

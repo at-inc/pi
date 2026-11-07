@@ -872,6 +872,7 @@ fn zero_model_cost() -> ModelCost {
 		cache_read: 0.0,
 		cache_write: 0.0,
 		tiers: None,
+		..ModelCost::default()
 	}
 }
 
@@ -1237,6 +1238,7 @@ impl ProviderStreams for FauxStreams {
 			deferred: extra_deferred(&options.extra),
 			thinking_budgets: extra_option(&options.extra, "thinkingBudgets"),
 			base: options.base,
+			extra: options.extra,
 		});
 		Ok(self.core.stream(model, context, options))
 	}

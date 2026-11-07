@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/api/openai-completions.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The `openai` SDK is `api/openai_client.rs`. Differences from the TS:
 //! - `OpenAICompletionsOptions.reasoningEffort` is a `ThinkingLevel`: through `ProviderStreamOptions.extra` an unknown
@@ -9,7 +9,11 @@
 //!   non-numeric usage field reads as 0, and a truthy `finish_reason` that is not a string is stored in
 //!   `rawStopReason` as `String(value)`. A `tool_calls` value that is truthy but not an array fails with the
 //!   `not iterable` TypeError (the TS iterates a string's characters). A truthy tool call `arguments` that is not a
-//!   string is stringified before it becomes the `toolcall_delta` `delta`, which is a string.
+//!   string is stringified before it becomes the `toolcall_delta` `delta`, which is a string. A chunk that is a JSON
+//!   array is skipped; the TS reads it like an object, which only resets an empty `responseId`.
+//! - When `onPayload` turns `stream` off, the parsed body is iterated as `for await` would: an array yields its items
+//!   and a string its code points. An empty body reads as `null`, so it fails with the TS message for `null` where
+//!   the TS reports `undefined`.
 //! - `model.compat` is read through the typed compat schema: a value outside a field's TS type (an unknown
 //!   `thinkingFormat`, `vllmPriority: null`) reads as absent, where the TS would use it as-is.
 //! - Rust strings cannot hold a lone surrogate, so truncating an `openai` tool call id to 40 UTF-16 units stops
@@ -585,8 +589,23 @@ async fn run_stream(
 		partial: output.clone(),
 	});
 
-	let ApiData::Stream(mut openai_stream) = with_response.data else {
-		return Err(PiError::type_error("openaiStream is not async iterable"));
+	// `for await` over a parsed body that is not a stream: an array yields its items and a string its code points.
+	let mut openai_stream = match with_response.data {
+		ApiData::Stream(openai_stream) => openai_stream,
+		ApiData::Json(Value::Array(items)) => futures::stream::iter(items.into_iter().map(Ok)).boxed_local(),
+		ApiData::Json(Value::String(text)) => {
+			let characters: Vec<PiResult<Value>> = text
+				.chars()
+				.map(|character| Ok(Value::String(character.into())))
+				.collect();
+			futures::stream::iter(characters).boxed_local()
+		}
+		ApiData::Json(Value::Null) => {
+			return Err(PiError::type_error(
+				"Cannot read properties of null (reading 'Symbol(Symbol.asyncIterator)')",
+			));
+		}
+		ApiData::Json(_) => return Err(PiError::type_error("openaiStream is not async iterable")),
 	};
 	let mut state = CompletionsStream {
 		stream,
@@ -1636,13 +1655,13 @@ fn resolve_chat_template_kwarg_value(
 		ChatTemplateKwargValue::Var(variable) => variable,
 	};
 
-	if reasoning_effort.is_none() && variable.omit_when_off == Some(true) {
+	if reasoning_effort.is_none() && variable.omit_when_off() {
 		return None;
 	}
-	match variable.var {
-		ChatTemplateVarName::ThinkingEnabled => return Some(Value::Bool(reasoning_effort.is_some())),
-		ChatTemplateVarName::ThinkingBudget => return thinking_budget.map(number_value),
-		ChatTemplateVarName::ThinkingEffort => {}
+	match variable.var() {
+		Some(ChatTemplateVarName::ThinkingEnabled) => return Some(Value::Bool(reasoning_effort.is_some())),
+		Some(ChatTemplateVarName::ThinkingBudget) => return thinking_budget.map(number_value),
+		Some(ChatTemplateVarName::ThinkingEffort) | None => {}
 	}
 
 	let mapped_value = match reasoning_effort {

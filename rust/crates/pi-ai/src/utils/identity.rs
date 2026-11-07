@@ -1,5 +1,5 @@
 //! Port of `packages/ai/src/utils/identity.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The runtime in the detailed `User-Agent` comes from the Rust build: `rust/<rust-version>` with Node-style platform
 //! and architecture names, and `(browser)` on wasm32, where TS reads `process` (`node/v24.x` or `bun/1.x`).
@@ -67,9 +67,14 @@ pub static PI_ATTRIBUTION: LazyLock<ClientAttribution> = LazyLock::new(|| Client
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientIdentity {
-	/// Default: `"detailed"`.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub user_agent: Option<UserAgentMode>,
+	/// Default: `"detailed"`. An explicit `null` (`Some(None)`) also means the default, and replaces the mode of a
+	/// merged identity, as TS merges every defined field.
+	#[serde(
+		default,
+		deserialize_with = "pi_host::js::double_option",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub user_agent: Option<Option<UserAgentMode>>,
 	/// Provider attribution headers. Absent or `null`: none; `null` also turns off attribution set by a merged identity.
 	#[serde(
 		default,
@@ -77,9 +82,14 @@ pub struct ClientIdentity {
 		skip_serializing_if = "Option::is_none"
 	)]
 	pub attribution: Option<Option<ClientAttribution>>,
-	/// Version in the detailed `User-Agent`. Default: the pi-ai version.
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub version: Option<String>,
+	/// Version in the detailed `User-Agent`. Default: the pi-ai version. An explicit `null` (`Some(None)`) is handled like
+	/// a `null` `userAgent`.
+	#[serde(
+		default,
+		deserialize_with = "pi_host::js::double_option",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub version: Option<Option<String>>,
 }
 
 /// The provider and endpoint a request goes to.
@@ -115,7 +125,7 @@ pub fn merge_client_identity(sources: &[Option<&ClientIdentity>]) -> Option<Clie
 /// The version in the detailed `User-Agent`.
 pub fn get_client_version(identity: Option<&ClientIdentity>) -> String {
 	identity
-		.and_then(|identity| identity.version.clone())
+		.and_then(|identity| identity.version.clone().flatten())
 		.unwrap_or_else(|| PI_AI_VERSION.to_string())
 }
 
@@ -147,7 +157,7 @@ fn arch() -> &'static str {
 /// The `User-Agent` value of an identity.
 pub fn format_user_agent(identity: Option<&ClientIdentity>) -> String {
 	let mode = identity
-		.and_then(|identity| identity.user_agent.clone())
+		.and_then(|identity| identity.user_agent.clone().flatten())
 		.unwrap_or(UserAgentMode::Named(UserAgentModeName::Detailed));
 	match mode {
 		UserAgentMode::Custom { custom } => return custom,
