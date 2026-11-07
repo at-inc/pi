@@ -1,5 +1,5 @@
 //! Port of `packages/telemetry/src/metrics.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The schema-driven type helpers (`MetricSchemas`, `MetricsOf`, `MetricNames`, `MetricByName`,
 //! `DuplicateMetricNames`, `MetricAttributes`, `MeasurementArguments`) only narrow names and attributes at compile
@@ -78,14 +78,14 @@ pub enum MetricKind {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TelemetryMetricDefinition {
-	pub kind: MetricKind,
 	pub description: String,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub unit: Option<String>,
+	pub attributes: IndexMap<String, TelemetryMetricAttributeDefinition>,
+	pub kind: MetricKind,
 	/// Only histograms declare boundaries.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub boundaries: Option<Vec<f64>>,
-	pub attributes: IndexMap<String, TelemetryMetricAttributeDefinition>,
 }
 
 /// `SchemaTelemetryCounter<Definition>`: a counter whose attributes the schema narrows at compile time.

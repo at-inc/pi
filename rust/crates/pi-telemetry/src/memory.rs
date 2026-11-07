@@ -1,21 +1,40 @@
 //! Port of `packages/telemetry/src/memory.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The module-level `WeakMap<TelemetryContext, TelemetryCarrier>` is replaced by downcasting: every span and
 //! extracted parent that the TS registers in the map is one of this module's types, which carry their carrier,
 //! so `context_carrier` finds the carrier for exactly the same objects (across recorder instances, and after
 //! settlement). The recorder's `metrics` and `propagation` are the recorder itself, as in TS; it is created
 //! behind an `Rc` (`InMemoryTelemetryContext::new`) so it can hand out `Rc` handles to itself.
+//!
+//! A Rust callback returns a lazy future, so `start_in_memory_span` polls it once before returning, which runs the
+//! body up to its first pending await like a TS async callback. A future that is still pending moves into
+//! `pi_host::spawn_local`, which settles the span when the callback resolves (the TS `finally`), whether or not
+//! the caller polls or keeps the returned future. A future that is ready on the first poll settles before
+//! `start_in_memory_span` returns, where TS settles a returned (not thrown) value one microtask later. The eager poll
+//! uses a no-op waker, so callbacks that resolve before the executor first runs their tasks settle in spawn order
+//! rather than resolution order.
+//!
+//! JS objects list canonical array-index keys first, in ascending numeric order; `js_key_order` applies that order
+//! wherever the TS copies or merges attributes and carriers.
+//!
+//! `findTraces` parses the cursor into a `serde_json::Value` and applies the TS truthiness, indexing, and
+//! comparison coercions to it. An invalid cursor throws a `SyntaxError` whose message is serde_json's, not V8's.
 
 use std::any::Any;
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::future::ready;
 use std::rc::{Rc, Weak};
+use std::task::{Context, Poll};
 
+use futures::channel::oneshot;
+use futures::task::noop_waker_ref;
 use indexmap::IndexMap;
 use pi_host::js::{json_stringify, number_to_string};
-use pi_host::{LocalBoxFuture, PiError, PiResult, monotonic_ms, now_ms};
+use pi_host::{LocalBoxFuture, PiError, PiResult, monotonic_ms, now_ms, spawn_local};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::metrics::{
 	HistogramOptions, InstrumentOptions, MetricKind, TelemetryCounter, TelemetryHistogram, TelemetryMetrics,
@@ -139,18 +158,43 @@ struct InMemoryTelemetryState {
 	next_end_sequence: f64,
 }
 
+/// Orders keys like a JS object: canonical array-index keys first in ascending numeric order, then the other keys
+/// in insertion order.
+fn js_key_order<V>(mut object: IndexMap<String, V>) -> IndexMap<String, V> {
+	object.sort_by(|left, _, right, _| match (array_index(left), array_index(right)) {
+		(Some(left), Some(right)) => left.cmp(&right),
+		(Some(_), None) => Ordering::Less,
+		(None, Some(_)) => Ordering::Greater,
+		(None, None) => Ordering::Equal,
+	});
+	object
+}
+
+/// The value of a canonical array-index key: a decimal integer from 0 to 2^32 - 2 without leading zeros.
+fn array_index(key: &str) -> Option<u64> {
+	if key.is_empty() || key.len() > 10 || (key.len() > 1 && key.starts_with('0')) {
+		return None;
+	}
+	if !key.bytes().all(|byte| byte.is_ascii_digit()) {
+		return None;
+	}
+	key.parse::<u64>().ok().filter(|index| *index <= 4_294_967_294)
+}
+
 fn copy_attributes(attributes: Option<&SpanAttributes>) -> SpanAttributes {
-	attributes
-		.into_iter()
-		.flatten()
-		.filter(|(_, value)| value.is_some())
-		.map(|(name, value)| (name.clone(), value.clone()))
-		.collect()
+	js_key_order(
+		attributes
+			.into_iter()
+			.flatten()
+			.filter(|(_, value)| value.is_some())
+			.map(|(name, value)| (name.clone(), value.clone()))
+			.collect(),
+	)
 }
 
 fn copy_link(link: &SpanLink) -> Option<RecordedTelemetryLink> {
 	context_carrier(link.context.as_ref()).map(|context| RecordedTelemetryLink {
-		context: context.clone(),
+		context: js_key_order(context.clone()),
 		attributes: copy_attributes(link.attributes.as_ref()),
 	})
 }
@@ -190,7 +234,7 @@ fn create_span(
 		id,
 		parent_id: parent.and_then(|parent| parent.local_id),
 		context,
-		parent_context: parent.map(|parent| parent.context.clone()),
+		parent_context: parent.map(|parent| js_key_order(parent.context.clone())),
 		links,
 		name,
 		attributes,
@@ -305,9 +349,9 @@ impl TelemetrySpan for InMemorySpan {
 		if recorded.settled {
 			return;
 		}
-		for (name, value) in copy_attributes(Some(attributes)) {
-			recorded.attributes.insert(name, value);
-		}
+		let mut merged = std::mem::take(&mut recorded.attributes);
+		merged.extend(copy_attributes(Some(attributes)));
+		recorded.attributes = js_key_order(merged);
 	}
 
 	fn set_status(&self, status: &SpanStatus) {
@@ -378,29 +422,42 @@ fn start_in_memory_span(
 		context,
 	});
 
-	let future = callback(span);
-	Box::pin(async move {
+	let mut future = callback(span);
+	if let Poll::Ready(result) = future.as_mut().poll(&mut Context::from_waker(noop_waker_ref())) {
+		settle_span(&telemetry, &recorded, &result);
+		return Box::pin(ready(result));
+	}
+	let (sender, receiver) = oneshot::channel();
+	spawn_local(async move {
 		let result = future.await;
-		let mut span = recorded.borrow_mut();
-		if let Err(error) = &result
-			&& !span.explicit_status
-		{
-			span.status = SpanStatus::Error {
-				error: Some(crate::SpanStatusError {
-					name: error.name.clone(),
-					message: error.message.clone(),
-				}),
-			};
-		}
-		span.settled = true;
-		span.ended_ms = Some(span.started_ms + monotonic_ms() - span.clock);
-		let mut state = telemetry.state.borrow_mut();
-		span.end_sequence = Some(state.next_end_sequence);
-		state.next_end_sequence += 1.0;
-		drop(state);
-		drop(span);
-		result
+		settle_span(&telemetry, &recorded, &result);
+		let _ = sender.send(result);
+	});
+	Box::pin(async move {
+		receiver
+			.await
+			.expect("the spawned span task always sends the callback's result")
 	})
+}
+
+/// The `catch` and `finally` of `startInMemorySpan`: records the rejection status and settles the span.
+fn settle_span(telemetry: &InMemoryTelemetryContext, recorded: &SharedRecordedSpan, result: &PiResult<Box<dyn Any>>) {
+	let mut span = recorded.borrow_mut();
+	if let Err(error) = result
+		&& !span.explicit_status
+	{
+		span.status = SpanStatus::Error {
+			error: (!error.name.is_empty()).then(|| crate::SpanStatusError {
+				name: error.name.clone(),
+				message: error.message.clone(),
+			}),
+		};
+	}
+	span.settled = true;
+	span.ended_ms = Some(span.started_ms + monotonic_ms() - span.clock);
+	let mut state = telemetry.state.borrow_mut();
+	span.end_sequence = Some(state.next_end_sequence);
+	state.next_end_sequence += 1.0;
 }
 
 struct MeasurementRecorder {
@@ -445,7 +502,7 @@ impl MeasurementRecorder {
 			boundaries: self.boundaries.clone(),
 			value,
 			attributes: copy_attributes(attributes),
-			context: carrier.cloned(),
+			context: carrier.cloned().map(js_key_order),
 		};
 		self.telemetry.state.borrow_mut().measurements.push(MeasurementEntry {
 			interval_ms,
@@ -565,7 +622,7 @@ impl InMemoryTelemetryContext {
 		let limit = query.limit.unwrap_or(20.0);
 		let after = match &query.cursor {
 			None => None,
-			Some(cursor) => Some(serde_json::from_str::<(f64, String)>(cursor)?),
+			Some(cursor) => Some(serde_json::from_str::<Value>(cursor)?),
 		};
 		let mut grouped: IndexMap<String, StoredTrace> = IndexMap::new();
 		for span in self.stored_spans() {
@@ -585,10 +642,17 @@ impl InMemoryTelemetryContext {
 				query.name.as_ref().is_none_or(|name| &first.name == name)
 					&& query.start_min.is_none_or(|start_min| first.started_ms >= start_min)
 					&& query.start_max.is_none_or(|start_max| first.started_ms <= start_max)
-					&& after.as_ref().is_none_or(|(started_ms, trace_id)| {
-						first.started_ms < *started_ms
-							|| (first.started_ms == *started_ms
-								&& utf16_cmp(&trace.trace_id, trace_id) == Ordering::Greater)
+					&& after.as_ref().is_none_or(|after| {
+						let started_ms = js_index(after, 0);
+						!js_truthy(after)
+							|| first.started_ms < js_primitive(started_ms.as_ref()).to_number()
+							|| (started_ms.as_ref().and_then(Value::as_f64) == Some(first.started_ms)
+								&& match js_primitive(js_index(after, 1).as_ref()) {
+									JsPrimitive::String(trace_id) => {
+										utf16_cmp(&trace.trace_id, &trace_id) == Ordering::Greater
+									}
+									JsPrimitive::Number(trace_id) => js_number(&trace.trace_id) > trace_id,
+								})
 					}) && (query.errors != Some(true)
 					|| trace
 						.spans
@@ -731,7 +795,7 @@ impl TelemetryContext for InMemoryTelemetryContext {
 impl TelemetryPropagation for InMemoryTelemetryContext {
 	/// Returns a detached carrier for a known span or extracted parent, including settled spans.
 	fn inject(&self, context: &dyn TelemetryContext) -> Option<TelemetryCarrier> {
-		context_carrier(context).cloned()
+		context_carrier(context).cloned().map(js_key_order)
 	}
 
 	/// Missing or non-string carrier identities fall back to this recorder's root context.
@@ -831,6 +895,78 @@ fn slice_end(end: f64, len: usize) -> usize {
 	}
 }
 
+/// JS truthiness of a parsed JSON value.
+fn js_truthy(value: &Value) -> bool {
+	match value {
+		Value::Null => false,
+		Value::Bool(value) => *value,
+		Value::Number(value) => value.as_f64().is_some_and(|value| value != 0.0 && !value.is_nan()),
+		Value::String(value) => !value.is_empty(),
+		Value::Array(_) | Value::Object(_) => true,
+	}
+}
+
+/// `value[index]` on a parsed JSON value; `None` is `undefined`.
+fn js_index(value: &Value, index: usize) -> Option<Value> {
+	match value {
+		Value::Array(items) => items.get(index).cloned(),
+		Value::Object(entries) => entries.get(&index.to_string()).cloned(),
+		Value::String(text) => text
+			.encode_utf16()
+			.nth(index)
+			.map(|unit| Value::String(String::from_utf16_lossy(&[unit]))),
+		Value::Null | Value::Bool(_) | Value::Number(_) => None,
+	}
+}
+
+/// An operand of a JS relational comparison after `ToPrimitive`. `undefined`, `null`, and booleans are kept
+/// as the numbers the comparison converts them to, because they never compare as strings.
+enum JsPrimitive {
+	Number(f64),
+	String(String),
+}
+
+impl JsPrimitive {
+	/// `ToNumber`.
+	fn to_number(&self) -> f64 {
+		match self {
+			JsPrimitive::Number(value) => *value,
+			JsPrimitive::String(value) => js_number(value),
+		}
+	}
+}
+
+/// `ToPrimitive(value, number)` for a parsed JSON value or `undefined` (`None`).
+fn js_primitive(value: Option<&Value>) -> JsPrimitive {
+	match value {
+		None => JsPrimitive::Number(f64::NAN),
+		Some(Value::Null) => JsPrimitive::Number(0.0),
+		Some(Value::Bool(value)) => JsPrimitive::Number(if *value { 1.0 } else { 0.0 }),
+		Some(Value::Number(value)) => JsPrimitive::Number(value.as_f64().unwrap_or(f64::NAN)),
+		Some(value) => JsPrimitive::String(js_string(value)),
+	}
+}
+
+/// `String(value)` for a parsed JSON value; arrays join their elements with `,`, printing `null` elements as empty
+/// strings.
+fn js_string(value: &Value) -> String {
+	match value {
+		Value::Null => "null".to_string(),
+		Value::Bool(value) => value.to_string(),
+		Value::Number(value) => number_to_string(value.as_f64().unwrap_or(f64::NAN)),
+		Value::String(value) => value.clone(),
+		Value::Array(items) => items
+			.iter()
+			.map(|item| match item {
+				Value::Null => String::new(),
+				item => js_string(item),
+			})
+			.collect::<Vec<_>>()
+			.join(","),
+		Value::Object(_) => "[object Object]".to_string(),
+	}
+}
+
 /// `Number(string)`.
 fn js_number(value: &str) -> f64 {
 	let trimmed = value.trim_matches(|ch: char| (ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}');
@@ -899,6 +1035,203 @@ fn random_uuid() -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::render::render_trace;
+	use crate::{AttributeValue, SpanStatusError, TelemetryContextExt};
+
+	fn options(name: &str) -> SpanOptions {
+		SpanOptions {
+			name: name.to_string(),
+			..SpanOptions::default()
+		}
+	}
+
+	fn find(spans: &[RecordedTelemetrySpan], name: &str) -> RecordedTelemetrySpan {
+		spans
+			.iter()
+			.find(|span| span.name == name)
+			.expect("span was recorded")
+			.clone()
+	}
+
+	#[test]
+	fn settles_spans_whose_future_is_dropped() {
+		let context = pi_host::testing::run(|_| async {
+			let context = InMemoryTelemetryContext::new();
+			drop(context.start_span(options("sync"), |_| ready(Ok(()))));
+			let (release, gate) = oneshot::channel::<()>();
+			drop(context.start_span(options("async"), move |_| async move {
+				let _ = gate.await;
+				Ok(())
+			}));
+			let _ = release.send(());
+			context
+		});
+		let spans = context.get_spans();
+		assert_eq!(
+			spans
+				.iter()
+				.map(|span| (span.name.as_str(), span.settled, span.end_sequence))
+				.collect::<Vec<_>>(),
+			vec![("sync", true, Some(1.0)), ("async", true, Some(2.0))]
+		);
+		assert_eq!(context.find_traces_now(None).unwrap().traces.len(), 2);
+	}
+
+	#[test]
+	fn assigns_end_sequences_in_resolution_order() {
+		pi_host::testing::run(|_| async {
+			let context = InMemoryTelemetryContext::new();
+			let (release_a, gate_a) = oneshot::channel::<()>();
+			let (release_b, gate_b) = oneshot::channel::<()>();
+			let a = context.start_span(options("a"), move |_| async move {
+				let _ = gate_a.await;
+				Ok(())
+			});
+			let b = context.start_span(options("b"), move |_| async move {
+				let _ = gate_b.await;
+				Ok(())
+			});
+			let mut yielded = false;
+			futures::future::poll_fn(|cx| {
+				if yielded {
+					return Poll::Ready(());
+				}
+				yielded = true;
+				cx.waker().wake_by_ref();
+				Poll::Pending
+			})
+			.await;
+			let _ = release_b.send(());
+			let _ = release_a.send(());
+			let (a, b) = futures::future::join(a, b).await;
+			a.unwrap();
+			b.unwrap();
+			let spans = context.get_spans();
+			assert!(find(&spans, "b").end_sequence < find(&spans, "a").end_sequence);
+		});
+	}
+
+	#[test]
+	fn settles_synchronous_rejections_before_the_result_is_awaited() {
+		pi_host::testing::run(|_| async {
+			let context = InMemoryTelemetryContext::new();
+			let result = context.start_span(options("sync-error"), |_| ready(Err::<(), _>(PiError::new("sync"))));
+			let span = find(&context.get_spans(), "sync-error");
+			assert!(span.settled);
+			assert_eq!(span.end_sequence, Some(1.0));
+			assert_eq!(
+				span.status,
+				SpanStatus::Error {
+					error: Some(SpanStatusError {
+						name: "Error".to_string(),
+						message: "sync".to_string(),
+					}),
+				}
+			);
+			assert_eq!(result.await, Err(PiError::new("sync")));
+		});
+	}
+
+	#[test]
+	fn records_non_error_rejections_without_error_details() {
+		pi_host::testing::run(|_| async {
+			let context = InMemoryTelemetryContext::new();
+			let thrown = PiError::named("", "undefined");
+			let result = context
+				.start_span(options("undefined-error"), move |_| async move { Err::<(), _>(thrown) })
+				.await;
+			assert_eq!(result, Err(PiError::named("", "undefined")));
+			assert_eq!(
+				find(&context.get_spans(), "undefined-error").status,
+				SpanStatus::Error { error: None }
+			);
+		});
+	}
+
+	#[test]
+	fn orders_integer_like_attribute_keys_like_javascript_objects() {
+		pi_host::testing::run(|_| async {
+			let context = InMemoryTelemetryContext::new();
+			let start: SpanAttributes = [("b", AttributeValue::from("x")), ("1", AttributeValue::from("y"))]
+				.into_iter()
+				.map(|(key, value)| (key.to_string(), Some(value)))
+				.collect();
+			context
+				.start_span(
+					SpanOptions {
+						name: "k".to_string(),
+						attributes: Some(start),
+						links: None,
+					},
+					|span| {
+						let merged: SpanAttributes =
+							[("a", AttributeValue::from(1.0)), ("0", AttributeValue::from(2.0))]
+								.into_iter()
+								.map(|(key, value)| (key.to_string(), Some(value)))
+								.collect();
+						span.set_attributes(&merged);
+						let event: SpanAttributes = [
+							("b", AttributeValue::from(1.0)),
+							("10", AttributeValue::from(2.0)),
+							("2", AttributeValue::from(3.0)),
+							("01", AttributeValue::from(4.0)),
+							("4294967295", AttributeValue::from(5.0)),
+						]
+						.into_iter()
+						.map(|(key, value)| (key.to_string(), Some(value)))
+						.collect();
+						span.add_event("e", Some(&event));
+						ready(Ok(()))
+					},
+				)
+				.await
+				.unwrap();
+			let span = find(&context.get_spans(), "k");
+			assert_eq!(span.attributes.keys().collect::<Vec<_>>(), vec!["0", "1", "b", "a"]);
+			assert_eq!(
+				json_stringify(&span.events[0].attributes),
+				r#"{"2":3,"10":2,"b":1,"01":4,"4294967295":5}"#
+			);
+			let trace = context.find_traces_now(None).unwrap().traces.remove(0);
+			assert_eq!(
+				render_trace(&trace.spans).lines().next(),
+				Some(r#"k 0=2 1="y" b="x" a=1 (0ms)"#)
+			);
+		});
+	}
+
+	#[test]
+	fn applies_javascript_semantics_to_parsed_cursors() {
+		pi_host::testing::run(|_| async {
+			let context = InMemoryTelemetryContext::new();
+			context.start_span(options("only"), |_| ready(Ok(()))).await.unwrap();
+			let traces = |cursor: &str| {
+				context
+					.find_traces_now(Some(TraceQuery {
+						cursor: Some(cursor.to_string()),
+						..TraceQuery::default()
+					}))
+					.map(|result| result.traces.len())
+			};
+			let started = number_to_string(context.stored_spans()[0].started_ms);
+			assert_eq!(traces("null"), Ok(1));
+			assert_eq!(traces("0"), Ok(1));
+			assert_eq!(traces("\"\""), Ok(1));
+			assert_eq!(traces("{}"), Ok(0));
+			assert_eq!(traces("5"), Ok(0));
+			assert_eq!(traces("[1]"), Ok(0));
+			assert_eq!(traces(r#"[1,"a",3]"#), Ok(0));
+			assert_eq!(traces(r#"["1700000000001","x"]"#), Ok(1));
+			assert_eq!(traces(r#"[["1700000000001"],"x"]"#), Ok(1));
+			assert_eq!(traces(&format!(r#"[{started},""]"#)), Ok(1));
+			assert_eq!(traces(&format!(r#"[{started},"~"]"#)), Ok(0));
+			assert_eq!(traces(&format!("[{started},null]")), Ok(0));
+			assert_eq!(
+				traces("abc").map_err(|error| error.name),
+				Err("SyntaxError".to_string())
+			);
+		});
+	}
 
 	#[test]
 	fn number_conversion_matches_javascript() {

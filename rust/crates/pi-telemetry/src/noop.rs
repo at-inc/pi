@@ -1,5 +1,5 @@
 //! Port of `packages/telemetry/src/noop.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! The shared frozen objects become thread-local singletons (the core is single-threaded and `Rc` is `!Send`),
 //! so every read on a thread returns the same `Rc`, like reading the TS constant. Read them with

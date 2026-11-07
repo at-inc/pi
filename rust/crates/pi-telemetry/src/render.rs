@@ -1,5 +1,5 @@
 //! Port of `packages/telemetry/src/render.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 use indexmap::IndexMap;
 use pi_host::js::{json_stringify, number_to_string};

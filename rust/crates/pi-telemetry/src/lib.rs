@@ -1,5 +1,5 @@
 //! Port of `packages/telemetry/src/index.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! Type-level helpers with no runtime effect are dropped: `AttributeDefinitionValue`, `RequiredAttributeNames`,
 //! `OptionalAttributeNames`, `InferRequiredAndOptionalAttributes`, `InferStartAttributes`,
@@ -10,8 +10,19 @@
 //!
 //! `TelemetryContext.startSpan<T>` is generic, which a trait object cannot be: adapters implement the
 //! type-erased `start_span_erased`, and callers use the generic `TelemetryContextExt::start_span`. Adapters
-//! invoke the callback synchronously inside `start_span_erased` (before returning the future), the counterpart
-//! of the TS contract that admission is synchronous.
+//! invoke the callback inside `start_span_erased`, before returning, but a Rust callback returns a lazy future, so
+//! that call only runs the closure prologue (the code before its `async` block). The in-memory adapter also polls
+//! the returned future once before returning, which runs the body up to its first pending await, and settles the
+//! span when the callback resolves even if the caller drops the returned future. The no-op context and inert spans
+//! run the body only when the caller awaits it.
+//!
+//! A `PiError` whose `name` is the empty string stands for a thrown value that is not an `Error` (`throw {}`,
+//! `Promise.reject(undefined)`); its `message` is `String(value)`. Recorders treat it as `!(error instanceof
+//! Error)`.
+//!
+//! Schema definitions are typed structs whose fields follow the TS declaration order, so they serialize in that order
+//! rather than the author's. Unknown keys and mixed-type attribute arrays, which the TS types do not allow, are not
+//! supported: deserialization drops unknown keys and rejects mixed arrays.
 
 use std::any::Any;
 use std::future::Future;
@@ -396,9 +407,9 @@ pub enum TelemetryAttributeValueDefinition {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TelemetryAttributeDefinition {
 	#[serde(flatten)]
-	pub value: TelemetryAttributeValueDefinition,
-	#[serde(flatten)]
 	pub metadata: TelemetryAttributeMetadata,
+	#[serde(flatten)]
+	pub value: TelemetryAttributeValueDefinition,
 }
 
 /// `TelemetryAttributeDefinition & { required: boolean }`.

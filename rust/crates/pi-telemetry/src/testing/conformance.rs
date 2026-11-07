@@ -1,20 +1,25 @@
 //! Port of `packages/telemetry/src/testing/conformance.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 //!
 //! `node:assert/strict` failures become `Err(PiError)` named `AssertionError`, so a case's `run()` rejects like the
 //! TS promise does. Assertion message texts are not Node's (Node renders a diff of the inspected values).
+//! `strictEqual` and `deepStrictEqual` compare plain data by value, with `Object.is` for numbers.
+//!
+//! `await using` becomes `using_completion`: a disposal error replaces the scope's result, and when the scope also
+//! failed it becomes a `SuppressedError` whose `data` holds the disposal `error` and the `suppressed` scope error.
 
 use std::cell::{Cell, RefCell};
 use std::fmt::Debug;
 use std::future::{Future, ready};
 use std::rc::Rc;
 
+use indexmap::IndexMap;
 use pi_host::js::json_stringify;
 use pi_host::{LocalBoxFuture, PiError, PiResult};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::types::{TelemetryAdapterConformanceCase, TelemetryAdapterFixture, TelemetryAdapterFixtureFactory};
-use crate::memory::{RecordedTelemetryLink, RecordedTelemetrySpan};
+use crate::memory::{RecordedTelemetryEvent, RecordedTelemetryLink, RecordedTelemetrySpan};
 use crate::metrics::{HistogramOptions, InstrumentOptions, MetricKind};
 use crate::{
 	AttributeValue, NOOP_TELEMETRY_CONTEXT, SpanAttributes, SpanLink, SpanOptions, SpanStatus, SpanStatusError,
@@ -39,11 +44,38 @@ fn create_case(
 			Box::pin(async move {
 				let fixture = factory().await?;
 				let result = test(fixture.clone()).await;
-				let disposed = fixture.async_dispose().await;
-				result.and(disposed)
+				using_completion(result, fixture.async_dispose().await)
 			})
 		}),
 	)
+}
+
+/// The completion of an `await using` scope: `completion` is the scope's result, `disposal` the dispose result.
+fn using_completion(completion: PiResult<()>, disposal: PiResult<()>) -> PiResult<()> {
+	match (completion, disposal) {
+		(completion, Ok(())) => completion,
+		(Ok(()), Err(error)) => Err(error),
+		(Err(suppressed), Err(error)) => {
+			Err(
+				PiError::named("SuppressedError", "An error was suppressed during disposal.").with_data(json!({
+					"error": error_value(&error),
+					"suppressed": error_value(&suppressed),
+				})),
+			)
+		}
+	}
+}
+
+/// An error as a plain object: `name`, `message`, and the fields its `data` carries (a nested `SuppressedError`
+/// keeps its `error` and `suppressed`).
+fn error_value(error: &PiError) -> Value {
+	let mut value = serde_json::Map::new();
+	value.insert("name".to_string(), Value::String(error.name.clone()));
+	value.insert("message".to_string(), Value::String(error.message.clone()));
+	if let Some(Value::Object(data)) = &error.data {
+		value.extend(data.clone());
+	}
+	Value::Object(value)
 }
 
 fn test<F, Fut>(test: F) -> ConformanceTest
@@ -62,8 +94,90 @@ fn ok(value: bool, message: &str) -> PiResult<()> {
 	if value { Ok(()) } else { Err(assertion_error(message)) }
 }
 
-fn strict_equal<T: PartialEq + Debug + ?Sized>(actual: &T, expected: &T) -> PiResult<()> {
-	if actual == expected {
+/// `Object.is` for numbers and value equality for everything else the cases compare.
+trait SameValue {
+	fn same_value(&self, other: &Self) -> bool;
+}
+
+impl SameValue for f64 {
+	fn same_value(&self, other: &Self) -> bool {
+		(self.is_nan() && other.is_nan()) || (self == other && self.is_sign_negative() == other.is_sign_negative())
+	}
+}
+
+macro_rules! same_value_by_eq {
+	($($type:ty),+) => {
+		$(impl SameValue for $type {
+			fn same_value(&self, other: &Self) -> bool {
+				self == other
+			}
+		})+
+	};
+}
+
+same_value_by_eq!(bool, i32, usize, str, String, MetricKind, SpanStatus, PiError);
+
+impl<T: SameValue + ?Sized> SameValue for &T {
+	fn same_value(&self, other: &Self) -> bool {
+		(**self).same_value(*other)
+	}
+}
+
+impl<T: SameValue> SameValue for Option<T> {
+	fn same_value(&self, other: &Self) -> bool {
+		match (self, other) {
+			(Some(left), Some(right)) => left.same_value(right),
+			(None, None) => true,
+			_ => false,
+		}
+	}
+}
+
+impl<T: SameValue> SameValue for Vec<T> {
+	fn same_value(&self, other: &Self) -> bool {
+		self.len() == other.len() && self.iter().zip(other).all(|(left, right)| left.same_value(right))
+	}
+}
+
+impl<A: SameValue, B: SameValue, C: SameValue> SameValue for (A, B, C) {
+	fn same_value(&self, other: &Self) -> bool {
+		self.0.same_value(&other.0) && self.1.same_value(&other.1) && self.2.same_value(&other.2)
+	}
+}
+
+impl<V: SameValue> SameValue for IndexMap<String, V> {
+	fn same_value(&self, other: &Self) -> bool {
+		self.len() == other.len()
+			&& self
+				.iter()
+				.all(|(key, value)| other.get(key).is_some_and(|other| value.same_value(other)))
+	}
+}
+
+impl SameValue for AttributeValue {
+	fn same_value(&self, other: &Self) -> bool {
+		match (self, other) {
+			(AttributeValue::Number(left), AttributeValue::Number(right)) => left.same_value(right),
+			(AttributeValue::NumberArray(left), AttributeValue::NumberArray(right)) => left.same_value(right),
+			(left, right) => left == right,
+		}
+	}
+}
+
+impl SameValue for RecordedTelemetryLink {
+	fn same_value(&self, other: &Self) -> bool {
+		self.context.same_value(&other.context) && self.attributes.same_value(&other.attributes)
+	}
+}
+
+impl SameValue for RecordedTelemetryEvent {
+	fn same_value(&self, other: &Self) -> bool {
+		self.name == other.name && self.attributes.same_value(&other.attributes)
+	}
+}
+
+fn strict_equal<T: SameValue + Debug + ?Sized>(actual: &T, expected: &T) -> PiResult<()> {
+	if actual.same_value(expected) {
 		return Ok(());
 	}
 	Err(assertion_error(format!(
@@ -71,8 +185,8 @@ fn strict_equal<T: PartialEq + Debug + ?Sized>(actual: &T, expected: &T) -> PiRe
 	)))
 }
 
-fn deep_strict_equal<T: PartialEq + Debug + ?Sized>(actual: &T, expected: &T) -> PiResult<()> {
-	if actual == expected {
+fn deep_strict_equal<T: SameValue + Debug + ?Sized>(actual: &T, expected: &T) -> PiResult<()> {
+	if actual.same_value(expected) {
 		return Ok(());
 	}
 	Err(assertion_error(format!(
@@ -194,10 +308,12 @@ pub fn create_telemetry_adapter_conformance(
 				let Some(metrics) = fixture.metrics() else {
 					return Ok(());
 				};
+				let get_metrics = fixture.get_metrics();
 				ok(
-					fixture.get_metrics().is_some(),
+					get_metrics.is_some(),
 					"Metrics fixtures require a normalized measurement reader",
 				)?;
+				let get_metrics = get_metrics.expect("checked above");
 				metrics
 					.counter(
 						"bytes",
@@ -227,10 +343,7 @@ pub fn create_telemetry_adapter_conformance(
 						ready(Ok(()))
 					})
 					.await?;
-				let measurements = fixture
-					.get_metrics()
-					.ok_or_else(|| assertion_error("Metrics fixtures require a normalized measurement reader"))?
-					.await?;
+				let measurements = get_metrics().await?;
 				deep_strict_equal(
 					&measurements
 						.iter()
@@ -278,10 +391,12 @@ pub fn create_telemetry_adapter_conformance(
 				let Some(metrics) = fixture.metrics() else {
 					return Ok(());
 				};
+				let get_metrics = fixture.get_metrics();
 				ok(
-					fixture.get_metrics().is_some(),
+					get_metrics.is_some(),
 					"Metrics fixtures require a normalized measurement reader",
 				)?;
+				let get_metrics = get_metrics.expect("checked above");
 				let mut histogram_options = HistogramOptions {
 					base: InstrumentOptions {
 						description: Some("Original".to_string()),
@@ -299,10 +414,7 @@ pub fn create_telemetry_adapter_conformance(
 				if let Some(Some(AttributeValue::StringArray(tags))) = recorded_attributes.get_mut("tags") {
 					tags.push("changed".to_string());
 				}
-				let measurements = fixture
-					.get_metrics()
-					.ok_or_else(|| assertion_error("Metrics fixtures require a normalized measurement reader"))?
-					.await?;
+				let measurements = get_metrics().await?;
 				strict_equal(&measurements.len(), &1)?;
 				deep_strict_equal(
 					&measurements.first().map(|measurement| measurement.attributes.clone()),
@@ -492,15 +604,11 @@ pub fn create_telemetry_adapter_conformance(
 					let receiver = factory().await?;
 					let worker = match factory().await {
 						Ok(worker) => worker,
-						Err(error) => {
-							let _ = receiver.async_dispose().await;
-							return Err(error);
-						}
+						Err(error) => return using_completion(Err(error), receiver.async_dispose().await),
 					};
 					let result = propagate_across_hops(fixture, receiver.clone(), worker.clone()).await;
-					let worker_disposed = worker.async_dispose().await;
-					let receiver_disposed = receiver.async_dispose().await;
-					result.and(worker_disposed).and(receiver_disposed)
+					let result = using_completion(result, worker.async_dispose().await);
+					using_completion(result, receiver.async_dispose().await)
 				}
 			}),
 		),
@@ -551,7 +659,7 @@ pub fn create_telemetry_adapter_conformance(
 				)
 				.await?;
 
-				let async_error = PiError::named("Object", "[object Object]").with_data(json!({ "kind": "async" }));
+				let async_error = PiError::named("", "[object Object]").with_data(json!({ "kind": "async" }));
 				let thrown = async_error.clone();
 				rejects_with_same_value(
 					fixture
@@ -561,7 +669,7 @@ pub fn create_telemetry_adapter_conformance(
 				)
 				.await?;
 
-				let undefined_error = PiError::named("undefined", "undefined");
+				let undefined_error = PiError::named("", "undefined");
 				let thrown = undefined_error.clone();
 				rejects_with_same_value(
 					fixture
@@ -693,11 +801,11 @@ pub fn create_telemetry_adapter_conformance(
 				deep_strict_equal(
 					&span.events,
 					&vec![
-						crate::RecordedTelemetryEvent {
+						RecordedTelemetryEvent {
 							name: "first".to_string(),
 							attributes: attributes([("index", 1.0.into())]),
 						},
-						crate::RecordedTelemetryEvent {
+						RecordedTelemetryEvent {
 							name: "second".to_string(),
 							attributes: attributes([("index", 2.0.into())]),
 						},
@@ -767,9 +875,13 @@ pub fn create_telemetry_adapter_conformance(
 							Ok(())
 						});
 						let second = parent.start_span(options("second-child"), |_| ready(Ok("done")));
-						strict_equal(&second.await?, &"done")?;
-						let _ = release_first.send(());
-						first.await
+						futures::future::try_join(first, async move {
+							strict_equal(&second.await?, &"done")?;
+							let _ = release_first.send(());
+							Ok(())
+						})
+						.await
+						.map(|_| ())
 					})
 					.await?;
 

@@ -1,5 +1,5 @@
 //! Port of `packages/telemetry/src/testing/types.ts`.
-//! PORT-STATUS: ported
+//! PORT-STATUS: reviewed
 
 use std::rc::Rc;
 
@@ -7,6 +7,10 @@ use pi_host::{LocalBoxFuture, PiResult};
 
 use crate::memory::{RecordedTelemetryMeasurement, RecordedTelemetrySpan};
 use crate::{TelemetryContext, TelemetryMetrics, TelemetryPropagation};
+
+/// The `getMetrics()` method of a fixture.
+pub type TelemetryAdapterMetricsReader =
+	Rc<dyn Fn() -> LocalBoxFuture<'static, PiResult<Vec<RecordedTelemetryMeasurement>>>>;
 
 /// A fresh adapter instance and normalized snapshot reader owned by one conformance case.
 pub trait TelemetryAdapterFixture {
@@ -17,8 +21,9 @@ pub trait TelemetryAdapterFixture {
 	fn metrics(&self) -> Option<Rc<dyn TelemetryMetrics>> {
 		None
 	}
-	/// The optional `getMetrics?()`: `None` when the fixture has no measurement reader.
-	fn get_metrics(&self) -> Option<LocalBoxFuture<'static, PiResult<Vec<RecordedTelemetryMeasurement>>>> {
+	/// The optional `getMetrics?()` method, read without calling it: `None` when the fixture has no measurement
+	/// reader.
+	fn get_metrics(&self) -> Option<TelemetryAdapterMetricsReader> {
 		None
 	}
 	fn get_spans(&self) -> LocalBoxFuture<'static, PiResult<Vec<RecordedTelemetrySpan>>>;

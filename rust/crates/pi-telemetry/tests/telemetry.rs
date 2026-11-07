@@ -12,8 +12,9 @@ use common::same_object;
 use pi_host::PiError;
 use pi_telemetry::{
 	InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS, NOOP_TELEMETRY_PROPAGATION, SpanLink,
-	SpanStatus, SpanStatusError, TelemetryContext, TelemetryContextExt, TelemetrySchemaDefinition, TelemetrySpan,
-	create_typed_span_starter, define_telemetry_schema,
+	SpanStatus, SpanStatusError, TelemetryContext, TelemetryContextExt, TelemetryMetricDefinition,
+	TelemetrySchemaDefinition, TelemetrySpan, TelemetryStartAttributeDefinition, create_typed_span_starter,
+	define_telemetry_schema,
 };
 use serde_json::json;
 
@@ -48,6 +49,26 @@ mod telemetry_schemas {
 		let schema = define_telemetry_schema(definition.clone());
 		assert_eq!(schema, definition);
 		pi_host::js::json_stringify(&schema);
+	}
+
+	#[test]
+	fn serializes_definitions_in_declaration_order() {
+		let attribute: TelemetryStartAttributeDefinition = serde_json::from_value(json!({
+			"type": "string", "description": "D", "values": ["a"], "required": true,
+		}))
+		.unwrap();
+		assert_eq!(
+			pi_host::js::json_stringify(&attribute),
+			r#"{"description":"D","type":"string","values":["a"],"required":true}"#
+		);
+		let metric: TelemetryMetricDefinition = serde_json::from_value(json!({
+			"kind": "histogram", "description": "Duration", "unit": "ms", "attributes": {}, "boundaries": [1, 10],
+		}))
+		.unwrap();
+		assert_eq!(
+			pi_host::js::json_stringify(&metric),
+			r#"{"description":"Duration","unit":"ms","attributes":{},"kind":"histogram","boundaries":[1,10]}"#
+		);
 	}
 
 	#[test]
