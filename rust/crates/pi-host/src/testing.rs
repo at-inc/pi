@@ -1,13 +1,22 @@
 //! Scripted host for tests: a programmable `fetch`, a virtual clock, an in-memory environment, and a
 //! single-threaded executor. Ported vitest suites that stub `globalThis.fetch` or use fake timers use this.
+//!
+//! Timers are fake, like vitest's `vi.useFakeTimers()` with `advanceTimersByTimeAsync` run to completion: a
+//! `sleep` registers a deadline on the virtual clock, and only when every task is stalled does the clock jump to
+//! the earliest pending deadline and wake that timer. Concurrent timers (a request timeout racing a poll interval)
+//! therefore fire in deadline order without adding up, and a dropped sleep never moves the clock.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::future::Future;
-use std::rc::Rc;
+use std::pin::Pin;
+use std::rc::{Rc, Weak};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll, Waker};
 
 use futures::executor::LocalPool;
-use futures::task::LocalSpawnExt;
+use futures::task::{ArcWake, LocalSpawnExt};
 
 use crate::LocalBoxFuture;
 use crate::error::{PiError, PiResult};
@@ -16,14 +25,37 @@ use crate::http::{HttpRequest, HttpResponse};
 
 type Handler = Rc<dyn Fn(HttpRequest) -> LocalBoxFuture<'static, PiResult<HttpResponse>>>;
 
-/// The test host. Sleeping advances the virtual clock and resolves on the next executor turn, so retry and
-/// backoff logic runs instantly while `now_ms` still moves forward.
+/// The test host. Sleeping waits for the virtual clock to reach the deadline, which happens as soon as nothing else
+/// can run, so retry and backoff logic runs instantly while `now_ms` still moves forward.
 pub struct TestHost {
 	handler: RefCell<Option<Handler>>,
 	env: RefCell<HashMap<String, String>>,
 	clock_ms: RefCell<f64>,
 	requests: RefCell<Vec<RecordedRequest>>,
+	timers: RefCell<Vec<Weak<Timer>>>,
 	spawner: futures::executor::LocalSpawner,
+}
+
+struct Timer {
+	deadline: f64,
+	fired: Cell<bool>,
+	waker: RefCell<Option<Waker>>,
+}
+
+struct Sleep {
+	timer: Rc<Timer>,
+}
+
+impl Future for Sleep {
+	type Output = ();
+
+	fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<()> {
+		if self.timer.fired.get() {
+			return Poll::Ready(());
+		}
+		*self.timer.waker.borrow_mut() = Some(context.waker().clone());
+		Poll::Pending
+	}
 }
 
 /// A request `fetch` received, with its body decoded as UTF-8.
@@ -78,9 +110,41 @@ impl TestHost {
 		self.requests.borrow().clone()
 	}
 
-	/// Moves the virtual clock forward.
+	/// Moves the virtual clock forward. Timers whose deadline passed fire once every task is stalled.
 	pub fn advance(&self, ms: f64) {
 		*self.clock_ms.borrow_mut() += ms;
+	}
+
+	/// Moves the clock to the earliest live timer and fires it; timers with equal deadlines fire one per call in
+	/// the order they were created, like `setTimeout`. Returns false when no timer is pending.
+	fn fire_next_timer(&self) -> bool {
+		let next = {
+			let mut timers = self.timers.borrow_mut();
+			timers.retain(|timer| timer.upgrade().is_some_and(|timer| !timer.fired.get()));
+			let Some(index) = timers
+				.iter()
+				.enumerate()
+				.filter_map(|(index, timer)| timer.upgrade().map(|timer| (index, timer.deadline)))
+				.min_by(|(_, a), (_, b)| a.total_cmp(b))
+				.map(|(index, _)| index)
+			else {
+				return false;
+			};
+			timers.remove(index).upgrade()
+		};
+		let Some(timer) = next else {
+			return true;
+		};
+		{
+			let mut clock = self.clock_ms.borrow_mut();
+			*clock = clock.max(timer.deadline);
+		}
+		timer.fired.set(true);
+		let waker = timer.waker.borrow_mut().take();
+		if let Some(waker) = waker {
+			waker.wake();
+		}
+		true
 	}
 }
 
@@ -115,8 +179,13 @@ impl Host for TestHost {
 	}
 
 	fn sleep(&self, ms: f64) -> LocalBoxFuture<'static, ()> {
-		self.advance(ms.max(0.0));
-		Box::pin(futures::future::ready(()))
+		let timer = Rc::new(Timer {
+			deadline: *self.clock_ms.borrow() + ms.max(0.0),
+			fired: Cell::new(false),
+			waker: RefCell::new(None),
+		});
+		self.timers.borrow_mut().push(Rc::downgrade(&timer));
+		Box::pin(Sleep { timer })
 	}
 
 	fn spawn_local(&self, future: LocalBoxFuture<'static, ()>) {
@@ -124,8 +193,21 @@ impl Host for TestHost {
 	}
 }
 
+struct MainWake {
+	woken: AtomicBool,
+	thread: std::thread::Thread,
+}
+
+impl ArcWake for MainWake {
+	fn wake_by_ref(arc_self: &Arc<Self>) {
+		arc_self.woken.store(true, Ordering::SeqCst);
+		arc_self.thread.unpark();
+	}
+}
+
 /// Runs `test` on a fresh single-threaded executor with a `TestHost` installed, then drains spawned tasks.
-/// The virtual clock starts at 1_700_000_000_000 ms.
+/// The virtual clock starts at 1_700_000_000_000 ms. Whenever the test and every spawned task are stalled, the
+/// earliest pending timer fires; with no timer pending, the thread parks until something outside wakes a task.
 pub fn run<F, Fut, T>(test: F) -> T
 where
 	F: FnOnce(Rc<TestHost>) -> Fut,
@@ -137,13 +219,78 @@ where
 		env: RefCell::new(HashMap::new()),
 		clock_ms: RefCell::new(1_700_000_000_000.0),
 		requests: RefCell::new(Vec::new()),
+		timers: RefCell::new(Vec::new()),
 		spawner: pool.spawner(),
 	});
 	let previous = set_host(host.clone());
-	let output = pool.run_until(test(host));
+	let main = Arc::new(MainWake {
+		woken: AtomicBool::new(true),
+		thread: std::thread::current(),
+	});
+	let waker = futures::task::waker(main.clone());
+	let mut context = Context::from_waker(&waker);
+	let test = test(host.clone());
+	futures::pin_mut!(test);
+	let output = loop {
+		if main.woken.swap(false, Ordering::SeqCst)
+			&& let Poll::Ready(output) = test.as_mut().poll(&mut context)
+		{
+			break output;
+		}
+		pool.run_until_stalled();
+		if main.woken.load(Ordering::SeqCst) || host.fire_next_timer() {
+			continue;
+		}
+		std::thread::park();
+	};
 	pool.run_until_stalled();
 	if let Some(previous) = previous {
 		set_host(previous);
 	}
 	output
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::abort::AbortSignal;
+
+	#[test]
+	fn concurrent_timers_fire_in_deadline_order_without_adding_up() {
+		let (order, elapsed) = run(|_| async {
+			let start = crate::now_ms();
+			let order = Rc::new(RefCell::new(Vec::new()));
+			let late = order.clone();
+			crate::spawn_local(async move {
+				crate::sleep(30_000.0, None).await.unwrap();
+				late.borrow_mut().push("late");
+			});
+			let timeout = AbortSignal::timeout(5_000.0);
+			crate::sleep(1_000.0, None).await.unwrap();
+			order.borrow_mut().push("first");
+			assert!(!timeout.aborted());
+			crate::sleep(4_000.0, None).await.unwrap();
+			assert_eq!(timeout.reason().unwrap().name, "TimeoutError");
+			order.borrow_mut().push("second");
+			let elapsed = crate::now_ms() - start;
+			(order, elapsed)
+		});
+		assert_eq!(*order.borrow(), vec!["first", "second"]);
+		assert_eq!(elapsed, 5_000.0);
+	}
+
+	#[test]
+	fn a_dropped_sleep_does_not_move_the_clock() {
+		let elapsed = run(|_| async {
+			let start = crate::now_ms();
+			let controller = crate::AbortController::new();
+			let signal = controller.signal();
+			let sleeping = crate::sleep(60_000.0, Some(&signal));
+			controller.abort();
+			assert!(sleeping.await.is_err());
+			crate::sleep(10.0, None).await.unwrap();
+			crate::now_ms() - start
+		});
+		assert_eq!(elapsed, 10.0);
+	}
 }
