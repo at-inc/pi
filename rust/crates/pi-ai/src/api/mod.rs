@@ -7,6 +7,7 @@ pub mod anthropic_messages_lazy;
 pub mod azure_openai_config;
 pub mod azure_openai_responses;
 pub mod azure_openai_responses_lazy;
+pub mod bedrock_client;
 pub mod bedrock_converse_stream;
 pub mod bedrock_converse_stream_lazy;
 pub mod classifier_shared;
