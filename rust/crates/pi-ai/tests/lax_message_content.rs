@@ -6,9 +6,8 @@
 //! request and is intentionally lax: it normalizes null/missing content to an
 //! empty array (issues #6259, #6276).
 //!
-//! Rust: the message types cannot hold a `null` or missing `content`; such JSON fails to deserialize, so it never
-//! reaches `transform_messages` (see the header of `api/transform_messages.rs`). The test feeds the closest messages
-//! the types can hold, with empty content, and checks the same outcome: three messages, each with empty content.
+//! Rust: the message types read a `null` or missing `content` as an empty list when they deserialize, so the
+//! messages below reach `transform_messages` already normalized.
 
 use pi_ai::api::transform_messages::transform_messages;
 use pi_ai::types::{Message, Model, UserMessageContent};
@@ -40,10 +39,10 @@ mod lax_message_content_handling {
 	#[test]
 	fn normalizes_null_missing_content_to_an_empty_array_instead_of_crashing() {
 		let messages: Vec<Message> = serde_json::from_value(json!([
-			{ "role": "user", "content": [], "timestamp": NOW },
+			{ "role": "user", "content": null, "timestamp": NOW },
 			{
 				"role": "assistant",
-				"content": [],
+				"content": null,
 				"api": "openai-completions",
 				"provider": "openai",
 				"model": "test-model",
@@ -62,7 +61,6 @@ mod lax_message_content_handling {
 				"role": "toolResult",
 				"toolCallId": "call_1",
 				"toolName": "web_search",
-				"content": [],
 				"isError": false,
 				"timestamp": NOW,
 			},

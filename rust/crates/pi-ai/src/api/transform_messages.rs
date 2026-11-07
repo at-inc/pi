@@ -2,8 +2,8 @@
 //! PORT-STATUS: ported
 //!
 //! The TS normalizes `null` or missing `content` from untyped callers to `[]` before anything else (#6259, #6276). The
-//! Rust message types always carry content, so a message without it fails to deserialize before it can reach
-//! `transform_messages`, and that step has nothing to do here. `normalizeToolCallId` is a borrowed closure.
+//! Rust message types do that when they deserialize (see `types.rs`), so messages arrive here normalized and that
+//! step has nothing to do. `normalizeToolCallId` is a borrowed closure.
 
 use std::collections::{HashMap, HashSet};
 
