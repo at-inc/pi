@@ -120,8 +120,8 @@ impl<T: 'static, R: Clone + 'static> EventStream<T, R> {
 		receiver.await.ok().flatten()
 	}
 
-	/// `await stream.result()`. `None` only when the stream was dropped or ended without a result, where the TS
-	/// promise would stay pending forever.
+	/// `await stream.result()`. After `end(None)` it stays pending, like the TS promise. `None` would need the result
+	/// sender dropped unsent, which no live handle allows.
 	pub async fn result(&self) -> Option<R> {
 		self.final_result.clone().await
 	}

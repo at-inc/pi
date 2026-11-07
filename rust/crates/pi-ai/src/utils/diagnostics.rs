@@ -3,7 +3,9 @@
 //!
 //! TypeScript takes the thrown value as `unknown`; the Rust port takes the `PiError` that stands in for it. A
 //! TS error's own fields (`statusCode`, `headers`, `payload`, `error`, `code`) are read from `PiError.data`, and
-//! `error.status` from `PiError.status`. Rust errors carry no stack, so `stack` is always absent.
+//! `error.status` from `PiError.status`. Rust errors carry no stack, so `stack` is always absent. TS turns a `Headers`
+//! instance into `Object.fromEntries(headers)` (lowercase, sorted names); `data.headers` is copied as it is, so code
+//! that builds a `PiError` from a response stores the headers in that form.
 
 use pi_host::PiError;
 use serde::{Deserialize, Serialize};
