@@ -1,19 +1,18 @@
 //! Port of `packages/ai/src/api/anthropic-messages.lazy.ts`.
-//! PORT-STATUS: pending
+//! PORT-STATUS: ported
+//!
+//! Rust has no dynamic import: `load` hands out the module's `ProviderStreams` value.
 
-// PORT-STUB: w3-anthropic
-// Until the API module is ported, the wrapper never panics: every operation fails with "API not ported".
 use std::rc::Rc;
 
-use pi_host::PiError;
-
+use crate::api::anthropic_messages::AnthropicMessagesStreams;
 use crate::api::lazy::lazy_api;
 use crate::types::ProviderStreams;
 
-/// `anthropicMessagesApi()`: every stream ends with an `API not ported` error event.
+/// `anthropicMessagesApi()`.
 pub fn anthropic_messages_api() -> Rc<dyn ProviderStreams> {
 	lazy_api(
-		Rc::new(|| Box::pin(async { Err(PiError::new("API not ported")) })),
+		Rc::new(|| Box::pin(async { Ok(Rc::new(AnthropicMessagesStreams) as Rc<dyn ProviderStreams>) })),
 		None,
 	)
 }
