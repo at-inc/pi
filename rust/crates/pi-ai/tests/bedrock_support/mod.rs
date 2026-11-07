@@ -91,7 +91,7 @@ pub struct Reply {
 }
 
 impl Reply {
-	fn to_response(&self) -> HttpResponse {
+	pub fn to_response(&self) -> HttpResponse {
 		HttpResponse::from_bytes(self.status, self.headers.clone(), self.body.clone())
 	}
 }

@@ -23,8 +23,19 @@
 //!   the ECS container and IMDS providers are not ported (`Could not load credentials from any providers`).
 //! - Retries: the standard strategy (3 attempts, `AWS_MAX_ATTEMPTS`/`max_attempts`, throttling and transient
 //!   classification, `retry-after`/`x-amz-retry-after` hints, `SMITHY_NEW_RETRIES_2026`). The retry quota (500
-//!   capacity tokens per client) is not tracked: pi-ai builds a client per request, which cannot use it up. The
-//!   `clockSkewCorrected` mark is set for SigV4 only, which is the only signer that corrects the clock.
+//!   capacity tokens per client) is not tracked: pi-ai builds a client per request, which cannot use it up.
+//!   `AWS_RETRY_MODE`/`retry_mode` are not read: `adaptive` (the client-side rate limiter and the `F` user agent
+//!   feature) is not ported, so every client runs the standard mode. Node's socket error codes are read from `code`
+//!   down the `cause` chain, but the host's fetch reports a failed request as `TypeError: fetch failed` with its cause
+//!   as text, so every request that got no response is transient; the SDK leaves non-socket failures such as TLS
+//!   errors to its other checks. An invalid `AWS_MAX_ATTEMPTS`, `AWS_USE_FIPS_ENDPOINT` or
+//!   `AWS_USE_DUALSTACK_ENDPOINT` (or profile key) falls through to the next source, as `loadConfig`'s chain does.
+//! - Clock skew: `getUpdatedSystemClockOffset` and the SigV4 signer's handlers of `@aws-sdk/core` 3.977.9, with the
+//!   `Age` and 15-minute guards and the 240-second `clockSkewCorrected` threshold, for SigV4 only (the bearer signer
+//!   has no handlers). An error's `ServerTime` property is not read, since no Bedrock error has one.
+//! - Headers: `recursionDetectionMiddleware` sets `X-Amzn-Trace-Id` from `_X_AMZN_TRACE_ID` inside Lambda; the
+//!   InvokeStore and the `traceparent`, `tracestate` and `baggage` headers are not ported. Header names that differ
+//!   only in case are merged like Node's `setHeader`: the later name and value, in the earlier one's place.
 //! - Errors carry the SDK's own properties in `PiError.data`: `$fault` for a service exception (`is_service_exception`)
 //!   and `$metadata` for an error thrown from a response. The hidden `$response` is not kept.
 //! - Version: the schema and user agent are those of `@aws-sdk/client-bedrock-runtime` 3.1126.0, the version in
@@ -857,59 +868,51 @@ impl SharedConfigFiles {
 	}
 
 	/// `loadConfig` of a string setting: the environment variable when it is set (even empty), else the profile key.
-	fn setting(&self, env_key: &str, config_keys: &[&str], preferred: PreferredFile) -> Option<Setting> {
+	fn setting(&self, env_key: &str, config_keys: &[&str], preferred: PreferredFile) -> Option<String> {
 		if let Some(value) = pi_host::env(env_key) {
-			return Some(Setting::Env(env_key.to_string(), value));
+			return Some(value);
 		}
 		let profile = self.profile_settings(preferred);
-		config_keys.iter().find_map(|key| {
-			profile
-				.get(*key)
-				.map(|value| Setting::Config(key.to_string(), value.clone()))
-		})
+		config_keys.iter().find_map(|key| profile.get(*key).cloned())
 	}
 
-	/// A boolean setting (`booleanSelector`), `false` when unset.
-	fn boolean_setting(&self, env_key: &str, config_key: &str) -> PiResult<bool> {
-		let Some(setting) = self.setting(env_key, &[config_key], PreferredFile::Config) else {
-			return Ok(false);
+	/// A boolean setting (`loadConfig` with `booleanSelector`): the env value, then the profile value, then `false`. A
+	/// value other than `"true"` or `"false"` fails its source, and `chain` moves on to the next one.
+	fn boolean_setting(&self, env_key: &str, config_key: &str) -> bool {
+		let parse = |value: Option<&str>| match value {
+			Some("true") => Some(true),
+			Some("false") => Some(false),
+			_ => None,
 		};
-		match setting.value() {
-			"true" => Ok(true),
-			"false" => Ok(false),
-			value => Err(PiError::new(format!(
-				"Cannot load {} \"{}\". Expected \"true\" or \"false\", got {value}.",
-				setting.source_type(),
-				setting.key()
-			))),
-		}
+		parse(pi_host::env(env_key).as_deref())
+			.or_else(|| {
+				parse(
+					self.profile_settings(PreferredFile::Config)
+						.get(config_key)
+						.map(String::as_str),
+				)
+			})
+			.unwrap_or(false)
 	}
 
-	/// `NODE_MAX_ATTEMPT_CONFIG_OPTIONS`: `AWS_MAX_ATTEMPTS`, then `max_attempts`, then 3. Empty values are unset.
-	fn max_attempts(&self) -> PiResult<f64> {
-		if let Some(value) = pi_host::env("AWS_MAX_ATTEMPTS").filter(|value| !value.is_empty()) {
-			let parsed = js_parse_int(&value);
-			if parsed.is_nan() {
-				return Err(PiError::new(format!(
-					"Environment variable AWS_MAX_ATTEMPTS mast be a number, got \"{value}\""
-				)));
-			}
-			return Ok(parsed);
-		}
-		let Some(value) = self
-			.profile_settings(PreferredFile::Config)
-			.get("max_attempts")
-			.cloned()
-		else {
-			return Ok(3.0);
+	/// `NODE_MAX_ATTEMPT_CONFIG_OPTIONS`: `AWS_MAX_ATTEMPTS`, then `max_attempts`, then 3. An empty value is unset, and
+	/// one that `parseInt` reads as `NaN` fails its source, so the next one is tried.
+	fn max_attempts(&self) -> f64 {
+		let parse = |value: Option<&str>| {
+			value
+				.filter(|value| !value.is_empty())
+				.map(js_parse_int)
+				.filter(|parsed| !parsed.is_nan())
 		};
-		let parsed = js_parse_int(&value);
-		if parsed.is_nan() {
-			return Err(PiError::new(format!(
-				"Shared config file entry max_attempts mast be a number, got \"{value}\""
-			)));
-		}
-		Ok(parsed)
+		parse(pi_host::env("AWS_MAX_ATTEMPTS").as_deref())
+			.or_else(|| {
+				parse(
+					self.profile_settings(PreferredFile::Config)
+						.get("max_attempts")
+						.map(String::as_str),
+				)
+			})
+			.unwrap_or(3.0)
 	}
 }
 
@@ -917,34 +920,6 @@ impl SharedConfigFiles {
 async fn read_ini(path: &str) -> Option<IniData> {
 	let text = pi_host::read_file(path).await.ok()?;
 	parse_ini(&text).ok()
-}
-
-/// A setting value and where it came from.
-enum Setting {
-	Env(String, String),
-	Config(String, String),
-}
-
-impl Setting {
-	fn value(&self) -> &str {
-		match self {
-			Setting::Env(_, value) | Setting::Config(_, value) => value,
-		}
-	}
-
-	fn key(&self) -> &str {
-		match self {
-			Setting::Env(key, _) | Setting::Config(key, _) => key,
-		}
-	}
-
-	/// `SelectorType`.
-	fn source_type(&self) -> &'static str {
-		match self {
-			Setting::Env(..) => "env",
-			Setting::Config(..) => "shared config entry",
-		}
-	}
 }
 
 /// `parseInt(text)` without a radix.
@@ -1067,15 +1042,20 @@ const PARTITIONS: [Partition; 8] = [
 /// `partition(region)`. Every region a partition lists matches its regex except its global region, so the region
 /// lists reduce to those names. JS `\w` is ASCII, hence `(?-u)`.
 fn partition(region: &str) -> &'static Partition {
+	static REGION_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+		PARTITIONS
+			.iter()
+			.map(|partition| Regex::new(&format!("(?-u){}", partition.region_regex)).expect("valid regex"))
+			.collect()
+	});
 	PARTITIONS
 		.iter()
 		.find(|partition| !partition.global_region.is_empty() && partition.global_region == region)
 		.or_else(|| {
-			PARTITIONS.iter().find(|partition| {
-				Regex::new(&format!("(?-u){}", partition.region_regex))
-					.expect("valid regex")
-					.is_match(region)
-			})
+			PARTITIONS
+				.iter()
+				.zip(REGION_REGEXES.iter())
+				.find_map(|(partition, regex)| regex.is_match(region).then_some(partition))
 		})
 		.unwrap_or(&PARTITIONS[0])
 }
@@ -1711,6 +1691,10 @@ pub struct BedrockRuntimeClient {
 	deserialize_middleware: Vec<DeserializeMiddleware>,
 	/// `config.systemClockOffset`, corrected from response `Date` headers.
 	system_clock_offset: Cell<f64>,
+	/// `signingProperties._preRequestSystemClockOffset` of the last SigV4 signing.
+	pre_request_offset: Cell<f64>,
+	/// `signingProperties._requestSentAt` of the last SigV4 signing.
+	request_sent_at: Cell<f64>,
 }
 
 /// A failed attempt, with the response headers when the error came from deserializing a response (`$response`).
@@ -1761,6 +1745,8 @@ impl BedrockRuntimeClient {
 			build_middleware: Vec::new(),
 			deserialize_middleware: Vec::new(),
 			system_clock_offset: Cell::new(0.0),
+			pre_request_offset: Cell::new(0.0),
+			request_sent_at: Cell::new(0.0),
 		}
 	}
 
@@ -1782,7 +1768,6 @@ impl BedrockRuntimeClient {
 			Some(region) => region.clone(),
 			None => files
 				.setting("AWS_REGION", &["region"], PreferredFile::Credentials)
-				.map(|setting| setting.value().to_string())
 				.ok_or_else(|| PiError::new("Region is missing"))?,
 		};
 		let region = get_real_region(&provided_region);
@@ -1793,8 +1778,8 @@ impl BedrockRuntimeClient {
 		}
 		let identity = self.resolve_identity(&files)?;
 		let use_fips =
-			is_fips_region(&provided_region) || files.boolean_setting("AWS_USE_FIPS_ENDPOINT", "use_fips_endpoint")?;
-		let use_dual_stack = files.boolean_setting("AWS_USE_DUALSTACK_ENDPOINT", "use_dualstack_endpoint")?;
+			is_fips_region(&provided_region) || files.boolean_setting("AWS_USE_FIPS_ENDPOINT", "use_fips_endpoint");
+		let use_dual_stack = files.boolean_setting("AWS_USE_DUALSTACK_ENDPOINT", "use_dualstack_endpoint");
 		let endpoint = resolve_endpoint(config.endpoint.as_deref(), &region, use_fips, use_dual_stack)?;
 		let serialized = serialize_converse_stream(input, endpoint.path())?;
 
@@ -1804,7 +1789,6 @@ impl BedrockRuntimeClient {
 				&["sdk_ua_app_id", "sdk-ua-app-id"],
 				PreferredFile::Config,
 			)
-			.map(|setting| setting.value().to_string())
 			.filter(|app_id| !app_id.is_empty());
 		let mut features = Vec::new();
 		if config.endpoint.is_some() {
@@ -1826,13 +1810,33 @@ impl BedrockRuntimeClient {
 		headers.insert("x-amz-user-agent".to_string(), x_amz_user_agent);
 		headers.insert("user-agent".to_string(), user_agent);
 		headers.insert("host".to_string(), host.clone());
+		// `recursionDetectionMiddleware`, which the client adds before pi's build middleware.
+		if let (Some(_), Some(trace_id)) = (
+			pi_host::env("AWS_LAMBDA_FUNCTION_NAME").filter(|name| !name.is_empty()),
+			pi_host::env("_X_AMZN_TRACE_ID").filter(|trace_id| !trace_id.is_empty()),
+		) {
+			headers.insert("X-Amzn-Trace-Id".to_string(), trace_id);
+		}
 		for middleware in &self.build_middleware {
 			middleware(&mut headers);
 		}
+		// The headers are a plain object that the signer and Node's `setHeader` both read case-insensitively: a later
+		// name replaces an earlier one with another case, in the earlier one's place.
+		let mut merged: Vec<(String, String)> = Vec::new();
+		for (name, value) in headers {
+			match merged
+				.iter_mut()
+				.find(|(existing, _)| existing.eq_ignore_ascii_case(&name))
+			{
+				Some(entry) => *entry = (name, value),
+				None => merged.push((name, value)),
+			}
+		}
+		let mut headers: IndexMap<String, String> = merged.into_iter().collect();
 		let url = format!("{}://{host}{}", endpoint.scheme(), serialized.path);
 		let body = Bytes::from(serialized.body);
 
-		let max_attempts = files.max_attempts()?;
+		let max_attempts = files.max_attempts();
 		let new_retries = pi_host::env("SMITHY_NEW_RETRIES_2026").as_deref() == Some("true");
 		headers.insert("amz-sdk-invocation-id".to_string(), uuid_v4());
 		let mut retry_count = 0.0;
@@ -1886,7 +1890,7 @@ impl BedrockRuntimeClient {
 					&["auth_scheme_preference"],
 					PreferredFile::Config,
 				)
-				.map(|setting| comma_separated(setting.value()))
+				.map(|setting| comma_separated(&setting))
 				.unwrap_or_default(),
 		};
 		let scheme = preference
@@ -2003,19 +2007,32 @@ impl BedrockRuntimeClient {
 		})
 	}
 
-	/// `AwsSdkSigV4Signer`'s `successHandler` and `errorHandler`: a `Date` header five minutes or more off the corrected
-	/// clock moves `systemClockOffset`. Returns whether it moved, which makes an error `clockSkewCorrected`.
+	/// `AwsSdkSigV4Signer`'s `successHandler` and `errorHandler`: a non-empty `Date` header sets `systemClockOffset`
+	/// to `getUpdatedSystemClockOffset`. Returns whether an error would be marked `clockSkewCorrected`: the new offset
+	/// is at least 240 seconds and differs from the offset the request was signed with.
 	fn correct_clock_skew(&self, headers: &IndexMap<String, String>) -> bool {
-		let Some(date) = headers.get("date") else {
+		let Some(date) = headers.get("date").filter(|date| !date.is_empty()) else {
 			return false;
 		};
-		let server_time = date_parse(date);
-		let offset = self.system_clock_offset.get();
-		if (pi_host::now_ms() + offset - server_time).abs() < 300000.0 {
-			return false;
+		let offset = self.updated_system_clock_offset(date, headers.contains_key("age"));
+		self.system_clock_offset.set(offset);
+		offset.abs() >= 240000.0 && offset != self.pre_request_offset.get()
+	}
+
+	/// `getUpdatedSystemClockOffset(clockTime, currentSystemClockOffset, timeRequestSent, ageHeader)`: the server time
+	/// minus the midpoint of sending and receiving, unless the response has an `Age` header or took over 15 minutes.
+	fn updated_system_clock_offset(&self, clock_time: &str, has_age_header: bool) -> f64 {
+		let current = self.system_clock_offset.get();
+		if has_age_header {
+			return current;
 		}
-		self.system_clock_offset.set(server_time - pi_host::now_ms());
-		self.system_clock_offset.get() != offset
+		let server_time = date_parse(clock_time);
+		let time_response_received = pi_host::now_ms();
+		let time_request_sent = self.request_sent_at.get();
+		if time_response_received - time_request_sent > 900000.0 {
+			return current;
+		}
+		server_time - (time_request_sent + time_response_received) / 2.0
 	}
 
 	/// `HttpBearerAuthSigner.sign` or `AwsSdkSigV4Signer.sign` of the request headers.
@@ -2037,13 +2054,17 @@ impl BedrockRuntimeClient {
 		};
 		let mut signed = headers.clone();
 		signed.retain(|name, _| !matches!(name.to_lowercase().as_str(), "authorization" | "x-amz-date" | "date"));
-		let signable: Vec<(&str, &str)> = signed
+		// `getCanonicalHeaders` signs `value.trim().replace(/\s+/g, " ")`; aws-sigv4 collapses only spaces.
+		let signable: Vec<(&str, String)> = signed
 			.iter()
 			.filter(|(name, _)| {
 				let name = name.to_lowercase();
 				!UNSIGNABLE_HEADERS.contains(&name.as_str()) && !name.starts_with("proxy-") && !name.starts_with("sec-")
 			})
-			.map(|(name, value)| (name.as_str(), value.as_str()))
+			.map(|(name, value)| {
+				let words: Vec<&str> = value.split(is_js_whitespace).filter(|word| !word.is_empty()).collect();
+				(name.as_str(), words.join(" "))
+			})
 			.collect();
 		let signing_error =
 			|error: &dyn std::fmt::Display| PiError::new(format!("Failed to sign the request: {error}"));
@@ -2058,18 +2079,35 @@ impl BedrockRuntimeClient {
 		let mut settings = SigningSettings::default();
 		settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
 		settings.excluded_headers = Some(Vec::new());
-		let signing_ms = (pi_host::now_ms() + self.system_clock_offset.get()).max(0.0);
+		let now = pi_host::now_ms();
+		self.pre_request_offset.set(self.system_clock_offset.get());
+		self.request_sent_at.set(now);
+		// `getSkewCorrectedDate` makes an Invalid Date from a NaN offset, whose `toISOString` throws while signing.
+		let signing_ms = (now + self.system_clock_offset.get()).trunc();
+		if signing_ms.is_nan() || signing_ms.abs() > 8.64e15 {
+			return Err(PiError::named("RangeError", "Invalid time value"));
+		}
+		let signing_time = if signing_ms >= 0.0 {
+			UNIX_EPOCH + Duration::from_millis(signing_ms as u64)
+		} else {
+			UNIX_EPOCH - Duration::from_millis(-signing_ms as u64)
+		};
 		let params = v4::SigningParams::builder()
 			.identity(&identity)
 			.region(region)
 			.name(SIGNING_NAME)
-			.time(UNIX_EPOCH + Duration::from_millis(signing_ms as u64))
+			.time(signing_time)
 			.settings(settings)
 			.build()
 			.map_err(|error| signing_error(&error))?
 			.into();
-		let request = SignableRequest::new("POST", url, signable.into_iter(), SignableBody::Bytes(body))
-			.map_err(|error| signing_error(&error))?;
+		let request = SignableRequest::new(
+			"POST",
+			url,
+			signable.iter().map(|(name, value)| (*name, value.as_str())),
+			SignableBody::Bytes(body),
+		)
+		.map_err(|error| signing_error(&error))?;
 		let (instructions, _) = sign(request, &params)
 			.map_err(|error| signing_error(&error))?
 			.into_parts();
@@ -2086,6 +2124,11 @@ impl BedrockRuntimeClient {
 		}
 		Ok(signed)
 	}
+}
+
+/// JavaScript `\s`: white space and line terminators, which include U+FEFF but not U+0085.
+fn is_js_whitespace(ch: char) -> bool {
+	(ch.is_whitespace() && ch != '\u{85}') || ch == '\u{feff}'
 }
 
 /// `ALWAYS_UNSIGNABLE_HEADERS` of `@smithy/signature-v4`.
@@ -2108,6 +2151,21 @@ const UNSIGNABLE_HEADERS: [&str; 15] = [
 ];
 
 /// `getRetryErrorType(error)`.
+/// `TRANSIENT_ERROR_CODES`.
+const TRANSIENT_ERROR_CODES: [&str; 3] = ["TimeoutError", "RequestTimeout", "RequestTimeoutException"];
+
+/// `NODEJS_TIMEOUT_ERROR_CODES` and `NODEJS_NETWORK_ERROR_CODES`.
+const NODEJS_ERROR_CODES: [&str; 8] = [
+	"ECONNRESET",
+	"ECONNREFUSED",
+	"EPIPE",
+	"ETIMEDOUT",
+	"EHOSTUNREACH",
+	"ENETUNREACH",
+	"ENOTFOUND",
+	"EAI_AGAIN",
+];
+
 fn retry_error_type(error: &PiError) -> RetryErrorType {
 	let status = error
 		.data
@@ -2118,12 +2176,6 @@ fn retry_error_type(error: &PiError) -> RetryErrorType {
 	if status == Some(429.0) || THROTTLING_ERROR_CODES.contains(&error.name.as_str()) {
 		return RetryErrorType::Throttling;
 	}
-	let code = error
-		.data
-		.as_ref()
-		.and_then(|data| data.get("code"))
-		.and_then(Value::as_str)
-		.unwrap_or("");
 	let clock_skew_corrected = error
 		.data
 		.as_ref()
@@ -2133,18 +2185,9 @@ fn retry_error_type(error: &PiError) -> RetryErrorType {
 	let transient = (is_service_exception(error) && error.name == "ModelNotReadyException")
 		|| clock_skew_corrected
 		|| (error.name == "InvalidSignatureException" && error.message.contains("Signature expired"))
-		|| ["TimeoutError", "RequestTimeout", "RequestTimeoutException"].contains(&error.name.as_str())
-		|| [
-			"ECONNRESET",
-			"ECONNREFUSED",
-			"EPIPE",
-			"ETIMEDOUT",
-			"EHOSTUNREACH",
-			"ENETUNREACH",
-			"ENOTFOUND",
-			"EAI_AGAIN",
-		]
-		.contains(&code)
+		|| TRANSIENT_ERROR_CODES.contains(&error.name.as_str())
+		|| is_host_transport_failure(error)
+		|| has_transient_code(error.data.as_ref(), 0)
 		|| status.is_some_and(|status| [500.0, 502.0, 503.0, 504.0].contains(&status));
 	if transient {
 		RetryErrorType::Transient
@@ -2154,6 +2197,30 @@ fn retry_error_type(error: &PiError) -> RetryErrorType {
 }
 
 /// `parseRetryAfterHeader(response)` as an epoch time in milliseconds.
+/// The host's `TypeError: fetch failed` for a request that got no response. Node's HTTP/2 handler fails such a
+/// request with a socket error whose `code` the SDK reads as transient; the host only gives the cause as text, so
+/// every failure to get a response counts as one.
+fn is_host_transport_failure(error: &PiError) -> bool {
+	error.name == "TypeError"
+		&& error.message == "fetch failed"
+		&& error.data.as_ref().is_none_or(|data| data.get("$metadata").is_none())
+}
+
+/// `isTransientError`'s `error.code` and `error.name` checks down the `cause` chain, ten levels deep like the SDK.
+fn has_transient_code(data: Option<&Value>, depth: usize) -> bool {
+	let Some(data) = data else {
+		return false;
+	};
+	let code = data.get("code").and_then(Value::as_str).unwrap_or("");
+	let cause = data.get("cause");
+	let cause_name = cause
+		.and_then(|cause| cause.get("name"))
+		.and_then(Value::as_str)
+		.unwrap_or("");
+	NODEJS_ERROR_CODES.contains(&code)
+		|| (depth <= 10 && (TRANSIENT_ERROR_CODES.contains(&cause_name) || has_transient_code(cause, depth + 1)))
+}
+
 fn retry_after_hint(headers: &IndexMap<String, String>) -> Option<f64> {
 	static SECONDS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^((\d+)|(\d+\.\d+))$").expect("valid regex"));
 	static GMT_SECONDS: LazyLock<Regex> =
@@ -2226,34 +2293,7 @@ mod tests {
 		pi_host::testing::run(|host| async move {
 			host.advance(1794052800000.0 - pi_host::now_ms());
 			let client = BedrockRuntimeClient::new(BedrockRuntimeClientConfig::default());
-			let headers: IndexMap<String, String> = [
-				("content-type", "application/json"),
-				("content-length", "216"),
-				("x-amz-user-agent", "aws-sdk-js/3.1126.0 pi/1.5.0"),
-				(
-					"user-agent",
-					"aws-sdk-js/3.1126.0 ua/2.1 os/linux lang/rust api/bedrock-runtime#3.1126.0 m/N,E,e pi/1.5.0",
-				),
-				("host", "127.0.0.1:45123"),
-				("x-custom", "v"),
-				("amz-sdk-invocation-id", "637f9490-e814-484e-8000-13b957ad6b5c"),
-				("amz-sdk-request", "attempt=1; max=3"),
-			]
-			.into_iter()
-			.map(|(name, value)| (name.to_string(), value.to_string()))
-			.collect();
-			let identity = Identity::SigV4(
-				AwsCredentialIdentity {
-					access_key_id: "AKIDEXAMPLE".into(),
-					secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".into(),
-					session_token: None,
-				},
-				Some("e"),
-			);
-			let url = "http://127.0.0.1:45123/model/us.anthropic.claude-opus-4-8/converse-stream";
-			let signed = client
-				.sign(&headers, url, BODY.as_bytes(), &identity, "us-west-2")
-				.expect("signs");
+			let signed = sign_fixture(&client, "v");
 			let names: Vec<&str> = signed.keys().map(String::as_str).collect();
 			assert_eq!(
 				names,
@@ -2279,6 +2319,55 @@ mod tests {
 			assert_eq!(
 				signed["authorization"],
 				"AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261107/us-west-2/bedrock/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent;x-custom, Signature=af5a01547f6bff7386280d4c10ddfd3a9d2713b6d2854c7df6af8f298e95467e"
+			);
+		});
+	}
+
+	/// `client.sign` of the request headers of the `basic-sigv4` oracle case, with `x-custom` set to `custom`.
+	fn sign_fixture(client: &BedrockRuntimeClient, custom: &str) -> IndexMap<String, String> {
+		let headers: IndexMap<String, String> = [
+			("content-type", "application/json"),
+			("content-length", "216"),
+			("x-amz-user-agent", "aws-sdk-js/3.1126.0 pi/1.5.0"),
+			(
+				"user-agent",
+				"aws-sdk-js/3.1126.0 ua/2.1 os/linux lang/rust api/bedrock-runtime#3.1126.0 m/N,E,e pi/1.5.0",
+			),
+			("host", "127.0.0.1:45123"),
+			("x-custom", custom),
+			("amz-sdk-invocation-id", "637f9490-e814-484e-8000-13b957ad6b5c"),
+			("amz-sdk-request", "attempt=1; max=3"),
+		]
+		.into_iter()
+		.map(|(name, value)| (name.to_string(), value.to_string()))
+		.collect();
+		let identity = Identity::SigV4(
+			AwsCredentialIdentity {
+				access_key_id: "AKIDEXAMPLE".into(),
+				secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".into(),
+				session_token: None,
+			},
+			Some("e"),
+		);
+		let url = "http://127.0.0.1:45123/model/us.anthropic.claude-opus-4-8/converse-stream";
+		client
+			.sign(&headers, url, BODY.as_bytes(), &identity, "us-west-2")
+			.expect("signs")
+	}
+
+	/// Recorded with `@smithy/signature-v4`, whose canonical header value is `value.trim().replace(/\s+/g, " ")`.
+	#[test]
+	fn signs_header_values_with_collapsed_whitespace_and_sends_them_unchanged() {
+		pi_host::testing::run(|host| async move {
+			host.advance(1794052800000.0 - pi_host::now_ms());
+			let client = BedrockRuntimeClient::new(BedrockRuntimeClientConfig::default());
+			let signed = sign_fixture(&client, " a\tb \u{a0} c\n");
+			assert_eq!(signed["x-custom"], " a\tb \u{a0} c\n");
+			assert!(
+				signed["authorization"]
+					.ends_with("Signature=8a31fea94c6b1feb5473e52599fe3292543a932e8ea86dc64d72286506ab0062"),
+				"{}",
+				signed["authorization"]
 			);
 		});
 	}

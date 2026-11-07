@@ -19,8 +19,8 @@ use pi_ai::types::{
 	AssistantMessage, CacheRetention, Model, ProviderRequestOptions, StopReason, StreamOptions, TranscriptContext,
 };
 use pi_ai::utils::identity::get_client_version;
-use pi_host::AbortController;
 use pi_host::testing::{RecordedRequest, TestHost, run};
+use pi_host::{AbortController, PiError};
 use serde_json::{Value, json};
 
 const HINT: &str =
@@ -45,6 +45,27 @@ fn bearer_options() -> BedrockOptions {
 				..ProviderRequestOptions::default()
 			},
 			cache_retention: Some(CacheRetention::None),
+			..StreamOptions::default()
+		},
+		..BedrockOptions::default()
+	}
+}
+
+/// `{ env: { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION: "us-west-2" } }`.
+fn sigv4_options() -> BedrockOptions {
+	BedrockOptions {
+		base: StreamOptions {
+			base: ProviderRequestOptions {
+				env: Some(IndexMap::from([
+					("AWS_ACCESS_KEY_ID".to_string(), "AKIDEXAMPLE".to_string()),
+					(
+						"AWS_SECRET_ACCESS_KEY".to_string(),
+						"wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".to_string(),
+					),
+					("AWS_REGION".to_string(), "us-west-2".to_string()),
+				])),
+				..ProviderRequestOptions::default()
+			},
 			..StreamOptions::default()
 		},
 		..BedrockOptions::default()
@@ -577,5 +598,232 @@ fn skips_unknown_events_and_keeps_unknown_union_members() {
 			serde_json::to_value(&outcome.message.content).unwrap(),
 			json!([{ "type": "thinking", "thinking": "[Reasoning redacted]", "thinkingSignature": "AQID", "redacted": true }])
 		);
+	});
+}
+
+/// The oracle's fixed clock, 2026-11-07T12:00:00Z.
+const ORACLE_NOW: f64 = 1794052800000.0;
+
+/// Name, response `date` and `age` headers, then the attempts, the second request's `x-amz-date` and the error.
+type ClockSkewCase = (
+	&'static str,
+	&'static str,
+	Option<&'static str>,
+	usize,
+	Option<&'static str>,
+	Option<String>,
+);
+
+#[test]
+fn corrects_the_clock_from_response_date_headers_like_the_sdk() {
+	let validation = Some("Validation error: skewed".to_string());
+	let cases: Vec<ClockSkewCase> = vec![
+		(
+			"skew-260",
+			"Sat, 07 Nov 2026 12:04:20 GMT",
+			None,
+			2,
+			Some("20261107T120420Z"),
+			None,
+		),
+		(
+			"skew-200",
+			"Sat, 07 Nov 2026 12:03:20 GMT",
+			None,
+			1,
+			None,
+			validation.clone(),
+		),
+		(
+			"skew-age",
+			"Sat, 07 Nov 2026 13:00:00 GMT",
+			Some("0"),
+			1,
+			None,
+			validation,
+		),
+	];
+	for (name, date, age, attempts, retry_date, error) in cases {
+		run(|host| async move {
+			host.advance(ORACLE_NOW - pi_host::now_ms());
+			let mut headers = vec![("x-amzn-errortype", "ValidationException"), ("date", date)];
+			headers.extend(age.map(|age| ("age", age)));
+			serve(
+				&host,
+				vec![
+					json_response(400, &headers, r#"{"message":"skewed"}"#),
+					stream_response(&bedrock_support::text_stream("hi"), &[]),
+				],
+			);
+			let outcome = run_case(&host, &opus("http://127.0.0.1:1"), &hello(), sigv4_options()).await;
+			assert_eq!(outcome.requests.len(), attempts, "{name}");
+			assert_eq!(outcome.requests[0].headers["x-amz-date"], "20261107T120000Z", "{name}");
+			if let Some(retry_date) = retry_date {
+				assert_eq!(outcome.requests[1].headers["x-amz-date"], retry_date, "{name}");
+			}
+			assert_eq!(outcome.message.error_message, error, "{name}");
+		});
+	}
+}
+
+#[test]
+fn fails_the_retry_signing_after_an_unparseable_date_header() {
+	run(|host| async move {
+		serve(
+			&host,
+			vec![
+				json_response(
+					500,
+					&[("x-amzn-errortype", "InternalServerException"), ("date", "garbage")],
+					r#"{"message":"oops"}"#,
+				),
+				stream_response(&bedrock_support::text_stream("hi"), &[]),
+			],
+		);
+		let outcome = run_case(&host, &opus("http://127.0.0.1:1"), &hello(), sigv4_options()).await;
+		assert_eq!(outcome.requests.len(), 1);
+		assert_error(&outcome, &["error"], "Invalid time value", Value::Null);
+	});
+}
+
+#[test]
+fn retries_a_request_that_got_no_response() {
+	run(|host| async move {
+		let attempts = Rc::new(std::cell::Cell::new(0));
+		let seen = attempts.clone();
+		host.on_fetch(move |_| {
+			seen.set(seen.get() + 1);
+			let attempt = seen.get();
+			Box::pin(async move {
+				if attempt < 3 {
+					return Err(PiError::type_error("fetch failed")
+						.with_data(json!({ "cause": "error sending request for url (http://127.0.0.1:1/)" })));
+				}
+				Ok(bedrock_support::Reply::to_response(&stream_response(
+					&bedrock_support::text_stream("hi"),
+					&[],
+				)))
+			})
+		});
+		let outcome = run_case(&host, &opus("http://127.0.0.1:1"), &hello(), bearer_options()).await;
+		assert_eq!(attempts.get(), 3);
+		assert_eq!(outcome.message.stop_reason, StopReason::Stop);
+	});
+}
+
+#[test]
+fn retries_an_error_whose_cause_has_a_node_network_code() {
+	run(|host| async move {
+		let attempts = Rc::new(std::cell::Cell::new(0));
+		let seen = attempts.clone();
+		host.on_fetch(move |_| {
+			seen.set(seen.get() + 1);
+			Box::pin(async {
+				Err(PiError::new("socket closed").with_data(json!({ "cause": { "cause": { "code": "ECONNRESET" } } })))
+			})
+		});
+		let outcome = run_case(&host, &opus("http://127.0.0.1:1"), &hello(), bearer_options()).await;
+		assert_eq!(attempts.get(), 3);
+		assert_eq!(outcome.message.error_message.as_deref(), Some("socket closed"));
+	});
+}
+
+#[test]
+fn ignores_invalid_retry_and_endpoint_settings_like_the_sdk() {
+	run(|host| async move {
+		host.set_env("AWS_MAX_ATTEMPTS", "abc");
+		host.set_env("AWS_USE_FIPS_ENDPOINT", "yes");
+		host.set_env("AWS_USE_DUALSTACK_ENDPOINT", "");
+		serve(&host, vec![stream_response(&bedrock_support::text_stream("hi"), &[])]);
+		let outcome = run_case(&host, &opus("http://127.0.0.1:1"), &hello(), bearer_options()).await;
+		assert_eq!(
+			outcome.message.stop_reason,
+			StopReason::Stop,
+			"{:?}",
+			outcome.message.error_message
+		);
+		assert_eq!(outcome.requests.len(), 1);
+		assert_eq!(outcome.requests[0].headers["amz-sdk-request"], "attempt=1; max=3");
+	});
+}
+
+/// Recorded with `AWS_LAMBDA_FUNCTION_NAME=fn` and `_X_AMZN_TRACE_ID=Root=1-abc` in the process env: the trace id
+/// follows `host` (which the host's fetch sends on its own) and comes before the caller headers, unsigned.
+#[test]
+fn sends_the_lambda_trace_id_unsigned_unless_the_caller_sets_one() {
+	let caller = |name: &str, value: &str| {
+		let mut options = sigv4_options();
+		options.base.base.headers = Some(IndexMap::from([(name.to_string(), Some(value.to_string()))]));
+		options
+	};
+	let cases = vec![
+		(
+			sigv4_options(),
+			vec![("X-Amzn-Trace-Id", "Root=1-abc"), ("amz-sdk-invocation-id", "")],
+		),
+		(
+			caller("x-custom", "v"),
+			vec![
+				("X-Amzn-Trace-Id", "Root=1-abc"),
+				("x-custom", "v"),
+				("amz-sdk-invocation-id", ""),
+			],
+		),
+		(
+			caller("x-amzn-trace-id", "caller"),
+			vec![("x-amzn-trace-id", "caller"), ("amz-sdk-invocation-id", "")],
+		),
+	];
+	for (options, expected) in cases {
+		run(|host| async move {
+			host.set_env("AWS_LAMBDA_FUNCTION_NAME", "fn");
+			host.set_env("_X_AMZN_TRACE_ID", "Root=1-abc");
+			serve(&host, vec![stream_response(&bedrock_support::text_stream("hi"), &[])]);
+			let outcome = run_case(&host, &opus("http://127.0.0.1:1"), &hello(), options).await;
+			let headers = &outcome.requests[0].headers;
+			let after_user_agent: Vec<(&str, &str)> = headers
+				.iter()
+				.skip_while(|(name, _)| name.as_str() != "user-agent")
+				.skip(1)
+				.zip(&expected)
+				.map(|((name, value), (_, expected))| {
+					(name.as_str(), if expected.is_empty() { "" } else { value.as_str() })
+				})
+				.collect();
+			assert_eq!(after_user_agent, expected);
+			assert!(!headers["authorization"].contains("x-amzn-trace-id"));
+		});
+	}
+}
+
+/// Recorded: a caller header that differs from a client header only in case replaces it in place.
+#[test]
+fn replaces_client_headers_that_differ_only_in_case() {
+	run(|host| async move {
+		serve(&host, vec![stream_response(&bedrock_support::text_stream("hi"), &[])]);
+		let mut options = sigv4_options();
+		options.base.base.headers = Some(IndexMap::from([
+			("User-Agent".to_string(), Some("custom".to_string())),
+			("Content-Type".to_string(), Some("text/plain".to_string())),
+		]));
+		let outcome = run_case(&host, &opus("http://127.0.0.1:1"), &hello(), options).await;
+		let headers: Vec<(&str, &str)> = outcome.requests[0]
+			.headers
+			.iter()
+			.take(4)
+			.map(|(name, value)| (name.as_str(), value.as_str()))
+			.collect();
+		assert_eq!(
+			headers,
+			[
+				("Content-Type", "text/plain"),
+				("content-length", "132"),
+				("x-amz-user-agent", "aws-sdk-js/3.1126.0 pi/1.5.0"),
+				("User-Agent", "custom"),
+			]
+		);
+		assert!(outcome.requests[0].headers["authorization"].contains(
+			"SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent,"
+		));
 	});
 }
