@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 default = []
-native = ["dep:tokio", "dep:reqwest", "dep:tokio-tungstenite"]
+native = ["dep:tokio", "dep:reqwest", "dep:tokio-tungstenite", "dep:nix"]
 testing = ["futures/executor"]
 
 [dependencies]
@@ -21,6 +21,9 @@ rand = { workspace = true }
 tokio = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true, optional = true }
 
 [lints]
 workspace = true

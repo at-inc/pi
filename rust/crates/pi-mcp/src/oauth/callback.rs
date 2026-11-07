@@ -1,31 +1,22 @@
 //! Port of `packages/mcp/src/oauth/callback.ts`.
 //! PORT-STATUS: reviewed
 //!
-//! Behind the `native` feature: the loopback HTTP server is a tokio `TcpListener` that reads one request
-//! head per connection and answers with `connection: close`, instead of `node:http`. `OAuthCallbackPage` is
-//! an enum: `Ok` for `{ ok: true }` and `Failed` for `{ ok: false, message, details }`. A request head must
-//! arrive within 60 seconds, like Node's `headersTimeout`. `close` stops accepting and drops open connections
-//! at once instead of waiting for them. A request target that is not a valid URL gets a 404 page, where the
-//! TS handler throws. A bind failure is an `Error` with Node's `listen <code>: <description> <host>:<port>`
-//! message and `data.code`.
-
-#![cfg(feature = "native")]
+//! The loopback HTTP server is the host's `listen_http` (`pi_host::http_server`), the counterpart of
+//! `node:http`: the native host serves one request per connection with `connection: close` and drops open
+//! connections on `close`, the JS host uses `node:http`, and hosts without a listener (Workers) fail `listen`.
+//! `OAuthCallbackPage` is an enum: `Ok` for `{ ok: true }` and `Failed` for `{ ok: false, message, details }`. A
+//! request target that is not a valid URL gets a 404 page, where the TS handler throws. A bind failure is the
+//! host's `Error` with Node's `listen <code>: <description> <host>:<port>` message and `data.code`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use futures::channel::oneshot;
-use futures::future::{AbortHandle, Abortable, Either, select};
+use futures::future::{AbortHandle, Abortable};
 use indexmap::IndexMap;
+use pi_host::http_server::{HttpServer, ServerRequest, ServerResponse};
 use pi_host::{LocalBoxFuture, PiError, PiResult};
-use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
 use url::Url;
-
-const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
-/// Node's default `headersTimeout`.
-const HEADERS_TIMEOUT_MS: f64 = 60_000.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OAuthCallback {
@@ -82,12 +73,11 @@ struct Inner {
 	timeout_ms: f64,
 	render_page: Option<RenderPageFunction>,
 	pending: RefCell<IndexMap<String, Pending>>,
-	listener: AbortHandle,
-	connections: RefCell<Vec<AbortHandle>>,
 }
 
 pub struct OAuthCallbackServer {
 	inner: Rc<Inner>,
+	server: Rc<dyn HttpServer>,
 }
 
 impl OAuthCallbackServer {
@@ -96,53 +86,41 @@ impl OAuthCallbackServer {
 		let host = options.host.unwrap_or_else(|| "127.0.0.1".into());
 		let redirect_host = options.redirect_host.unwrap_or_else(|| host.clone());
 		let path = options.path.unwrap_or_else(|| "/callback".into());
-		let port = options.port.unwrap_or(0);
-		let listener = TcpListener::bind((host.as_str(), port))
-			.await
-			.map_err(|error| listen_error(&error, &host, port))?;
-		let port = listener
-			.local_addr()
-			.map_err(|_| PiError::new("OAuth callback server did not bind to TCP"))?
-			.port();
+		// The handler runs only after `listen` resolved and `inner` was set, like the TS `instance?.handle`.
+		let instance: Rc<RefCell<Option<Rc<Inner>>>> = Rc::default();
+		let handler_instance = instance.clone();
+		let server = pi_host::http_server::listen_http(
+			&host,
+			options.port.unwrap_or(0),
+			Rc::new(move |request: ServerRequest| {
+				let inner = handler_instance.borrow().clone();
+				let response = match inner {
+					Some(inner) => reply(&inner, &request.url),
+					None => ServerResponse {
+						status: 404,
+						..Default::default()
+					},
+				};
+				Box::pin(async move { response })
+			}),
+		)
+		.await?;
 		let redirect_host = if redirect_host.contains(':') {
 			format!("[{redirect_host}]")
 		} else {
 			redirect_host
 		};
-		let (listener_handle, registration) = AbortHandle::new_pair();
 		let mut paths = vec![path.clone()];
 		paths.extend(options.extra_paths.unwrap_or_default());
 		let inner = Rc::new(Inner {
-			redirect_url: format!("http://{redirect_host}:{port}{path}"),
+			redirect_url: format!("http://{redirect_host}:{}{path}", server.port()),
 			paths,
 			timeout_ms: options.timeout_ms.unwrap_or(5.0 * 60_000.0),
 			render_page: options.render_page,
 			pending: RefCell::new(IndexMap::new()),
-			listener: listener_handle,
-			connections: RefCell::new(Vec::new()),
 		});
-		let accepting = Rc::downgrade(&inner);
-		pi_host::spawn_local(async move {
-			let accept = async move {
-				while let Ok((stream, _)) = listener.accept().await {
-					let Some(inner) = accepting.upgrade() else {
-						return;
-					};
-					let (connection, registration) = AbortHandle::new_pair();
-					inner
-						.connections
-						.borrow_mut()
-						.retain(|connection| !connection.is_aborted());
-					inner.connections.borrow_mut().push(connection.clone());
-					pi_host::spawn_local(async move {
-						let _ = Abortable::new(serve(&inner, stream), registration).await;
-						connection.abort();
-					});
-				}
-			};
-			let _ = Abortable::new(accept, registration).await;
-		});
-		Ok(Self { inner })
+		*instance.borrow_mut() = Some(inner.clone());
+		Ok(Self { inner, server })
 	}
 
 	pub fn redirect_url(&self) -> &str {
@@ -200,74 +178,26 @@ impl OAuthCallbackServer {
 			pending.timer.abort();
 			let _ = pending.sender.send(Err(PiError::new("OAuth callback server closed")));
 		}
-		self.inner.listener.abort();
-		for connection in std::mem::take(&mut *self.inner.connections.borrow_mut()) {
-			connection.abort();
-		}
-		Ok(())
+		self.server.close().await
 	}
 }
 
-fn listen_error(error: &std::io::Error, host: &str, port: u16) -> PiError {
-	let (code, description) = match error.kind() {
-		std::io::ErrorKind::AddrInUse => ("EADDRINUSE", "address already in use"),
-		std::io::ErrorKind::AddrNotAvailable => ("EADDRNOTAVAIL", "address not available"),
-		std::io::ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
-		_ => ("EIO", "i/o error"),
-	};
-	PiError::new(format!("listen {code}: {description} {host}:{port}")).with_data(json!({ "code": code }))
-}
-
-async fn read_head(stream: &mut TcpStream) -> Option<Vec<u8>> {
-	let mut head = Vec::new();
-	let mut chunk = [0u8; 4096];
-	while !head.windows(4).any(|window| window == b"\r\n\r\n") {
-		match stream.read(&mut chunk).await {
-			Ok(0) | Err(_) => return None,
-			Ok(read) => head.extend_from_slice(&chunk[..read]),
+/// The response to a request for `raw_url`: the page, rendered by `renderPage` or as plain text.
+fn reply(inner: &Inner, raw_url: &str) -> ServerResponse {
+	let (status, page) = handle(inner, raw_url);
+	let mut headers = IndexMap::new();
+	let body = match &inner.render_page {
+		Some(render_page) => {
+			headers.insert("content-type".into(), "text/html; charset=utf-8".into());
+			headers.insert("cache-control".into(), "no-store".into());
+			render_page(&page)
 		}
-		if head.len() > MAX_REQUEST_HEAD_BYTES {
-			return None;
-		}
-	}
-	Some(head)
-}
-
-async fn serve(inner: &Inner, mut stream: TcpStream) {
-	let head = {
-		let read = read_head(&mut stream);
-		let deadline = pi_host::sleep(HEADERS_TIMEOUT_MS, None);
-		futures::pin_mut!(read, deadline);
-		match select(read, deadline).await {
-			Either::Left((Some(head), _)) => head,
-			_ => return,
+		None => {
+			headers.insert("content-type".into(), "text/plain; charset=utf-8".into());
+			plain_text(&page)
 		}
 	};
-	let head = String::from_utf8_lossy(&head);
-	let target = head
-		.lines()
-		.next()
-		.and_then(|line| line.split_whitespace().nth(1))
-		.unwrap_or("/");
-	let (status, page) = handle(inner, target);
-	let (content_type, body) = match &inner.render_page {
-		Some(render_page) => (
-			"text/html; charset=utf-8\r\ncache-control: no-store",
-			render_page(&page),
-		),
-		None => ("text/plain; charset=utf-8", plain_text(&page)),
-	};
-	let reason = match status {
-		200 => "OK",
-		400 => "Bad Request",
-		_ => "Not Found",
-	};
-	let response = format!(
-		"HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-		body.len()
-	);
-	let _ = stream.write_all(response.as_bytes()).await;
-	let _ = stream.shutdown().await;
+	ServerResponse { status, headers, body }
 }
 
 fn failed(message: &str) -> OAuthCallbackPage {

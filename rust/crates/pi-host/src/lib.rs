@@ -13,12 +13,18 @@ pub mod abort;
 pub mod error;
 pub mod host;
 pub mod http;
+pub mod http_server;
 pub mod js;
+pub mod process;
 pub mod sse;
 pub mod websocket;
 
 #[cfg(feature = "native")]
 pub mod native;
+#[cfg(feature = "native")]
+mod native_http_server;
+#[cfg(feature = "native")]
+mod native_process;
 #[cfg(feature = "testing")]
 pub mod testing;
 

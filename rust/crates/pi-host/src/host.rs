@@ -48,6 +48,25 @@ pub trait Host {
 		let error = file_not_found(path);
 		Box::pin(async move { Err(error) })
 	}
+	/// `child_process.spawn(command, args, options)` with piped stdio. Hosts without processes (browsers, Workers)
+	/// fail with `process::processes_unsupported`. See `process::spawn_process`.
+	fn spawn_process(
+		&self,
+		_options: crate::process::SpawnOptions,
+		_listeners: crate::process::ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::process::ChildProcess>>> {
+		Box::pin(async { Err(crate::process::processes_unsupported()) })
+	}
+	/// `http.createServer(handler).listen(port, host)`. Hosts without a listener (browsers, Workers) fail with
+	/// `http_server::listen_unsupported`. See `http_server::listen_http`.
+	fn listen_http(
+		&self,
+		_host: &str,
+		_port: u16,
+		_handler: crate::http_server::ServerHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::http_server::HttpServer>>> {
+		Box::pin(async { Err(crate::http_server::listen_unsupported()) })
+	}
 }
 
 /// The error Node's `fs.promises.readFile` rejects with for a missing file.

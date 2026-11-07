@@ -187,6 +187,24 @@ impl Host for NativeHost {
 	fn websocket(&self, url: &str, headers: &IndexMap<String, String>) -> Option<PiResult<Rc<dyn WebSocket>>> {
 		Some(NativeWebSocket::connect(url, headers))
 	}
+
+	fn spawn_process(
+		&self,
+		options: crate::process::SpawnOptions,
+		listeners: crate::process::ProcessListeners,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::process::ChildProcess>>> {
+		let spawned = crate::native_process::spawn(options, listeners);
+		Box::pin(async move { spawned })
+	}
+
+	fn listen_http(
+		&self,
+		host: &str,
+		port: u16,
+		handler: crate::http_server::ServerHandler,
+	) -> LocalBoxFuture<'static, PiResult<Rc<dyn crate::http_server::HttpServer>>> {
+		Box::pin(crate::native_http_server::listen(host.to_string(), port, handler))
+	}
 }
 
 /// A native WebSocket client socket over tokio-tungstenite. The connection runs on a local task that dispatches the
