@@ -1,6 +1,7 @@
 // Node host: global fetch and WebSocket (looked up per call, so tests can replace them), timers, process.env,
 // node:fs, child processes (process.ts) and HTTP servers (http-server.ts). Importing the package on Node (the default
-// export condition) loads the wasm next to the package with it.
+// export condition) loads the wasm next to the package with it, or, in a single executable application, the SEA asset
+// named `pi_wasm_bg.wasm`.
 
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -41,5 +42,13 @@ export const host: PiHost = {
 		`${process.platform}; ${process.versions.bun ? `bun/${process.versions.bun}` : `node/${process.version}`}; ${process.arch}`,
 };
 
+const WASM_FILE = "pi_wasm_bg.wasm";
+
+// Bun has no node:sea, so it is looked up instead of imported.
+const sea = process.getBuiltinModule?.("node:sea");
+
 /** The initialized wasm exports. */
-export const wasm = initCore(host, readFileSync(new URL("../wasm/pi_wasm_bg.wasm", import.meta.url)));
+export const wasm = initCore(
+	host,
+	sea?.isSea() ? sea.getAsset(WASM_FILE) : readFileSync(new URL(`../wasm/${WASM_FILE}`, import.meta.url)),
+);
