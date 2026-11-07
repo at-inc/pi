@@ -8,9 +8,18 @@
 //! - `azureStreams`' wrapper is a private struct implementing `ProviderStreams`. `withDeploymentName<T>` is generic over
 //!   the two stream option types, which both deref to `StreamOptions`.
 //! - `resolveAzureBaseUrl` / `resolveDeploymentName` take `AzureEndpointOptions`: its `azure*` fields are read from
-//!   `ProviderStreamOptions.extra` (string values only); `SimpleStreamOptions` has no extra keys, so simple requests
-//!   resolve Azure settings from the provider env only.
-//! - `{ ...payload, model }` of a non-object payload is `{ model }` (JS spreads a primitive to no keys).
+//!   `ProviderStreamOptions.extra`, string values only. A non-string `azureBaseUrl` throws in the TS (`.trim` is not
+//!   a function) and is ignored here.
+//! - `SimpleStreamOptions` has no extra keys (types shard), so `streamSimple` cannot see `azureBaseUrl`,
+//!   `azureDeploymentName` or `azureResourceName`: a `streamSimple` call that passes `azureBaseUrl` with no
+//!   `AZURE_OPENAI_BASE_URL`/`AZURE_OPENAI_RESOURCE_NAME` in the env ends with the unconfigured-endpoint error, and a
+//!   deployment name passed that way is not sent.
+//! - `{ ...payload, model }` spreads an array payload into index keys and a string payload into one key per
+//!   character, like JS; other primitives spread to no keys. A string with characters outside the BMP gets one key per
+//!   character here where JS has one per UTF-16 code unit.
+//! - The wrapped `onPayload` hands the caller's `onPayload` a copy of the params (the shared `OnPayload` signature
+//!   takes the payload by value), so a caller that mutates the params in place and returns `undefined` loses the
+//!   mutation; the TS sends it.
 
 use std::ops::DerefMut;
 use std::rc::Rc;
@@ -73,6 +82,16 @@ where
 	wrapped.on_payload = Some(Rc::new(move |payload: Value, payload_model: &Model| {
 		let mut params = match payload {
 			Value::Object(payload) => payload,
+			Value::Array(items) => items
+				.into_iter()
+				.enumerate()
+				.map(|(index, item)| (index.to_string(), item))
+				.collect(),
+			Value::String(text) => text
+				.chars()
+				.enumerate()
+				.map(|(index, ch)| (index.to_string(), Value::String(ch.to_string())))
+				.collect(),
 			_ => serde_json::Map::new(),
 		};
 		params.insert("model".into(), Value::String(deployment_name.clone()));
@@ -83,7 +102,8 @@ where
 				Some(inner) => inner(params.clone(), &payload_model).await?,
 				None => None,
 			};
-			Ok(Some(replaced.unwrap_or(params)))
+			// `?? params`: an `undefined` or `null` result keeps the params.
+			Ok(Some(replaced.filter(|replaced| !replaced.is_null()).unwrap_or(params)))
 		})
 	}));
 	Some(wrapped)
@@ -102,19 +122,21 @@ impl ProviderStreams for AzureStreams {
 		context: &TranscriptContext,
 		options: Option<ProviderStreamOptions>,
 	) -> PiResult<AssistantMessageEventStream> {
-		let (streams, request_model, context) = (self.streams.clone(), model.clone(), context.clone());
 		Ok(lazy_stream(
 			model,
-			move || async move {
+			// The TS setup has no `await`, so resolution and the inner `stream()` call run inside `stream()`.
+			|| {
 				let endpoint = options
 					.as_ref()
 					.map(|options| azure_endpoint_options(&options.base, Some(&options.extra)));
-				let resolved = resolve_azure_model(&request_model, endpoint.as_ref())?;
-				streams.stream(
-					&resolved,
-					&context,
-					with_deployment_name(&request_model, options, endpoint.as_ref()),
-				)
+				let inner = resolve_azure_model(model, endpoint.as_ref()).and_then(|resolved| {
+					self.streams.stream(
+						&resolved,
+						context,
+						with_deployment_name(model, options, endpoint.as_ref()),
+					)
+				});
+				async move { inner }
 			},
 			None,
 		))
@@ -126,19 +148,21 @@ impl ProviderStreams for AzureStreams {
 		context: &TranscriptContext,
 		options: Option<SimpleStreamOptions>,
 	) -> PiResult<AssistantMessageEventStream> {
-		let (streams, request_model, context) = (self.streams.clone(), model.clone(), context.clone());
 		Ok(lazy_stream(
 			model,
-			move || async move {
+			// The TS setup has no `await`, so resolution and the inner `streamSimple()` call run inside `streamSimple()`.
+			|| {
 				let endpoint = options
 					.as_ref()
 					.map(|options| azure_endpoint_options(&options.base, None));
-				let resolved = resolve_azure_model(&request_model, endpoint.as_ref())?;
-				streams.stream_simple(
-					&resolved,
-					&context,
-					with_deployment_name(&request_model, options, endpoint.as_ref()),
-				)
+				let inner = resolve_azure_model(model, endpoint.as_ref()).and_then(|resolved| {
+					self.streams.stream_simple(
+						&resolved,
+						context,
+						with_deployment_name(model, options, endpoint.as_ref()),
+					)
+				});
+				async move { inner }
 			},
 			None,
 		))
@@ -168,4 +192,143 @@ pub fn azure_provider() -> Provider {
 		..CreateProviderOptions::default()
 	})
 	.expect("a provider with an api implementation always builds")
+}
+
+#[cfg(test)]
+mod tests {
+	use std::cell::RefCell;
+
+	use serde_json::json;
+
+	use super::*;
+	use crate::types::{BaseModel, Context, OnPayload};
+	use crate::utils::transcript::normalize_context;
+
+	#[derive(Default)]
+	struct Captured {
+		base_urls: Vec<String>,
+		on_payload: Option<OnPayload>,
+	}
+
+	struct CapturingStreams {
+		captured: Rc<RefCell<Captured>>,
+	}
+
+	impl ProviderStreams for CapturingStreams {
+		fn stream(
+			&self,
+			model: &Model,
+			_context: &TranscriptContext,
+			options: Option<ProviderStreamOptions>,
+		) -> PiResult<AssistantMessageEventStream> {
+			let mut captured = self.captured.borrow_mut();
+			captured.base_urls.push(model.base_url.clone());
+			captured.on_payload = options.and_then(|options| options.on_payload.clone());
+			let stream = AssistantMessageEventStream::new();
+			stream.end(None);
+			Ok(stream)
+		}
+
+		fn stream_simple(
+			&self,
+			_model: &Model,
+			_context: &TranscriptContext,
+			_options: Option<SimpleStreamOptions>,
+		) -> PiResult<AssistantMessageEventStream> {
+			unreachable!("these tests call stream()")
+		}
+	}
+
+	fn capturing_azure_streams() -> (Rc<dyn ProviderStreams>, Rc<RefCell<Captured>>) {
+		let captured = Rc::new(RefCell::new(Captured::default()));
+		let streams = azure_streams(Rc::new(CapturingStreams {
+			captured: captured.clone(),
+		}));
+		(streams, captured)
+	}
+
+	fn model() -> Model {
+		Model {
+			base: BaseModel {
+				id: "gpt-test".into(),
+				name: "gpt-test".into(),
+				api: "openai-completions".into(),
+				provider: "azure".into(),
+				..BaseModel::default()
+			},
+			..Model::default()
+		}
+	}
+
+	fn with_deployment(on_payload: Option<OnPayload>) -> ProviderStreamOptions {
+		let mut options = ProviderStreamOptions {
+			extra: serde_json::Map::from_iter([
+				(
+					"azureBaseUrl".to_string(),
+					json!("https://example.openai.azure.com/openai/v1"),
+				),
+				("azureDeploymentName".to_string(), json!("deploy-1")),
+			]),
+			..ProviderStreamOptions::default()
+		};
+		options.on_payload = on_payload;
+		options
+	}
+
+	#[test]
+	#[ignore = "PORT-STUB: resolveAzureBaseUrl (api/azure-openai-config.ts, w3-openai-responses)"]
+	fn resolves_the_endpoint_when_stream_is_called() {
+		pi_host::testing::run(|host| async move {
+			let (streams, captured) = capturing_azure_streams();
+			host.set_env("AZURE_OPENAI_BASE_URL", "https://example.openai.azure.com/openai/v1");
+			let stream = streams
+				.stream(&model(), &normalize_context(&Context::default()), None)
+				.unwrap();
+			host.set_env("AZURE_OPENAI_BASE_URL", "");
+			assert_eq!(captured.borrow().base_urls.len(), 1);
+			stream.result().await;
+			assert_eq!(captured.borrow().base_urls.len(), 1);
+		});
+	}
+
+	#[test]
+	#[ignore = "PORT-STUB: resolveAzureBaseUrl and resolveDeploymentName (api/azure-openai-config.ts, w3-openai-responses)"]
+	fn a_null_on_payload_result_keeps_the_params() {
+		pi_host::testing::run(|_| async {
+			let (streams, captured) = capturing_azure_streams();
+			let returns_null: OnPayload = Rc::new(|_, _| Box::pin(async { Ok(Some(Value::Null)) }));
+			streams
+				.stream(
+					&model(),
+					&normalize_context(&Context::default()),
+					Some(with_deployment(Some(returns_null))),
+				)
+				.unwrap();
+			let on_payload = captured.borrow().on_payload.clone().unwrap();
+			assert_eq!(
+				on_payload(json!({ "input": 1 }), &model()).await.unwrap(),
+				Some(json!({ "input": 1, "model": "deploy-1" }))
+			);
+		});
+	}
+
+	#[test]
+	#[ignore = "PORT-STUB: resolveAzureBaseUrl and resolveDeploymentName (api/azure-openai-config.ts, w3-openai-responses)"]
+	fn spreads_an_array_payload_into_index_keys() {
+		pi_host::testing::run(|_| async {
+			let (streams, captured) = capturing_azure_streams();
+			streams
+				.stream(
+					&model(),
+					&normalize_context(&Context::default()),
+					Some(with_deployment(None)),
+				)
+				.unwrap();
+			let on_payload = captured.borrow().on_payload.clone().unwrap();
+			assert_eq!(
+				on_payload(json!(["a", "b"]), &model()).await.unwrap(),
+				Some(json!({ "0": "a", "1": "b", "model": "deploy-1" }))
+			);
+		});
+	}
 }

@@ -3,11 +3,22 @@
 //!
 //! Differences from the TS:
 //! - `RadiusOAuthCredential` is `OAuthCredential`: its `gatewayConfig` lives in the credential's `extra` fields.
-//! - A gateway model that passes `isRadiusGatewayModel` but does not deserialize as `RadiusGatewayModel` (for
-//!   example an unknown input modality or a `cost` object without the rate fields), or whose `Model` built from it
-//!   does not deserialize, is dropped; the TS keeps the raw object. Unknown keys of a gateway model survive in
-//!   `extra` and become fields of the `Model`, like the TS spreads.
+//! - The foundation `Model` and `ModelCost` types (types shard) are stricter than the TS's raw objects, so a gateway
+//!   model that passes `isRadiusGatewayModel` but does not deserialize as `RadiusGatewayModel`, or whose `Model` built
+//!   from it does not deserialize, is dropped; the TS keeps the raw object. Examples: a `cost` object missing one of
+//!   `input`/`output`/`cacheRead`/`cacheWrite`, `input: ["audio"]`, a numeric `thinkingLevelMap` value, and a
+//!   `null` header value. Unknown keys at the top level of a gateway model survive in `extra` and become fields of
+//!   the `Model`, like the TS spreads; unknown keys nested in `cost` or `thinkingLevelMap` are lost.
+//! - An explicit `"thinkingLevelMap": null` survives in `RadiusGatewayModel`, but the `Model` built from it reads it
+//!   as absent (foundation type).
+//! - Serialized gateway models and the `Model`s built from them write the typed fields in declaration order, then the
+//!   unknown keys; the TS keeps the gateway's key order. This shows in persisted credentials and catalogs.
+//! - The `https?://` check folds ASCII case only. The TS `/iu` regex also folds `ſ` (U+017F) to `s`, so it keeps
+//!   `httpſ://host` as it is where this port prefixes `https://`.
+//! - A 512-unit body cut inside a surrogate pair drops the lone high surrogate (see `owned_slice`); the TS keeps it.
 //! - `new URL("/v1/config", gateway)` throws `TypeError: Invalid URL` for an invalid gateway.
+//! - A config body that is not JSON rejects with `SyntaxError` carrying serde's message (`expected value at line 1
+//!   column 1`), not V8's (`Unexpected token '<', "<html>" is not valid JSON`).
 
 use pi_host::{AbortSignal, HttpRequest, PiError, PiResult};
 use serde::{Deserialize, Serialize};
@@ -25,8 +36,12 @@ pub struct RadiusGatewayModel {
 	pub id: String,
 	pub name: String,
 	pub reasoning: bool,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub thinking_level_map: Option<ThinkingLevelMap>,
+	#[serde(
+		default,
+		deserialize_with = "pi_host::js::double_option",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub thinking_level_map: Option<Option<ThinkingLevelMap>>,
 	pub input: Vec<ModelInputModality>,
 	pub cost: ModelCost,
 	pub context_window: f64,

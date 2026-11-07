@@ -5,7 +5,7 @@
 //! - Rust has no dynamic import, so the cached module promises are direct calls into `api/openai_codex_images.rs` and
 //!   `api/openrouter_images.rs`; a failure of the call becomes the error result, like a failed import or rejection.
 //! - The TS registers the built-ins when the module loads; Rust has no module side effects, so callers run
-//!   `register_built_in_images_api_providers()` (`images.rs` does).
+//!   `register_built_in_images_api_providers()` (`images_api_registry.rs` does on first registry access).
 //! - The registry takes `ImagesFunction<ProviderImagesOptions>`; the API modules take `ImagesOptions`, so the
 //!   registered functions pass `options.base` on.
 

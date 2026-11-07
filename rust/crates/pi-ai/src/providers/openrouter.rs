@@ -7,14 +7,18 @@
 //!   returns the provider instead of a `PiResult`.
 //! - `personalizeOpenRouterCatalog` returns a copy of the catalog where the TS returns the same array.
 //! - The TS casts each `/models/user` entry with a string `id` to `OpenRouterModel`; Rust reads its fields from
-//!   JSON. Limits are read as numbers, so a truthy non-number limit falls through to the next candidate instead of
-//!   becoming the model's limit. Prices may be strings or numbers (`parseFloat(String(n))` reads both alike); other
-//!   price values read as missing, as `parseFloat` makes them NaN. An override whose `min_prompt_tokens` is not a
-//!   number yields no tier, and a present `utc_*` key of any value skips its override like `!== undefined` does.
-//! - `AbortSignal.timeout(15_000)` is an `AbortController` aborted with a `TimeoutError` by a host timer.
+//!   JSON when a catalog chat model matches the entry, where the TS reads them. Limits are read as numbers, so a
+//!   truthy non-number limit falls through to the next candidate instead of becoming the model's limit. Prices are
+//!   read as `parseFloat(String(value))`, like the TS. An override whose `min_prompt_tokens` is not a number yields
+//!   no tier, and a present `utc_*` key of any value skips its override like `!== undefined` does. Non-array
+//!   `overrides` and `null` override entries reject with V8's TypeError messages.
+//! - `AbortSignal.timeout(15_000)` is a host sleep raced against the request and its body read: when it wins it
+//!   aborts the request's signal with a `TimeoutError`, and it is dropped when the request finishes first.
 
+use std::future::Future;
 use std::rc::Rc;
 
+use futures::future::{Either, select};
 use indexmap::IndexMap;
 use pi_host::{AbortController, AbortSignal, HttpRequest, PiError, PiResult};
 use serde_json::Value;
@@ -59,21 +63,29 @@ pub async fn personalize_open_router_catalog(
 	let mut request = HttpRequest::new("GET", format!("{}/models/user", base_url.trim_end_matches('/')));
 	request.set_header("accept", "application/json");
 	request.set_header("authorization", format!("Bearer {key}"));
-	request.signal = Some(AbortSignal::any(&[
-		context.signal.clone(),
-		timeout_signal(OPENROUTER_USER_MODELS_TIMEOUT_MS),
-	]));
-	let response = pi_host::fetch(request, None).await?;
-	if matches!(response.status, 401 | 403 | 404) {
+	let timeout = AbortController::new();
+	request.signal = Some(AbortSignal::any(&[context.signal.clone(), timeout.signal()]));
+	let body = with_timeout(
+		async {
+			let response = pi_host::fetch(request, None).await?;
+			if matches!(response.status, 401 | 403 | 404) {
+				return Ok(None);
+			}
+			if !response.ok() {
+				return Err(PiError::new(format!(
+					"OpenRouter model list request failed: {}",
+					response.status
+				)));
+			}
+			response.json().await.map(Some)
+		},
+		&timeout,
+		OPENROUTER_USER_MODELS_TIMEOUT_MS,
+	)
+	.await?;
+	let Some(body) = body else {
 		return Ok(catalog.to_vec());
-	}
-	if !response.ok() {
-		return Err(PiError::new(format!(
-			"OpenRouter model list request failed: {}",
-			response.status
-		)));
-	}
-	let body = response.json().await?;
+	};
 	let Some(data) = body
 		.as_object()
 		.and_then(|body| body.get("data"))
@@ -81,64 +93,71 @@ pub async fn personalize_open_router_catalog(
 	else {
 		return Err(PiError::new("Invalid OpenRouter model list response"));
 	};
-	let mut allowed: IndexMap<String, OpenRouterModel> = IndexMap::new();
+	let mut allowed: IndexMap<&str, &Value> = IndexMap::new();
 	for entry in data {
 		if let Some(id) = entry
 			.as_object()
 			.and_then(|entry| entry.get("id"))
 			.and_then(Value::as_str)
 		{
-			allowed.insert(id.to_string(), open_router_model(id, entry));
+			allowed.insert(id, entry);
 		}
 	}
-	Ok(catalog
-		.iter()
-		.filter_map(|model| {
-			if !is_model_type(model, ModelType::Chat) {
-				return Some(model.clone());
-			}
-			let AnyModel::Chat(model) = model else {
-				return Some(model.clone());
-			};
-			let entry = allowed.get(&model.id)?;
-			let truthy = |value: Option<f64>| value.filter(|value| *value != 0.0 && !value.is_nan());
-			let top_provider = entry.top_provider.as_ref();
-			let mut personalized = model.clone();
-			// `||`: OpenRouter reports a missing limit as absent, null or 0, like the generator's fallback.
-			personalized.context_window = truthy(top_provider.and_then(|top| top.context_length))
-				.or(truthy(entry.context_length))
-				.unwrap_or(model.context_window);
-			personalized.max_tokens =
-				truthy(top_provider.and_then(|top| top.max_completion_tokens)).unwrap_or(model.max_tokens);
-			personalized.cost = match &entry.pricing {
-				Some(pricing) => open_router_cost(Some(pricing)),
-				None => model.cost.clone(),
-			};
-			Some(AnyModel::Chat(personalized))
-		})
-		.collect())
+	let mut personalized_catalog = Vec::with_capacity(catalog.len());
+	for model in catalog {
+		let AnyModel::Chat(chat) = model else {
+			personalized_catalog.push(model.clone());
+			continue;
+		};
+		if !is_model_type(model, ModelType::Chat) {
+			personalized_catalog.push(model.clone());
+			continue;
+		}
+		let Some(entry) = allowed.get(chat.id.as_str()) else {
+			continue;
+		};
+		let entry = open_router_model(&chat.id, entry)?;
+		let truthy = |value: Option<f64>| value.filter(|value| *value != 0.0 && !value.is_nan());
+		let top_provider = entry.top_provider.as_ref();
+		let mut personalized = chat.clone();
+		// `||`: OpenRouter reports a missing limit as absent, null or 0, like the generator's fallback.
+		personalized.context_window = truthy(top_provider.and_then(|top| top.context_length))
+			.or(truthy(entry.context_length))
+			.unwrap_or(chat.context_window);
+		personalized.max_tokens =
+			truthy(top_provider.and_then(|top| top.max_completion_tokens)).unwrap_or(chat.max_tokens);
+		personalized.cost = match &entry.pricing {
+			Some(pricing) => open_router_cost(Some(pricing)),
+			None => chat.cost.clone(),
+		};
+		personalized_catalog.push(AnyModel::Chat(personalized));
+	}
+	Ok(personalized_catalog)
 }
 
-/// `AbortSignal.timeout(ms)`.
-fn timeout_signal(ms: f64) -> AbortSignal {
-	let controller = AbortController::new();
-	let signal = controller.signal();
-	pi_host::spawn_local(async move {
-		if pi_host::sleep(ms, None).await.is_ok() {
-			controller.abort_with(PiError::named(
+/// Runs `work` under `AbortSignal.timeout(ms)`: after `ms`, aborts `timeout` with a `TimeoutError` and keeps
+/// awaiting `work`, which observes the abort through its signal.
+async fn with_timeout<T>(work: impl Future<Output = T>, timeout: &AbortController, ms: f64) -> T {
+	futures::pin_mut!(work);
+	let sleep = pi_host::sleep(ms, None);
+	futures::pin_mut!(sleep);
+	match select(work, sleep).await {
+		Either::Left((output, _)) => output,
+		Either::Right((_, work)) => {
+			timeout.abort_with(PiError::named(
 				"TimeoutError",
 				"The operation was aborted due to timeout",
 			));
+			work.await
 		}
-	});
-	signal
+	}
 }
 
 /// `entry as OpenRouterModel` for an entry of `GET /models/user` with a string `id`.
-fn open_router_model(id: &str, entry: &Value) -> OpenRouterModel {
+fn open_router_model(id: &str, entry: &Value) -> PiResult<OpenRouterModel> {
 	let number = |value: &Value, name: &str| value.get(name).and_then(Value::as_f64);
 	let top_provider = entry.get("top_provider").filter(|top| top.is_object());
-	OpenRouterModel {
+	Ok(OpenRouterModel {
 		id: id.to_string(),
 		context_length: number(entry, "context_length"),
 		top_provider: top_provider.map(|top| OpenRouterTopProvider {
@@ -148,8 +167,9 @@ fn open_router_model(id: &str, entry: &Value) -> OpenRouterModel {
 		pricing: entry
 			.get("pricing")
 			.filter(|pricing| is_truthy(pricing))
-			.map(open_router_pricing),
-	}
+			.map(open_router_pricing)
+			.transpose()?,
+	})
 }
 
 fn is_truthy(value: &Value) -> bool {
@@ -162,40 +182,67 @@ fn is_truthy(value: &Value) -> bool {
 	}
 }
 
-/// A price as `parseFloat` reads it: strings verbatim, numbers through `String(n)`, anything else missing.
+/// A price as `perMillion` reads it: `String(value)` for `parseFloat`, with a missing or `null` value as missing.
 fn price(value: &Value, name: &str) -> Option<String> {
 	match value.get(name)? {
-		Value::String(price) => Some(price.clone()),
-		Value::Number(price) => price.as_f64().map(pi_host::js::number_to_string),
-		_ => None,
+		Value::Null => None,
+		price => Some(js_string(price)),
 	}
 }
 
-fn open_router_pricing(pricing: &Value) -> OpenRouterPricing {
-	OpenRouterPricing {
+/// `String(value)` for a JSON value.
+fn js_string(value: &Value) -> String {
+	match value {
+		Value::Null => "null".into(),
+		Value::Bool(value) => value.to_string(),
+		Value::Number(value) => value.as_f64().map(pi_host::js::number_to_string).unwrap_or_default(),
+		Value::String(value) => value.clone(),
+		// `Array.prototype.join` prints `null` items as empty strings.
+		Value::Array(items) => items
+			.iter()
+			.map(|item| if item.is_null() { String::new() } else { js_string(item) })
+			.collect::<Vec<_>>()
+			.join(","),
+		Value::Object(_) => "[object Object]".into(),
+	}
+}
+
+fn open_router_pricing(pricing: &Value) -> PiResult<OpenRouterPricing> {
+	let overrides = match pricing.get("overrides") {
+		None | Some(Value::Null) => None,
+		Some(Value::Array(overrides)) => Some(overrides.iter().map(open_router_override).collect::<PiResult<_>>()?),
+		Some(_) => {
+			return Err(PiError::type_error(
+				"((intermediate value) ?? []).flatMap is not a function",
+			));
+		}
+	};
+	Ok(OpenRouterPricing {
 		prompt: price(pricing, "prompt"),
 		completion: price(pricing, "completion"),
 		input_cache_read: price(pricing, "input_cache_read"),
 		input_cache_write: price(pricing, "input_cache_write"),
-		overrides: pricing.get("overrides").and_then(Value::as_array).map(|overrides| {
-			overrides
-				.iter()
-				.map(|price_override| {
-					let present = |name: &str| price_override.get(name).is_some();
-					OpenRouterPricingOverride {
-						min_prompt_tokens: price_override.get("min_prompt_tokens").and_then(Value::as_f64),
-						utc_start: present("utc_start").then_some(0.0),
-						utc_end: present("utc_end").then_some(0.0),
-						utc_days: present("utc_days").then(Vec::new),
-						prompt: price(price_override, "prompt"),
-						completion: price(price_override, "completion"),
-						input_cache_read: price(price_override, "input_cache_read"),
-						input_cache_write: price(price_override, "input_cache_write"),
-					}
-				})
-				.collect()
-		}),
+		overrides,
+	})
+}
+
+fn open_router_override(price_override: &Value) -> PiResult<OpenRouterPricingOverride> {
+	if price_override.is_null() {
+		return Err(PiError::type_error(
+			"Cannot read properties of null (reading 'min_prompt_tokens')",
+		));
 	}
+	let present = |name: &str| price_override.get(name).is_some();
+	Ok(OpenRouterPricingOverride {
+		min_prompt_tokens: price_override.get("min_prompt_tokens").and_then(Value::as_f64),
+		utc_start: present("utc_start").then_some(0.0),
+		utc_end: present("utc_end").then_some(0.0),
+		utc_days: present("utc_days").then(Vec::new),
+		prompt: price(price_override, "prompt"),
+		completion: price(price_override, "completion"),
+		input_cache_read: price(price_override, "input_cache_read"),
+		input_cache_write: price(price_override, "input_cache_write"),
+	})
 }
 
 pub fn openrouter_provider() -> Provider {

@@ -178,3 +178,97 @@ mod personalize_open_router_catalog {
 		}
 	}
 }
+
+/// Port regressions with no TS test: the TS gets these from JS semantics, the port reproduces them by hand.
+mod port_regressions {
+	use super::*;
+
+	fn personalize_with(body: &'static str) -> pi_host::PiResult<Vec<AnyModel>> {
+		pi_host::testing::run(|host| async move {
+			host.respond_with(200, &[("content-type", "application/json")], body);
+			personalize_open_router_catalog(&[AnyModel::Chat(chat_model("listed"))], &refresh_context()).await
+		})
+	}
+
+	#[test]
+	fn rejects_non_array_overrides_like_flat_map_on_a_non_array() {
+		for body in [
+			r#"{"data":[{"id":"listed","pricing":{"prompt":"0.000001","overrides":{}}}]}"#,
+			r#"{"data":[{"id":"listed","pricing":{"prompt":"0.000001","overrides":"x"}}]}"#,
+			r#"{"data":[{"id":"listed","pricing":{"prompt":"0.000001","overrides":0}}]}"#,
+			r#"{"data":[{"id":"listed","pricing":{"prompt":"0.000001","overrides":false}}]}"#,
+		] {
+			let error = personalize_with(body).unwrap_err();
+			assert_eq!(error.name, "TypeError", "{body}");
+			assert_eq!(
+				error.message, "((intermediate value) ?? []).flatMap is not a function",
+				"{body}"
+			);
+		}
+	}
+
+	#[test]
+	fn rejects_a_null_override_entry() {
+		let error =
+			personalize_with(r#"{"data":[{"id":"listed","pricing":{"prompt":"0.000001","overrides":[null]}}]}"#)
+				.unwrap_err();
+		assert_eq!(error.name, "TypeError");
+		assert_eq!(
+			error.message,
+			"Cannot read properties of null (reading 'min_prompt_tokens')"
+		);
+	}
+
+	#[test]
+	fn ignores_bad_pricing_of_entries_no_catalog_model_matches() {
+		let result =
+			personalize_with(r#"{"data":[{"id":"listed"},{"id":"unlisted","pricing":{"overrides":{}}}]}"#).unwrap();
+		assert_eq!(result.len(), 1);
+	}
+
+	#[test]
+	fn reads_prices_through_string_conversion() {
+		let result = personalize_with(
+			r#"{"data":[{"id":"listed","pricing":{"prompt":["0.000001"],"completion":[0.000002],"input_cache_read":true,"input_cache_write":{}}}]}"#,
+		)
+		.unwrap();
+		assert_eq!(
+			chat(&result[0]).cost,
+			ModelCost {
+				input: 1.0,
+				output: 2.0,
+				cache_read: 0.0,
+				cache_write: 0.0,
+				..ModelCost::default()
+			}
+		);
+	}
+
+	#[test]
+	fn drops_the_timeout_when_the_request_finishes_first() {
+		let (host, finished_at) = pi_host::testing::run(|host| async move {
+			host.respond_with(200, &[("content-type", "application/json")], r#"{"data":[]}"#);
+			personalize_open_router_catalog(&[], &refresh_context()).await.unwrap();
+			let finished_at = pi_host::monotonic_ms();
+			(host, finished_at)
+		});
+		// `run` fires every pending timer before it returns; a leftover 15 s timeout would move the clock.
+		assert_eq!(pi_host::Host::monotonic_ms(host.as_ref()), finished_at);
+	}
+
+	#[test]
+	fn aborts_a_slow_request_with_a_timeout_error_after_15_seconds() {
+		pi_host::testing::run(|host| async move {
+			host.on_fetch(|request| {
+				let signal = request.signal.clone().expect("the request has a signal");
+				Box::pin(async move { Err(signal.aborted_future().await) })
+			});
+			let start = pi_host::monotonic_ms();
+			let error = personalize_open_router_catalog(&[], &refresh_context())
+				.await
+				.unwrap_err();
+			assert_eq!(error.name, "TimeoutError");
+			assert_eq!(pi_host::monotonic_ms() - start, 15_000.0);
+		});
+	}
+}
