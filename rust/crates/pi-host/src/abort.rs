@@ -122,6 +122,36 @@ impl AbortSignal {
 		signal
 	}
 
+	/// `AbortSignal.timeout(ms)` with Node's `validateUint32(delay)` check: a `RangeError` (`ERR_OUT_OF_RANGE`) for a
+	/// delay that is not an integer in `0..=4294967295`, else [`AbortSignal::timeout`].
+	pub fn try_timeout(ms: f64) -> PiResult<AbortSignal> {
+		let range = if ms.fract() != 0.0 || !ms.is_finite() {
+			"an integer"
+		} else if !(0.0..=4_294_967_295.0).contains(&ms) {
+			">= 0 && <= 4294967295"
+		} else {
+			return Ok(Self::timeout(ms));
+		};
+		let text = crate::js::number_to_string(ms);
+		let received = if ms.fract() == 0.0 && ms.abs() > 4_294_967_296.0 {
+			let start = usize::from(text.starts_with('-'));
+			let mut end = text.len();
+			let mut grouped = String::new();
+			while end >= start + 4 {
+				grouped = format!("_{}{grouped}", &text[end - 3..end]);
+				end -= 3;
+			}
+			format!("{}{grouped}", &text[..end])
+		} else {
+			text
+		};
+		Err(PiError::named(
+			"RangeError",
+			format!("The value of \"delay\" is out of range. It must be {range}. Received {received}"),
+		)
+		.with_data(serde_json::json!({ "code": "ERR_OUT_OF_RANGE" })))
+	}
+
 	/// `AbortSignal.any(signals)`.
 	pub fn any(signals: &[AbortSignal]) -> AbortSignal {
 		if let Some(reason) = signals.iter().find_map(AbortSignal::reason) {
@@ -207,6 +237,28 @@ impl Default for AbortController {
 mod tests {
 	use super::*;
 	use std::cell::Cell;
+
+	#[test]
+	fn try_timeout_rejects_delays_node_rejects() {
+		let message = |ms: f64| {
+			AbortSignal::try_timeout(ms)
+				.err()
+				.map(|error| (error.name, error.message))
+		};
+		let range = |rule: &str, received: &str| {
+			Some((
+				"RangeError".to_string(),
+				format!("The value of \"delay\" is out of range. It must be {rule}. Received {received}"),
+			))
+		};
+		assert_eq!(message(1.5), range("an integer", "1.5"));
+		assert_eq!(message(f64::NAN), range("an integer", "NaN"));
+		assert_eq!(message(f64::NEG_INFINITY), range("an integer", "-Infinity"));
+		assert_eq!(message(-1.0), range(">= 0 && <= 4294967295", "-1"));
+		assert_eq!(message(4_294_967_296.0), range(">= 0 && <= 4294967295", "4294967296"));
+		assert_eq!(message(-1e10), range(">= 0 && <= 4294967295", "-10_000_000_000"));
+		assert_eq!(message(1e21), range(">= 0 && <= 4294967295", "1e_+21"));
+	}
 
 	#[test]
 	fn listeners_fire_once_and_any_follows_inputs() {
