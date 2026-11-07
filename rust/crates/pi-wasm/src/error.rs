@@ -61,11 +61,17 @@ pub fn from_js(value: JsValue) -> PiError {
 	error
 }
 
-/// The JS `Error` for a `PiError`: `name` and `message` as given, `status` when set, and the fields of an object
-/// `data` as own properties, the inverse of `from_js`. An empty `name` (a thrown non-`Error`) stays `"Error"`.
+/// The JS `Error` for a `PiError` (a `TypeError`, `RangeError` or `SyntaxError` for those names): `name` and
+/// `message` as given, `status` when set, and the fields of an object `data` as own properties, the inverse of
+/// `from_js`. An empty `name` (a thrown non-`Error`) stays `"Error"`.
 pub fn to_js(error: &PiError) -> JsValue {
-	let js = Error::new(&error.message);
-	if !error.name.is_empty() && error.name != "Error" {
+	let js: Error = match error.name.as_str() {
+		"TypeError" => js_sys::TypeError::new(&error.message).into(),
+		"RangeError" => js_sys::RangeError::new(&error.message).into(),
+		"SyntaxError" => js_sys::SyntaxError::new(&error.message).into(),
+		_ => Error::new(&error.message),
+	};
+	if !error.name.is_empty() && js.name() != error.name.as_str() {
 		js.set_name(&error.name);
 	}
 	if let Some(status) = error.status {

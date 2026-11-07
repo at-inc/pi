@@ -16,7 +16,18 @@ export const host: PiHost = {
 	now: () => Date.now(),
 	monotonic: () => performance.now(),
 	env: (name) => process.env[name],
-	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+	sleep: (ms, signal) =>
+		new Promise((resolve) => {
+			const timer = setTimeout(resolve, ms);
+			signal?.addEventListener(
+				"abort",
+				() => {
+					clearTimeout(timer);
+					resolve();
+				},
+				{ once: true },
+			);
+		}),
 	fileExists: (path) => existsSync(path),
 	homeDir: () => homedir(),
 	readFile: (path) => readFile(path, "utf-8"),
@@ -26,6 +37,8 @@ export const host: PiHost = {
 			: undefined,
 	spawnProcess,
 	listen: listenWith(createServer),
+	runtimeDescription: () =>
+		`${process.platform}; ${process.versions.bun ? `bun/${process.versions.bun}` : `node/${process.version}`}; ${process.arch}`,
 };
 
 /** The initialized wasm exports. */
