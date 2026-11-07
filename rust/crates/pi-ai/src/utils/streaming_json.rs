@@ -36,8 +36,11 @@
 //!
 //! Rust differences: TS snapshots share completed containers and strings, so a copy costs the member and element count
 //! of the open path. A `serde_json::Value` cannot share, so a Rust copy costs the whole value read so far: the open
-//! path with everything below it, strings counted by length. Previews of large documents therefore lag more than in
-//! TS, while the total work stays linear. Snapshots are `Rc<Value>`: an unchanged snapshot is the same `Rc`. A
+//! path with everything below it, strings counted by length. `snapshot()` previews of large documents therefore lag more
+//! than in TS, while the total work stays linear. `ToolCallArgumentsStream` does not use snapshots: it updates the tool
+//! call block's arguments in place from `append()`'s changes and the unterminated number or literal, so tool-call
+//! previews never lag, at a cost linear in each piece; only the inside of a container nested more than 32 levels deep
+//! shows late, when it closes. Its `append()` and `replace()` take the arguments to update instead of returning them. Snapshots are `Rc<Value>`: an unchanged snapshot is the same `Rc`. A
 //! Rust string cannot hold a lone surrogate: a high surrogate escape is held back until its low half arrives, and an
 //! unpaired one becomes U+FFFD. Values nested so deep that recursion would overflow the stack are copied and dropped
 //! without recursion inside the parser; a caller that keeps such a snapshot must drop it the same way.
@@ -675,22 +678,20 @@ impl Drop for StreamingJsonParser {
 	}
 }
 
-/// `ToolCallArgumentsStream::replace`'s result.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ReplacedArguments {
-	pub delta: Option<String>,
-	pub arguments: Rc<JsonObject>,
-}
-
 /// The arguments of one streaming tool call: the raw text, for the one full parse when the call ends, and a
 /// `StreamingJsonParser` for the partial arguments in between. Providers keep one per call in their own stream state,
 /// never on the content block, so the raw text never reaches partial messages or transcripts.
+///
+/// The partial arguments live on the provider's tool call block, and each piece updates them in place from the
+/// parser's changes, so they always show every piece read so far at a cost linear in the piece.
 #[derive(Default)]
 pub struct ToolCallArgumentsStream {
 	text: String,
 	parser: StreamingJsonParser,
-	snapshot: Option<Rc<Value>>,
-	arguments: Rc<JsonObject>,
+	/// Whether the root value is an object; any other root shows as no arguments.
+	root_is_object: bool,
+	/// The unterminated number or literal the arguments show, and the value it covers, undone before the next piece.
+	pending: Option<(JsonPath, Option<Value>)>,
 }
 
 impl ToolCallArgumentsStream {
@@ -703,33 +704,39 @@ impl ToolCallArgumentsStream {
 		&self.text
 	}
 
-	/// Append a piece of argument text; returns the partial arguments, a new `Rc` whenever they changed.
-	pub fn append(&mut self, delta: &str) -> Rc<JsonObject> {
+	/// Append a piece of argument text and update `arguments`, the partial arguments of the text before it, to the
+	/// partial arguments of the whole text.
+	pub fn append(&mut self, delta: &str, arguments: &mut JsonObject) {
 		self.text.push_str(delta);
-		self.parser.append(delta);
-		self.partial()
+		if let Some((path, covered)) = self.pending.take() {
+			restore_path(arguments, &path, covered);
+		}
+		for change in self.parser.append(delta) {
+			self.apply(change, arguments);
+		}
+		if !self.root_is_object {
+			return;
+		}
+		if let Some((slot, value)) = self.parser.pending_scalar()
+			&& let Some(path) = self.parser.reported_path(Some(&slot))
+		{
+			let covered = set_path(arguments, &path, value);
+			self.pending = Some((path, covered));
+		}
 	}
 
-	/// Take the provider's complete argument text. When it continues the text so far, returns the missing piece as
-	/// `delta`; otherwise starts over with `text`. Either way returns the partial arguments of `text`.
-	pub fn replace(&mut self, text: &str) -> ReplacedArguments {
+	/// Take the provider's complete argument text and update `arguments` to its partial arguments. When it continues
+	/// the text so far, returns the missing piece; otherwise starts over with `text` and returns `None`.
+	pub fn replace(&mut self, text: &str, arguments: &mut JsonObject) -> Option<String> {
 		if let Some(delta) = text.strip_prefix(self.text.as_str()) {
-			let arguments = if delta.is_empty() {
-				self.partial()
-			} else {
-				self.append(delta)
-			};
-			return ReplacedArguments {
-				delta: Some(delta.to_string()),
-				arguments,
-			};
+			let delta = delta.to_string();
+			self.append(&delta, arguments);
+			return Some(delta);
 		}
-		self.text = String::new();
-		self.parser = StreamingJsonParser::new();
-		ReplacedArguments {
-			delta: None,
-			arguments: self.append(text),
-		}
+		*self = Self::new();
+		arguments.clear();
+		self.append(text, arguments);
+		None
 	}
 
 	/// The final arguments: one full parse of the complete text, which reports malformed arguments.
@@ -737,29 +744,103 @@ impl ToolCallArgumentsStream {
 		parse_tool_call_arguments(Some(&self.text))
 	}
 
-	fn partial(&mut self) -> Rc<JsonObject> {
-		let snapshot = self.parser.snapshot();
-		let unchanged = match (&snapshot, &self.snapshot) {
-			(None, None) => true,
-			(Some(snapshot), Some(previous)) => {
-				Rc::ptr_eq(snapshot, previous)
-					|| (!snapshot.is_object() && !snapshot.is_array() && snapshot == previous)
+	fn apply(&mut self, change: JsonChange, arguments: &mut JsonObject) {
+		match change {
+			JsonChange::Set { path, value } if path.is_empty() => {
+				self.root_is_object = value.is_object();
+				*arguments = match value {
+					Value::Object(members) => members,
+					other => {
+						drop_deep(other);
+						Map::new()
+					}
+				};
 			}
-			_ => false,
-		};
-		if unchanged {
-			return self.arguments.clone();
+			JsonChange::Set { path, value } => {
+				if self.root_is_object
+					&& let Some(covered) = set_path(arguments, &path, value)
+				{
+					drop_deep(covered);
+				}
+			}
+			JsonChange::Append { path, text } => {
+				if self.root_is_object
+					&& let Some(Value::String(value)) = value_at(arguments, &path)
+				{
+					value.push_str(&text);
+				}
+			}
 		}
-		// Tool arguments are an object; any other partial value shows as no arguments yet.
-		self.arguments = Rc::new(match snapshot.as_deref() {
-			Some(value @ Value::Object(_)) => match clone_deep(value) {
-				Value::Object(arguments) => arguments,
-				_ => unreachable!("a copy of an object is an object"),
-			},
-			_ => Map::new(),
-		});
-		self.snapshot = snapshot;
-		self.arguments.clone()
+	}
+}
+
+/// The value at a non-empty `path` in an object root.
+fn value_at<'a>(root: &'a mut JsonObject, path: &[JsonPathSegment]) -> Option<&'a mut Value> {
+	let (JsonPathSegment::Key(first), rest) = path.split_first()? else {
+		return None;
+	};
+	let mut value = root.get_mut(first)?;
+	for segment in rest {
+		value = match segment {
+			JsonPathSegment::Key(key) => value.get_mut(key.as_str())?,
+			JsonPathSegment::Index(index) => value.get_mut(*index)?,
+		};
+	}
+	Some(value)
+}
+
+/// Set the value at a non-empty `path` in an object root; returns the value it replaced.
+fn set_path(root: &mut JsonObject, path: &[JsonPathSegment], value: Value) -> Option<Value> {
+	let (last, parent) = path.split_last()?;
+	let members = match parent {
+		[] => root,
+		parent => match value_at(root, parent)? {
+			Value::Object(members) => members,
+			Value::Array(elements) => {
+				let JsonPathSegment::Index(index) = last else {
+					return None;
+				};
+				if *index < elements.len() {
+					return Some(std::mem::replace(&mut elements[*index], value));
+				}
+				elements.push(value);
+				return None;
+			}
+			_ => return None,
+		},
+	};
+	let JsonPathSegment::Key(key) = last else {
+		return None;
+	};
+	if let Some(existing) = members.get_mut(key) {
+		return Some(std::mem::replace(existing, value));
+	}
+	set_js_member(members, key.clone(), value);
+	None
+}
+
+/// Undo a `set_path()`: put back the value it replaced, or remove the value it added.
+fn restore_path(root: &mut JsonObject, path: &[JsonPathSegment], covered: Option<Value>) {
+	if let Some(covered) = covered {
+		set_path(root, path, covered);
+		return;
+	}
+	let Some((last, parent)) = path.split_last() else {
+		return;
+	};
+	match (last, parent) {
+		(JsonPathSegment::Key(key), []) => {
+			root.shift_remove(key);
+		}
+		(last, parent) => match (value_at(root, parent), last) {
+			(Some(Value::Object(members)), JsonPathSegment::Key(key)) => {
+				members.shift_remove(key);
+			}
+			(Some(Value::Array(elements)), JsonPathSegment::Index(_)) => {
+				elements.pop();
+			}
+			_ => {}
+		},
 	}
 }
 

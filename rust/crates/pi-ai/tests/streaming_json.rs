@@ -9,6 +9,7 @@
 use std::rc::Rc;
 use std::time::Instant;
 
+use pi_ai::types::JsonObject;
 use pi_ai::utils::json_parse::{json_parse, parse_streaming_json, parse_tool_call_arguments};
 use pi_ai::utils::streaming_json::{JsonChange, JsonPathSegment, StreamingJsonParser, ToolCallArgumentsStream};
 use pi_host::js::json_stringify;
@@ -1169,8 +1170,9 @@ mod cost {
 
 	fn stream_arguments(text: &str, delta: usize) {
 		let mut args = ToolCallArgumentsStream::new();
+		let mut arguments = JsonObject::new();
 		for piece in text.as_bytes().chunks(delta) {
-			args.append(std::str::from_utf8(piece).unwrap());
+			args.append(std::str::from_utf8(piece).unwrap(), &mut arguments);
 		}
 		args.finish();
 	}
@@ -1250,35 +1252,49 @@ mod cost {
 mod tool_call_arguments_stream {
 	use super::*;
 
-	fn object(value: Value) -> pi_ai::types::JsonObject {
+	fn object(value: Value) -> JsonObject {
 		value.as_object().unwrap().clone()
 	}
 
-	// Rust-only: TS places a string when it starts, so closing a string the last snapshot showed changes nothing.
-	#[test]
-	fn keeps_the_same_arguments_when_a_shown_string_closes() {
+	/// The TS `ToolCallArgumentsStream`'s partial arguments of `text`: a fresh parser's snapshot, as an object.
+	fn reference(text: &str) -> JsonObject {
+		let mut parser = StreamingJsonParser::new();
+		parser.append(text);
+		match parser.snapshot().as_deref() {
+			Some(Value::Object(members)) => members.clone(),
+			_ => JsonObject::new(),
+		}
+	}
+
+	/// Streams `pieces` and checks the arguments against `reference()` after every piece.
+	fn assert_matches_reference(pieces: &[&str]) {
 		let mut args = ToolCallArgumentsStream::new();
-		let open = args.append("{\"a\":\"x");
-		assert!(Rc::ptr_eq(&args.append("\""), &open));
-		assert!(!Rc::ptr_eq(&args.append(",\"b\":1"), &open));
+		let mut arguments = JsonObject::new();
+		let mut text = String::new();
+		for piece in pieces {
+			args.append(piece, &mut arguments);
+			text.push_str(piece);
+			assert_eq!(arguments, reference(&text), "after {text:?} in {pieces:?}");
+		}
 	}
 
 	#[test]
 	fn shows_partial_arguments_as_an_object_and_finishes_with_one_full_parse() {
 		let mut args = ToolCallArgumentsStream::new();
-		assert_eq!(*args.append("  "), object(json!({})));
-		assert_eq!(
-			*args.append("{\"path\":\"a.ts\",\"content\":\"x"),
-			object(json!({ "path": "a.ts", "content": "x" }))
-		);
-		let before = args.append("y");
-		assert!(Rc::ptr_eq(&args.append(""), &before));
+		let mut arguments = JsonObject::new();
+		args.append("  ", &mut arguments);
+		assert_eq!(arguments, object(json!({})));
+		args.append("{\"path\":\"a.ts\",\"content\":\"x", &mut arguments);
+		assert_eq!(arguments, object(json!({ "path": "a.ts", "content": "x" })));
+		args.append("y", &mut arguments);
+		args.append("", &mut arguments);
+		assert_eq!(arguments, object(json!({ "path": "a.ts", "content": "xy" })));
 		assert_eq!(args.text(), "  {\"path\":\"a.ts\",\"content\":\"xy");
 		assert_eq!(
 			args.finish(),
 			parse_tool_call_arguments(Some("  {\"path\":\"a.ts\",\"content\":\"xy"))
 		);
-		args.append("\"}");
+		args.append("\"}", &mut arguments);
 		let finished = args.finish();
 		assert_eq!(finished.arguments, object(json!({ "path": "a.ts", "content": "xy" })));
 		assert_eq!(finished.arguments_error, None);
@@ -1287,8 +1303,10 @@ mod tool_call_arguments_stream {
 	#[test]
 	fn shows_non_object_roots_as_no_arguments_yet() {
 		let mut args = ToolCallArgumentsStream::new();
-		assert_eq!(*args.append("[1,2"), object(json!({})));
-		args.append("]");
+		let mut arguments = JsonObject::new();
+		args.append("[1,2", &mut arguments);
+		assert_eq!(arguments, object(json!({})));
+		args.append("]", &mut arguments);
 		assert!(
 			args.finish()
 				.arguments_error
@@ -1300,14 +1318,87 @@ mod tool_call_arguments_stream {
 	#[test]
 	fn replaces_the_text_with_the_providers_complete_text_returning_the_missing_piece() {
 		let mut args = ToolCallArgumentsStream::new();
-		args.append("{\"a\":\"x");
-		let replaced = args.replace("{\"a\":\"xyz\"}");
-		assert_eq!(replaced.delta.as_deref(), Some("yz\"}"));
-		assert_eq!(*replaced.arguments, object(json!({ "a": "xyz" })));
-		let replaced = args.replace("{\"b\":2}");
-		assert_eq!(replaced.delta, None);
-		assert_eq!(*replaced.arguments, object(json!({ "b": 2 })));
+		let mut arguments = JsonObject::new();
+		args.append("{\"a\":\"x", &mut arguments);
+		let delta = args.replace("{\"a\":\"xyz\"}", &mut arguments);
+		assert_eq!(delta.as_deref(), Some("yz\"}"));
+		assert_eq!(arguments, object(json!({ "a": "xyz" })));
+		let delta = args.replace("{\"b\":2}", &mut arguments);
+		assert_eq!(delta, None);
+		assert_eq!(arguments, object(json!({ "b": 2 })));
 		assert_eq!(args.text(), "{\"b\":2}");
+	}
+
+	// Rust-only: the arguments are updated in place from the parser's changes, so they show every piece, the way a
+	// fresh parse of the text so far does, however large the open string or container.
+	#[test]
+	fn shows_every_piece_of_a_large_argument_without_lag() {
+		let content: String = (0..2_000)
+			.map(|line| format!("line {line} \\\"quoted\\\" \\u00e9\\n"))
+			.collect();
+		let items: Vec<String> = (0..2_000).map(|item| item.to_string()).collect();
+		let text = format!(
+			"{{\"path\":\"/src/file.ts\",\"content\":\"{content}\",\"items\":[{}]}}",
+			items.join(",")
+		);
+		let mut args = ToolCallArgumentsStream::new();
+		let mut arguments = JsonObject::new();
+		let mut read = 0;
+		for piece in text.as_bytes().chunks(16) {
+			args.append(std::str::from_utf8(piece).unwrap(), &mut arguments);
+			read += piece.len();
+			// Every 256 pieces, so the check stays linear; the snapshot preview lagged here by hundreds of bytes.
+			if read % 4_096 == 0 {
+				assert_eq!(arguments, reference(&text[..read]), "after {read} bytes");
+			}
+		}
+		assert_eq!(arguments, args.finish().arguments);
+	}
+
+	// Rust-only: every way of splitting these into pieces shows the same arguments as a fresh parse of the text so far.
+	#[test]
+	fn matches_a_fresh_parse_after_every_piece() {
+		let texts = [
+			r#"{"a":"x\u00e9\ud83d\ude00y","b":[1,-2.5e3,true,null,{"c":"d"}],"e":{}}"#,
+			r#"{"n":12345,"t":true,"f":false,"z":null,"x":1e,"y":-}"#,
+			r#"{"a":1,"b":2,"a":tx,"a":3,"b":"s","c":[tr,fa,nul,x]}"#,
+			r#"{"10":1,"2":2,"a":3,"1":tru,"0":[1,2]}"#,
+			r#"{"a":[[1,[2,{"b":[3]}]],"c"],"d":"\d\u12\"q"}"#,
+			r#"{"a" 1 "b":2 3,"c":}, ]"d":4}trailing"#,
+			r#"{"__proto__":{"x":1},"k":"v"}"#,
+			r#"[1,{"a":2}]"#,
+		];
+		for text in texts {
+			let chars: Vec<(usize, char)> = text.char_indices().collect();
+			let pieces: Vec<&str> = chars
+				.iter()
+				.map(|(index, ch)| &text[*index..index + ch.len_utf8()])
+				.collect();
+			assert_matches_reference(&pieces);
+			for (split, _) in &chars {
+				assert_matches_reference(&[&text[..*split], &text[*split..]]);
+			}
+		}
+	}
+
+	// Rust-only: the random documents of the differential fuzzing, streamed in random pieces.
+	#[test]
+	fn matches_a_fresh_parse_on_random_documents() {
+		let mut rand = Random::new(7);
+		for text in random_documents(11, 150, true) {
+			let text = format!("{{\"value\":{text},\"after\":[{text}]}}");
+			let mut pieces = Vec::new();
+			let mut rest = text.as_str();
+			while !rest.is_empty() {
+				let mut end = (1 + rand.index(8)).min(rest.len());
+				while !rest.is_char_boundary(end) {
+					end += 1;
+				}
+				pieces.push(&rest[..end]);
+				rest = &rest[end..];
+			}
+			assert_matches_reference(&pieces);
+		}
 	}
 }
 

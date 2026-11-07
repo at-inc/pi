@@ -815,8 +815,9 @@ where
 					continue;
 				};
 				let delta = event.get("delta");
-				let partial = arguments.append(&js_string(delta));
-				set_tool_call_arguments(output, *content_index, (*partial).clone());
+				update_tool_call_arguments(output, *content_index, |block| {
+					arguments.append(&js_string(delta), block)
+				});
 				push_tool_call_delta(
 					stream,
 					output,
@@ -832,9 +833,10 @@ where
 				else {
 					continue;
 				};
-				let replaced = arguments.replace(&js_string(event.get("arguments")));
-				set_tool_call_arguments(output, *content_index, (*replaced.arguments).clone());
-				if let Some(delta) = replaced.delta.filter(|delta| !delta.is_empty()) {
+				let replaced = update_tool_call_arguments(output, *content_index, |block| {
+					arguments.replace(&js_string(event.get("arguments")), block)
+				});
+				if let Some(delta) = replaced.filter(|delta| !delta.is_empty()) {
 					push_tool_call_delta(stream, output, *content_index, Some(delta));
 				}
 			}
@@ -974,11 +976,10 @@ impl StreamState<'_> {
 			}
 			Some("function_call") => {
 				let mut arguments = ToolCallArgumentsStream::new();
-				let initial = if truthy(item.get("arguments")) {
-					(*arguments.append(&js_string(item.get("arguments")))).clone()
-				} else {
-					JsonObject::new()
-				};
+				let mut initial = JsonObject::new();
+				if truthy(item.get("arguments")) {
+					arguments.append(&js_string(item.get("arguments")), &mut initial);
+				}
 				let content_index = self.push_block(AssistantContent::ToolCall(ToolCall {
 					id: format!("{}|{}", js_string(item.get("call_id")), js_string(item.get("id"))),
 					name: item.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
@@ -1130,7 +1131,9 @@ impl StreamState<'_> {
 			) => {
 				let content_index = *content_index;
 				if truthy(item.get("arguments")) {
-					arguments.replace(&js_string(item.get("arguments")));
+					update_tool_call_arguments(output, content_index, |block| {
+						arguments.replace(&js_string(item.get("arguments")), block)
+					});
 				}
 				let parsed = arguments.finish();
 				let tool_call = {
@@ -1314,9 +1317,15 @@ fn join_item_texts(items: Option<&Value>, pick: impl Fn(&Value) -> Option<&Value
 	}
 }
 
-fn set_tool_call_arguments(output: &SharedAssistantMessage, content_index: usize, arguments: JsonObject) {
-	if let AssistantContent::ToolCall(block) = &mut output.borrow_mut().content[content_index] {
-		block.arguments = arguments;
+/// Update the arguments of the tool call block at `content_index` in place.
+fn update_tool_call_arguments<R>(
+	output: &SharedAssistantMessage,
+	content_index: usize,
+	update: impl FnOnce(&mut JsonObject) -> R,
+) -> R {
+	match &mut output.borrow_mut().content[content_index] {
+		AssistantContent::ToolCall(block) => update(&mut block.arguments),
+		_ => unreachable!("a tool call slot holds a tool call block"),
 	}
 }
 
@@ -1377,7 +1386,7 @@ fn send_custom_input(
 ) -> Option<String> {
 	let mut arguments = JsonObject::new();
 	arguments.insert(input.property.clone(), json!(input.buffer.input));
-	set_tool_call_arguments(output, content_index, arguments);
+	update_tool_call_arguments(output, content_index, |block| *block = arguments);
 	if input.unsent.is_empty() {
 		return json_delta;
 	}

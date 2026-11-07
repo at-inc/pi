@@ -1154,7 +1154,7 @@ async fn run_stream(
 							continue;
 						};
 						let partial_json = appended_string(delta.get("partial_json"));
-						block.arguments = (*arguments.append(&partial_json)).clone();
+						arguments.append(&partial_json, &mut block.arguments);
 						drop(message);
 						stream.push(AssistantMessageEvent::ToolcallDelta {
 							content_index,

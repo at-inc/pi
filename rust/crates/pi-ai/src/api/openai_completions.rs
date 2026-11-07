@@ -1077,8 +1077,11 @@ impl CompletionsStream<'_> {
 		let (delta, new_arguments) = match (&mut state.input, arguments, input) {
 			(ToolCallInput::Json(stream), Some(arguments), _) => {
 				let delta = js_to_string(arguments);
-				let partial = stream.append(&delta);
-				(delta, Some((*partial).clone()))
+				match &mut self.output.borrow_mut().content[index] {
+					AssistantContent::ToolCall(block) => stream.append(&delta, &mut block.arguments),
+					_ => unreachable!("tool call states index tool call blocks"),
+				}
+				(delta, None)
 			}
 			(ToolCallInput::Custom { property, buffer }, _, Some(input)) => {
 				let delta =
