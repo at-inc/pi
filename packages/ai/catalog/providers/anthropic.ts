@@ -29,6 +29,18 @@ export default defineProvider({
 				return model;
 			},
 		}),
+		{
+			id: "claude-fable-5-2",
+			name: "Claude Fable 5.2",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "https://api.anthropic.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		},
 		...getForkChatModelFallbacks("anthropic"),
 	],
 	finalize: (model) => {

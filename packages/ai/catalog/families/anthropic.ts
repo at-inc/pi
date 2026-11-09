@@ -15,7 +15,8 @@ export function supportsClaudeMidConvoEffort(modelId: string): boolean {
 	return (
 		/^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id) ||
+		/^claude-fable-5[.-]2(?:-\d{8})?$/.test(id)
 	);
 }
 
@@ -29,7 +30,8 @@ export function supportsClaudeMidConvoSystemMessages(modelId: string): boolean {
 	return (
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
+		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId) ||
+		/^claude-fable-5[.-]2(?:-\d{8})?$/.test(modelId)
 	);
 }
 
@@ -82,6 +84,8 @@ const TEMPERATURE_UNSUPPORTED = [
 	"sonnet-5.5",
 	"haiku-5-5",
 	"haiku-5.5",
+	"fable-5-2",
+	"fable-5.2",
 ];
 const MAX_EFFORT_ONLY = ["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"];
 const XHIGH_AND_MAX_EFFORT = [
@@ -106,6 +110,9 @@ export function applyClaudeFamilyRules(model: ChatModel): void {
 	if (idIncludesAny(model.id, MAX_EFFORT_ONLY)) mergeThinking(model, { max: "max" });
 	if (idIncludesAny(model.id, XHIGH_AND_MAX_EFFORT)) mergeThinking(model, { xhigh: "xhigh", max: "max" });
 	if (model.id.includes("fable-5")) mergeThinking(model, { off: null, xhigh: "xhigh", max: "max" });
+	if (/^claude-fable-5[.-]2(?:-\d{8})?$/.test(stripPrefix(model.id))) {
+		mergeThinking(model, { minimal: null, low: "low", medium: "medium", high: "high" });
+	}
 	if (model.api !== "anthropic-messages") return;
 	const messagesModel = model as Model<"anthropic-messages">;
 	if (isClaudeLatestAlias(model.id) || idIncludesAny(model.id, ADAPTIVE_THINKING)) {

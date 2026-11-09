@@ -113,4 +113,70 @@ describe("fork catalog integration", () => {
 		expect(matches).toHaveLength(1);
 		expect(matches[0]).toMatchObject({ name: supplied.name, contextWindow: 2000000 });
 	});
+
+	it("includes Fable 5.2 with official pricing, limits, and always-on adaptive thinking", () => {
+		const catalog = buildCatalog(PROVIDERS, sources, false);
+		const matches = catalog.anthropic.chat.filter((model) => model.id === "claude-fable-5-2");
+		expect(matches).toHaveLength(1);
+		expect(matches[0]).toMatchObject({
+			name: "Claude Fable 5.2",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "https://api.anthropic.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			},
+			supportsFastMode: true,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsTemperature: false,
+				supportsMidConvoEffort: true,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+				supportsStrictTools: true,
+			},
+			promptCache: { short: 300, long: 3600 },
+		});
+	});
+
+	it("keeps upstream Fable 5.2 metadata without losing its capability rules or adding duplicates", () => {
+		const supplied = sourceModel("claude-fable-5-2", "messages");
+		supplied.name = "Updated upstream Fable";
+		supplied.limit = { context: 1000000, output: 128000 };
+		const catalog = buildCatalog(
+			PROVIDERS,
+			{
+				...sources,
+				modelsDev: { ...sources.modelsDev, anthropic: { models: { [supplied.id]: supplied } } },
+			},
+			false,
+		);
+		const matches = catalog.anthropic.chat.filter((model) => model.id === supplied.id);
+		expect(matches).toHaveLength(1);
+		expect(matches[0]).toMatchObject({
+			name: supplied.name,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			},
+			supportsFastMode: true,
+			compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsMidConvoEffort: true },
+		});
+	});
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getModels, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import { createFireworksToggleModel } from "./fireworks-model-fixture.ts";
 
 interface AnthropicPayload {
 	messages?: Array<{
@@ -105,13 +106,14 @@ describe("Anthropic empty thinking signature compat", () => {
 	});
 
 	// Regression for #9323: Fireworks emits unsigned thinking that must survive replay.
-	it.each([
-		"accounts/fireworks/models/deepseek-v4p1-flash",
-		"accounts/fireworks/models/qwen3p8-max",
-		"accounts/fireworks/models/qwen3p8-2p4t-a95b",
-		"accounts/fireworks/models/nemotron-3-ultra-nvfp4",
-	] as const)("preserves unsigned thinking for Fireworks %s", async (modelId) => {
-		const model = getModel("fireworks", modelId);
+	it.each(
+		[
+			getModel("fireworks", "accounts/fireworks/models/deepseek-v4p1-flash"),
+			getModel("fireworks", "accounts/fireworks/models/qwen3p8-max"),
+			getModel("fireworks", "accounts/fireworks/models/qwen3p8-2p4t-a95b"),
+			createFireworksToggleModel(),
+		].map((model) => [model.id, model] as const),
+	)("preserves unsigned thinking for Fireworks %s", async (modelId, model) => {
 		expect(model.compat?.allowEmptySignature).toBe(true);
 		const context = makeContext("", "internal reasoning", "fireworks", modelId);
 		const assistant = context.messages[1] as AssistantMessage;
