@@ -112,7 +112,7 @@ function targetName(source: PluginSource): string {
 	if ("git" in source) {
 		option(source.git, "repository");
 		option(source.ref, "ref");
-		const name = basename(source.git.replace(/\/+$/, "")).replace(/\.git$/, "");
+		const name = basename(source.git).replace(/\.git$/, "");
 		if (name === "" || name.startsWith(".") || name.startsWith("-")) {
 			throw new Error(`installPlugin: "${source.git}" names no repository directory`);
 		}

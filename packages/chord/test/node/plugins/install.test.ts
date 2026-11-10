@@ -129,6 +129,19 @@ describe("installDependencies: git dependencies (slice 12 §2)", () => {
 });
 
 describe("installPlugin (slice 12 §5)", () => {
+	it("keeps repository names with trailing slashes and handles long internal slash runs", async () => {
+		const root = await tempRoot();
+		await mkdir(join(root, "hello"));
+		const started = performance.now();
+		for (const git of ["https://example.test/hello.git///", `https://example.test/${"/".repeat(100_000)}hello.git`]) {
+			expect(await rejection(installPlugin({ git, ref: "v1" }, root, context))).toMatchObject({
+				message: `installPlugin: ${join(root, "hello")} exists already`,
+			});
+		}
+		expect(performance.now() - started).toBeLessThan(2000);
+		expect(await readdir(root)).toEqual(["hello"]);
+	});
+
 	it("clones a repository whose top is a plugin into <root>/<repository>, at a tag, and installs its dependencies", async () => {
 		const repository = await gitRepository(
 			"hello",

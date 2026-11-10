@@ -88,6 +88,29 @@ test("serves explicit and unversioned catalog requests", () => {
 	});
 });
 
+test("parses whitespace in user-agent fields without overlapping repetitions", () => {
+	const started = performance.now();
+	for (const userAgent of [
+		"pi/0.84.4 (linux; node/v22.0.0; x64)",
+		"pi/0.84.4 (linux;\t\t;\t x64)",
+		`pi/0.84.4 (linux;${" ".repeat(100_000)})`,
+	]) {
+		assert.deepEqual(parseModelCatalogRequest("https://pi.dev/api/models", userAgent), {
+			kind: "catalog",
+			piVersion: "0.84.4",
+			representation: "legacy",
+		});
+	}
+	for (const prefix of ["pi/! (a;", "pi/! (a;b;"]) {
+		assert.deepEqual(parseModelCatalogRequest("https://pi.dev/api/models", `${prefix}${" ".repeat(100_000)}(`), {
+			kind: "catalog",
+			piVersion: undefined,
+			representation: "legacy",
+		});
+	}
+	assert.ok(performance.now() - started < 2000);
+});
+
 test("rejects invalid catalog request parameters", () => {
 	assert.deepEqual(parseModelCatalogRequest("https://pi.dev/api/models?pi-version=latest", undefined), {
 		kind: "invalid",

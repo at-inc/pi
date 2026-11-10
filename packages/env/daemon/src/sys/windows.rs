@@ -292,10 +292,10 @@ impl Overlapped {
     }
 
     /// Run one operation `start` begins with the `OVERLAPPED` it is given; the bytes it transferred, or `None` once
-    /// `stop` was set while it waited, after cancelling it.
+    /// `stopped` returned true while it waited, after cancelling it.
     fn run(
         &self,
-        stop: &AtomicBool,
+        mut stopped: impl FnMut() -> bool,
         start: impl FnOnce(*mut OVERLAPPED) -> BOOL,
     ) -> io::Result<Option<u32>> {
         // SAFETY: a zeroed OVERLAPPED is valid; only its event is set.
@@ -313,7 +313,7 @@ impl Overlapped {
             if waited == WAIT_OBJECT_0 {
                 return self.result(&overlapped, FALSE).map(Some);
             }
-            if waited == WAIT_TIMEOUT && !stop.load(Ordering::SeqCst) {
+            if waited == WAIT_TIMEOUT && !stopped() {
                 continue;
             }
             let failure = (waited != WAIT_TIMEOUT).then(io::Error::last_os_error);
@@ -336,26 +336,33 @@ impl Overlapped {
     }
 }
 
-/// Read `pipe` until it ends, `on_data` returns false, or `stop` is set (looked at every 100 ms, also while no output
-/// arrives); the pipe closes when this returns.
-pub fn read_pipe(pipe: impl Pipe, stop: &AtomicBool, mut on_data: impl FnMut(&[u8]) -> bool) {
+/// Read until EOF, `on_data` returns false, `stop` is set, or `on_idle` ends a 100 ms read wait.
+pub fn read_pipe(
+    pipe: impl Pipe,
+    stop: &AtomicBool,
+    mut on_idle: impl FnMut() -> bool,
+    mut on_data: impl FnMut(&[u8]) -> bool,
+) {
     let Ok(io) = Overlapped::new(&pipe) else {
         return;
     };
     let mut buffer = vec![0u8; 64 * 1024];
     while !stop.load(Ordering::SeqCst) {
-        let read = io.run(stop, |overlapped| {
-            // SAFETY: the buffer outlives the operation, which `run` completes or cancels before returning.
-            unsafe {
-                ReadFile(
-                    io.handle,
-                    buffer.as_mut_ptr(),
-                    buffer.len() as u32,
-                    std::ptr::null_mut(),
-                    overlapped,
-                )
-            }
-        });
+        let read = io.run(
+            || stop.load(Ordering::SeqCst) || on_idle(),
+            |overlapped| {
+                // SAFETY: the buffer outlives the operation, which `run` completes or cancels before returning.
+                unsafe {
+                    ReadFile(
+                        io.handle,
+                        buffer.as_mut_ptr(),
+                        buffer.len() as u32,
+                        std::ptr::null_mut(),
+                        overlapped,
+                    )
+                }
+            },
+        );
         // A broken pipe (every writer closed) is the end, as for the standard library's reads.
         match read {
             Ok(Some(read)) if read > 0 => {
@@ -379,18 +386,21 @@ pub fn write_pipe(pipe: &mut impl WritePipe, mut bytes: &[u8], stop: &AtomicBool
             return false;
         }
         let length = bytes.len().min(u32::MAX as usize) as u32;
-        let written = io.run(stop, |overlapped| {
-            // SAFETY: `bytes` outlives the operation, which `run` completes or cancels before returning.
-            unsafe {
-                WriteFile(
-                    io.handle,
-                    bytes.as_ptr(),
-                    length,
-                    std::ptr::null_mut(),
-                    overlapped,
-                )
-            }
-        });
+        let written = io.run(
+            || stop.load(Ordering::SeqCst),
+            |overlapped| {
+                // SAFETY: `bytes` outlives the operation, which `run` completes or cancels before returning.
+                unsafe {
+                    WriteFile(
+                        io.handle,
+                        bytes.as_ptr(),
+                        length,
+                        std::ptr::null_mut(),
+                        overlapped,
+                    )
+                }
+            },
+        );
         match written {
             Ok(Some(written)) if written > 0 => bytes = &bytes[written as usize..],
             _ => return false,

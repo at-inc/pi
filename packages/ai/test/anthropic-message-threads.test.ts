@@ -229,6 +229,43 @@ afterEach(() => {
 });
 
 describe("Anthropic message threads", () => {
+	it.each([
+		["https://api.anthropic.com.example.test", false],
+		["https://example.test/api.anthropic.com", false],
+		["https://example.test?upstream=api.anthropic.com", false],
+		["https://api.anthropic.com@example.test", false],
+		["https://API.ANTHROPIC.COM/v1", true],
+	])("uses the parsed hostname for thread support at %s", async (baseUrl, supported) => {
+		const h = harness();
+		const messages = [user("first")];
+		const model = { ...baseModel, baseUrl };
+		expect((await say(h, messages, { model })).stopReason).toBe("stop");
+		messages.push(user("second"));
+		expect((await say(h, messages, { model })).stopReason).toBe("stop");
+		if (supported) {
+			expect(threadOf(h.requests[1])?.type).toBe("continue");
+			expect(h.requests[1].body.messages).toHaveLength(1);
+		} else {
+			for (const request of h.requests) {
+				expect(request.body).not.toHaveProperty("thread");
+				expect(request.betas).not.toContain(THREADS_BETA);
+				expect(request.body.system).toBeDefined();
+				expect(request.body.tools).toBeDefined();
+			}
+			expect(h.requests[1].body.messages).toHaveLength(3);
+		}
+	});
+
+	it.each([
+		["https://proxy.example.test", true],
+		["https://api.anthropic.com", false],
+	])("preserves explicit thread support at %s", async (baseUrl, supportsMessageThreads) => {
+		const h = harness();
+		const model = { ...baseModel, baseUrl, compat: { supportsMessageThreads } };
+		expect((await turn(h, [user("first")], { model })).stopReason).toBe("stop");
+		expect(threadOf(h.requests[0])?.type).toBe(supportsMessageThreads ? "create" : undefined);
+	});
+
 	it("creates a thread, then continues it with only the new messages", async () => {
 		const h = harness();
 		const messages = [user("first")];

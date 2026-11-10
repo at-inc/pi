@@ -249,7 +249,7 @@ function getAnthropicCompat(model: Model<"anthropic-messages">) {
 		// Widen or remove this restriction once proxies generally forward the `thread` field.
 		supportsMessageThreads:
 			model.compat?.supportsMessageThreads ??
-			(model.provider === "anthropic" && model.baseUrl.includes("api.anthropic.com")),
+			(model.provider === "anthropic" && URL.parse(model.baseUrl)?.hostname === "api.anthropic.com"),
 	};
 }
 

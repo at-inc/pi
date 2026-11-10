@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomInt } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Subscribable } from "@p2/app/v1";
@@ -102,7 +102,7 @@ export class Forwards {
 		if (this.#forwards.size >= MAX_FORWARDS) throw new Error(`At most ${MAX_FORWARDS} forwards`);
 		const validName = validateForwardName(name);
 		let id = "";
-		do id = [...randomBytes(10)].map((byte) => ID_ALPHABET[byte % ID_ALPHABET.length]).join("");
+		do id = Array.from({ length: 10 }, () => ID_ALPHABET[randomInt(ID_ALPHABET.length)]).join("");
 		while (this.#forwards.has(id));
 		const forward = {
 			id,

@@ -45,6 +45,21 @@ function thrownBy(facet: object): unknown {
 }
 
 describe("mapStack", () => {
+	it("leaves long non-position tokens intact and maps a later position", async () => {
+		const { script, plugin } = await failing();
+		const facet = evaluateFacet(script, { hostPackages: HOST_PACKAGES, plugin });
+		const error = thrownBy(facet) as Error;
+		const original = error.stack;
+		const prefix = "!".repeat(100_000);
+		error.stack = `${prefix}\n${original}`;
+		const started = performance.now();
+		const mapped = mapStack(error);
+		expect(performance.now() - started).toBeLessThan(2000);
+		expect(mapped.startsWith(`${prefix}\n`)).toBe(true);
+		expect(mapped).toContain("notes/helper.ts:3:8");
+		expect(error.stack).toBe(`${prefix}\n${original}`);
+	});
+
 	it("maps a plugin script's positions to the plugin's files and lines; other lines stay; nothing global", async () => {
 		const { script, plugin } = await failing();
 		const prepare = Error.prepareStackTrace;

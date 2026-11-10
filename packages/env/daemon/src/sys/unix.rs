@@ -153,9 +153,13 @@ pub fn remove_file(path: &str) -> io::Result<()> {
 pub trait Pipe: io::Read + std::os::fd::AsRawFd {}
 impl<T: io::Read + std::os::fd::AsRawFd> Pipe for T {}
 
-/// Read `pipe` until it ends, `on_data` returns false, or `stop` is set (looked at every 100 ms, also while no output
-/// arrives); the pipe closes when this returns.
-pub fn read_pipe(mut pipe: impl Pipe, stop: &AtomicBool, mut on_data: impl FnMut(&[u8]) -> bool) {
+/// Read until EOF, `on_data` returns false, `stop` is set, or `on_idle` ends a 100 ms read wait.
+pub fn read_pipe(
+    mut pipe: impl Pipe,
+    stop: &AtomicBool,
+    mut on_idle: impl FnMut() -> bool,
+    mut on_data: impl FnMut(&[u8]) -> bool,
+) {
     let fd = pipe.as_raw_fd();
     // SAFETY: fcntl on a descriptor this thread owns.
     unsafe {
@@ -171,9 +175,13 @@ pub fn read_pipe(mut pipe: impl Pipe, stop: &AtomicBool, mut on_data: impl FnMut
         };
         // SAFETY: one valid pollfd.
         let ready = unsafe { libc::poll(&mut poll, 1, 100) };
-        if ready == 0
-            || (ready < 0 && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted)
-        {
+        if ready == 0 {
+            if on_idle() {
+                return;
+            }
+            continue;
+        }
+        if ready < 0 && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
             continue;
         }
         if ready < 0 {

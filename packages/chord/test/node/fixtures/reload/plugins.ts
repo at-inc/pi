@@ -96,7 +96,7 @@ export function counterPlugin(code: CounterCode): Record<string, string> {
  */
 function counterFacet(code: CounterCode, contract: ContractVersion): string {
 	const v = JSON.stringify(code.code);
-	const label = contract === "v2" ? `({ text: \`${code.code}:\${n}\`, code: ${v} })` : `\`${code.code}:\${n}\``;
+	const label = contract === "v2" ? `({ text: ${v} + ":" + n, code: ${v} })` : `${v} + ":" + n`;
 	const add =
 		contract === "v2"
 			? `add: async ({ n }, ctx) => ({ text: await store.add(n, ctx) }),`
@@ -110,7 +110,7 @@ function counterFacet(code: CounterCode, contract: ContractVersion): string {
 			? `\t\tself.open(async () => { ${code.broken === "open" ? 'throw new Error("the native does not open");' : ""} natives.opens.push(${v}); return ${v}; }, (value, reason) => { natives.closes.push(\`\${value}:\${reason.kind}\`); });`
 			: "";
 	return [
-		`// The counter's ${code.placement} facet, code ${code.code}.`,
+		`// The counter's ${code.placement} facet, code ${v}.`,
 		'import { defineFacet, defineState, defineTable, int, local, method, obj, query, str } from "@test/app/v1";',
 		'import { Counter } from "./contract.ts";',
 		code.broken === "build" ? "const broken = ;" : "",
@@ -130,7 +130,7 @@ function counterFacet(code: CounterCode, contract: ContractVersion): string {
 		"\t\t\t\tawait doc.change((draft) => { draft.n += n; }, ctx);",
 		"\t\t\t\tconst at = doc.value.n;",
 		"\t\t\t\tawait self.tx(async (tx) => { tx.put(visits, { at }); }, ctx);",
-		`\t\t\t\treturn \`${code.code}:\${at}\`;`,
+		`\t\t\t\treturn ${v} + ":" + at;`,
 		"\t\t\t},",
 		"\t\t\tvisits: async (ctx) => visits.count(query(Visits), ctx),",
 		"\t\t};",
@@ -142,7 +142,7 @@ function counterFacet(code: CounterCode, contract: ContractVersion): string {
 		`\t\t\tlabel: self.derive([store.count], ([n]) => ${label}),`,
 		"\t\t\tcount: self.derive([store.count], ([n]) => n),",
 		`\t\t\t${add}`,
-		`\t\t\tslow: async (name) => { const held = latch(name); held.entered.resolve(); await held.open.promise; return \`${code.code}:\${name}\`; },`,
+		`\t\t\tslow: async (name) => { const held = latch(name); held.entered.resolve(); await held.open.promise; return ${v} + ":" + name; },`,
 		"\t\t\tslowAdd: async (name, ctx) => { const held = latch(name); held.entered.resolve(); await held.open.promise; return store.add(10, ctx); },",
 		`\t\t\tcode: async () => ${v},`,
 		"\t\t\tvisits: (ctx) => store.visits(ctx),",

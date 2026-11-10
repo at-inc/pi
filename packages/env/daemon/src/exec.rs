@@ -297,23 +297,54 @@ pub fn running<T>(
         .ok_or_else(|| Failure::new("EBADF", format!("no running {what} with this id")))
 }
 
-/// Read one pipe on its own thread until it ends or `stop` is set. With `output`, reading waits while too much output
-/// is unsent.
+/// The shared post-exit silence period of stdout and stderr, excluding time spent delivering output.
+#[derive(Default)]
+pub struct Drain {
+    idle_since: Option<Instant>,
+    delivering: usize,
+}
+
+impl Drain {
+    pub fn exited(&mut self) {
+        self.idle_since = Some(Instant::now());
+    }
+}
+
+/// Read one pipe until it ends, `stop` is set, or it is idle after exit. With `output`, reading waits while too
+/// much output is unsent; that wait does not count as pipe silence.
 pub fn spawn_reader(
     stream: usize,
     pipe: impl sys::Pipe + Send + 'static,
     sender: Sender<Message>,
     stop: Arc<AtomicBool>,
+    drain: Arc<Mutex<Drain>>,
     output: Option<Arc<Output>>,
 ) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new().spawn(move || {
-        sys::read_pipe(pipe, &stop, |bytes| {
-            let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
-            if let Some(output) = &output {
-                output.wait_for_room(&stop);
-            }
-            delivered
-        });
+        sys::read_pipe(
+            pipe,
+            &stop,
+            || {
+                let drain = drain.lock().unwrap();
+                drain.delivering == 0
+                    && drain
+                        .idle_since
+                        .is_some_and(|idle| idle.elapsed() >= EXIT_STDIO_GRACE)
+            },
+            |bytes| {
+                drain.lock().unwrap().delivering += 1;
+                let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
+                if let Some(output) = &output {
+                    output.wait_for_room(&stop);
+                }
+                let mut drain = drain.lock().unwrap();
+                drain.delivering -= 1;
+                if drain.idle_since.is_some() {
+                    drain.idle_since = Some(Instant::now());
+                }
+                delivered
+            },
+        );
         let _ = sender.send(Message::Eof(stream));
     })
 }
@@ -390,6 +421,7 @@ pub fn run(
     groups.lock().unwrap().insert(pid);
     let deadline = request.timeout.map(|timeout| Instant::now() + timeout);
     let stop = Arc::new(AtomicBool::new(false));
+    let drain = Arc::new(Mutex::new(Drain::default()));
     // Without a window, output is not coalesced; reading then waits for the link.
     let gate = if request.window.is_none() {
         Some(output.clone())
@@ -408,11 +440,18 @@ pub fn run(
         Failure::new("spawn_error", error.to_string())
     };
     let stdout = child.stdout.take().unwrap();
-    if let Err(error) = spawn_reader(0, stdout, sender.clone(), stop.clone(), gate.clone()) {
+    if let Err(error) = spawn_reader(
+        0,
+        stdout,
+        sender.clone(),
+        stop.clone(),
+        drain.clone(),
+        gate.clone(),
+    ) {
         return Err(abandon(child, error));
     }
     let stderr = child.stderr.take().unwrap();
-    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
+    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), drain.clone(), gate) {
         return Err(abandon(child, error));
     }
     if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
@@ -453,7 +492,6 @@ pub fn run(
     };
     let mut ended = [false, false];
     let mut status: Option<Result<ExitStatus, String>> = None;
-    let mut idle_until: Option<Instant> = None;
     let mut timed_out = false;
     let mut aborted = false;
     let mut killed = false;
@@ -472,12 +510,9 @@ pub fn run(
         if !timed_out && deadline.is_some_and(|deadline| now >= deadline) {
             timed_out = true;
             kill(&mut killed);
+            stop.store(true, Ordering::SeqCst);
         }
         if status.is_some() && ended[0] && ended[1] {
-            break;
-        }
-        if idle_until.is_some_and(|idle| now >= idle) {
-            // A descendant may hold the pipes open after the process exited; stop waiting for it.
             break;
         }
         if let Some(pending) = &mut pending
@@ -490,9 +525,6 @@ pub fn run(
         let mut wait = Duration::from_secs(3600);
         if let Some(deadline) = deadline.filter(|_| !timed_out) {
             wait = wait.min(deadline.saturating_duration_since(now));
-        }
-        if let Some(idle) = idle_until {
-            wait = wait.min(idle.saturating_duration_since(now));
         }
         if let Some(pending) = pending.as_ref().filter(|pending| !pending.is_empty()) {
             wait = wait.min(if unsent.load(Ordering::SeqCst) > 0 {
@@ -510,22 +542,20 @@ pub fn run(
                         kill(&mut killed);
                     }
                 }
-                if status.is_some() {
-                    idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
-                }
             }
             Ok(Message::Eof(stream)) => ended[stream] = true,
             Ok(Message::Exit(exit)) => {
                 status = Some(Ok(exit));
-                idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
+                drain.lock().unwrap().exited();
             }
             Ok(Message::WaitFailed(error)) => {
                 status = Some(Err(error));
-                idle_until = Some(Instant::now());
+                stop.store(true, Ordering::SeqCst);
             }
             Ok(Message::Cancel) => {
                 aborted = true;
                 kill(&mut killed);
+                stop.store(true, Ordering::SeqCst);
             }
             Ok(Message::Kill) => kill(&mut killed),
             Err(RecvTimeoutError::Timeout) => {}
@@ -575,4 +605,98 @@ pub fn run(
         result["spillPath"] = json!(path);
     }
     Ok(result)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn closing_output_releases_a_reader_waiting_for_link_space() {
+        let (pipe, mut writer) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let output = Arc::new(Output::default());
+        output.bulk(
+            Frame::with_payload(EVENT, 0, json!({}), vec![0; 5 * 1024 * 1024]),
+            None,
+        );
+        let reader = spawn_reader(
+            0,
+            pipe,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(Drain::default())),
+            Some(output.clone()),
+        )
+        .unwrap();
+        writer.write_all(b"output").unwrap();
+        drop(writer);
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::Data(0, _))
+        ));
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(20)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        output.close();
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::Eof(0))
+        ));
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn silent_pipes_end_after_exit_even_when_a_writer_holds_them() {
+        let (pipe, _writer) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let drain = Arc::new(Mutex::new(Drain::default()));
+        drain.lock().unwrap().exited();
+        let reader = spawn_reader(
+            0,
+            pipe,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+            drain,
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::Eof(0))
+        ));
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn output_on_one_pipe_keeps_the_other_pipe_open_after_exit() {
+        let (stdout, mut stdout_writer) = UnixStream::pair().unwrap();
+        let (stderr, mut stderr_writer) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let drain = Arc::new(Mutex::new(Drain::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let readers = [
+            spawn_reader(0, stdout, sender.clone(), stop.clone(), drain.clone(), None).unwrap(),
+            spawn_reader(1, stderr, sender, stop, drain.clone(), None).unwrap(),
+        ];
+        drain.lock().unwrap().exited();
+        for _ in 0..10 {
+            stdout_writer.write_all(b"stdout").unwrap();
+            assert!(
+                matches!(receiver.recv_timeout(Duration::from_secs(1)), Ok(Message::Data(0, bytes)) if bytes == b"stdout")
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        stderr_writer.write_all(b"stderr").unwrap();
+        assert!(
+            matches!(receiver.recv_timeout(Duration::from_secs(1)), Ok(Message::Data(1, bytes)) if bytes == b"stderr")
+        );
+        drop(stdout_writer);
+        drop(stderr_writer);
+        for reader in readers {
+            reader.join().unwrap();
+        }
+    }
 }

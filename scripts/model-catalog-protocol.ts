@@ -31,7 +31,7 @@ export const MODEL_CATALOG_INDEX_KEY = `${MODEL_CATALOG_PREFIX}/index.json`;
 export const MODEL_CATALOG_REVISION_RE = /^sha256-[0-9a-f]{64}$/;
 
 const PI_VERSION_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
-const PI_USER_AGENT_RE = /^pi\/([^\s()]+)(?: \([^;()]+(?:;\s*[^;()]+(?:;\s*[^()]+)?)?\))?$/i;
+const PI_USER_AGENT_RE = /^pi\/([^\s()]+)(?: \([^;()]+(?:;[^;()]+(?:;[^()]+)?)?\))?$/i;
 const MODEL_TYPE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 type ParsedPiVersion = readonly [major: number, minor: number, patch: number, prerelease: string];

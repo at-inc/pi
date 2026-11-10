@@ -64,4 +64,4 @@ export function mapStack(error: unknown): string {
 }
 
 /** A position in a stack line: `filename:line:column`, the filename being anything up to it (spaces included). */
-const POSITION = /([^\s()]+):(\d+):(\d+)/g;
+const POSITION = /(?<![^\s()])([^\s()]+):(\d+):(\d+)/g;
