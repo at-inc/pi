@@ -1,24 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getModels, getSupportedThinkingLevels } from "../src/compat.ts";
+import { getLegacyAnthropicModel } from "./fixtures/legacy-anthropic-models.ts";
 import { generateModelsFixture } from "./generate-models-fixture.ts";
 
 describe("getSupportedThinkingLevels", () => {
 	it("includes max but not xhigh for Anthropic Opus 4.6 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-opus-4-6");
+		const model = getLegacyAnthropicModel("claude-opus-4-6");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 		expect(getSupportedThinkingLevels(model!)).not.toContain("xhigh");
 	});
 
 	it("includes xhigh and max for Anthropic Opus 4.8 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-opus-4-8");
+		const model = getLegacyAnthropicModel("claude-opus-4-8");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 	});
 
 	it("includes xhigh and max for Anthropic Opus 5 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-opus-5");
+		const model = getLegacyAnthropicModel("claude-opus-5");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
@@ -58,21 +59,21 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it("includes max but not xhigh for Anthropic Sonnet 4.6 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-sonnet-4-6");
+		const model = getLegacyAnthropicModel("claude-sonnet-4-6");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 		expect(getSupportedThinkingLevels(model!)).not.toContain("xhigh");
 	});
 
 	it("includes xhigh and max for Anthropic Sonnet 5 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-sonnet-5");
+		const model = getLegacyAnthropicModel("claude-sonnet-5");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 	});
 
 	it("includes xhigh and max but not off for Anthropic Claude Fable 5 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-fable-5");
+		const model = getLegacyAnthropicModel("claude-fable-5");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
@@ -80,7 +81,7 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it("does not include xhigh or max for Claude Sonnet 4.5", () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
+		const model = getLegacyAnthropicModel("claude-sonnet-4-5");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).not.toContain("xhigh");
 		expect(getSupportedThinkingLevels(model!)).not.toContain("max");

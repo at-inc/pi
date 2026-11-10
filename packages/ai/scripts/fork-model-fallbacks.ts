@@ -25,13 +25,6 @@ export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-m
 			supportsMidConvoSystemMessages: true,
 			supportsMidConvoToolChanges: true,
 			supportsStrictTools: true,
-			allowedFallbackModels: [
-				{
-					provider: "anthropic",
-					model: "claude-opus-5",
-					cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-				},
-			],
 		};
 		fable.promptCache = { short: 300, long: 3600 };
 	}

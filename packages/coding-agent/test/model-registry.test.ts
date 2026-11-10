@@ -732,6 +732,19 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("modelOverrides (per-model customization)", () => {
+		const fallbackModel = {
+			id: "fallback-test-model",
+			compat: {
+				allowedFallbackModels: [
+					{
+						provider: "anthropic",
+						model: "claude-opus-5-5",
+						cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+					},
+				],
+			},
+		};
+
 		test("model override applies to a single built-in model", async () => {
 			writeRawModelsJson({
 				openrouter: {
@@ -769,8 +782,9 @@ describe("ModelRegistry", () => {
 			];
 			writeRawModelsJson({
 				anthropic: {
+					models: [fallbackModel],
 					modelOverrides: {
-						"claude-fable-5": {
+						[fallbackModel.id]: {
 							compat: { allowedFallbackModels },
 						},
 					},
@@ -778,23 +792,28 @@ describe("ModelRegistry", () => {
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			const compat = registry.find("anthropic", "claude-fable-5")?.compat as AnthropicMessagesCompat | undefined;
+			const compat = registry.find("anthropic", fallbackModel.id)?.compat as AnthropicMessagesCompat | undefined;
 
 			expect(registry.getError()).toBeUndefined();
 			expect(compat?.allowedFallbackModels).toEqual(allowedFallbackModels);
 		});
 
 		test("empty allowed fallback model override disables server-side fallback", async () => {
+			writeRawModelsJson({ anthropic: { models: [fallbackModel] } });
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			expect(registry.find("anthropic", fallbackModel.id)?.compat).toMatchObject(fallbackModel.compat);
+
 			writeRawModelsJson({
 				anthropic: {
+					models: [fallbackModel],
 					modelOverrides: {
-						"claude-fable-5": { compat: { allowedFallbackModels: [] } },
+						[fallbackModel.id]: { compat: { allowedFallbackModels: [] } },
 					},
 				},
 			});
 
-			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			const compat = registry.find("anthropic", "claude-fable-5")?.compat as AnthropicMessagesCompat | undefined;
+			await registry.refresh();
+			const compat = registry.find("anthropic", fallbackModel.id)?.compat as AnthropicMessagesCompat | undefined;
 
 			expect(registry.getError()).toBeUndefined();
 			expect(compat?.allowedFallbackModels).toEqual([]);
@@ -863,7 +882,7 @@ describe("ModelRegistry", () => {
 				},
 				anthropic: {
 					modelOverrides: {
-						"claude-sonnet-4-6": { promptCache: { long: 1800 } },
+						"claude-sonnet-5-5": { promptCache: { long: 1800 } },
 					},
 				},
 			});
@@ -876,7 +895,7 @@ describe("ModelRegistry", () => {
 			expect(openrouter.find((m) => m.id === "anthropic/claude-sonnet-4.5")?.promptCache).toEqual({ short: 300 });
 			expect(openrouter.find((m) => m.id === "anthropic/claude-opus-4.1")?.promptCache).toBeUndefined();
 			// Overrides merge per tier with the built-in catalog.
-			expect(registry.find("anthropic", "claude-sonnet-4-6")?.promptCache).toEqual({ short: 300, long: 1800 });
+			expect(registry.find("anthropic", "claude-sonnet-5-5")?.promptCache).toEqual({ short: 300, long: 1800 });
 		});
 
 		// Regression test for https://github.com/earendil-works/pi/issues/9631

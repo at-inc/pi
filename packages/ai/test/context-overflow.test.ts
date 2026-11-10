@@ -94,8 +94,8 @@ function logResult(result: OverflowResult) {
 
 describe("Context overflow error handling", () => {
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic (API Key)", () => {
-		it("claude-haiku-4-5 - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("anthropic", "claude-haiku-4-5");
+		it("claude-haiku-5-5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("anthropic", "claude-haiku-5-5");
 			const result = await testContextOverflow(model, process.env.ANTHROPIC_API_KEY!);
 			logResult(result);
 
@@ -106,8 +106,8 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("Anthropic (OAuth)", () => {
-		it("claude-sonnet-4 - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("anthropic", "claude-sonnet-4-6");
+		it("claude-sonnet-5-5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("anthropic", "claude-sonnet-5-5");
 			const result = await testContextOverflow(model, process.env.ANTHROPIC_OAUTH_TOKEN!);
 			logResult(result);
 

@@ -812,8 +812,8 @@ describe("default model selection", () => {
 
 	describe("persisted default model scoping", () => {
 		const tempDirs: string[] = [];
-		const sonnet = getModel("anthropic", "claude-sonnet-4-5")!;
-		const opus = getModel("anthropic", "claude-opus-4-8")!;
+		const sonnet = getModel("anthropic", "claude-sonnet-5-5")!;
+		const opus = getModel("anthropic", "claude-opus-5-5")!;
 
 		afterEach(() => {
 			for (const dir of tempDirs.splice(0)) {

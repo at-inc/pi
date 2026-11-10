@@ -86,6 +86,7 @@ describe("fork chat model fallbacks", () => {
 		model.thinkingLevelMap!.high = null;
 		model.compat!.supportsStrictTools = false;
 		model.inputLimits!.images!.resize!.maxWidth = 1;
+		models[1].cost.input = 99;
 		expect(getForkChatModelFallbacks("anthropic")).toEqual(before);
 	});
 
@@ -95,7 +96,7 @@ describe("fork chat model fallbacks", () => {
 		});
 		vi.stubGlobal("fetch", fetch);
 		const [fallback, fable] = getForkChatModelFallbacks("anthropic");
-		const existing = { ...fallback, id: "existing-chat", name: "Existing model", custom: true };
+		const existing = { ...fallback, id: "claude-sonnet-5-5", name: "Existing model", custom: true };
 		const { root, catalogPath, dataPath } = fixture([existing]);
 		hydrateModelCatalog(root, catalogPath);
 		validateGeneratedModelData(root);
@@ -104,7 +105,7 @@ describe("fork chat model fallbacks", () => {
 		const manifest = readFileSync(manifestPath, "utf8");
 		const data = JSON.parse(first) as Record<string, Record<string, unknown>>;
 		expect(data["anthropic-messages"]).toEqual({
-			"chat:existing-chat": existing,
+			"chat:claude-sonnet-5-5": existing,
 			"chat:claude-haiku-5-5": fallback,
 			"chat:claude-fable-5-2": fable,
 		});
@@ -161,14 +162,8 @@ describe("fork chat model fallbacks", () => {
 				supportsMidConvoSystemMessages: true,
 				supportsMidConvoToolChanges: true,
 				supportsStrictTools: true,
-				allowedFallbackModels: [
-					{
-						provider: "anthropic",
-						model: "claude-opus-5",
-						cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-					},
-				],
 			});
+			expect(fallback.compat?.allowedFallbackModels).toBeUndefined();
 		} else {
 			expect(fallback.baseUrl).toBe("https://openrouter.ai/api");
 			expect(fallback.supportsFastMode).toBeUndefined();
@@ -195,5 +190,55 @@ describe("fork chat model fallbacks", () => {
 		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
 		expect(data["anthropic-messages"][`chat:${supplied.id}`]).toEqual(supplied);
 		expect(Object.keys(data["anthropic-messages"])).toHaveLength(provider === "anthropic" ? 2 : 1);
+	});
+
+	it("hydrates only the selected Claude versions from an older pinned catalog", () => {
+		const [haiku, fable] = getForkChatModelFallbacks("anthropic");
+		const ids = [
+			"claude-sonnet-5-5",
+			"claude-opus-5-5",
+			"claude-sonnet-4-5",
+			"claude-sonnet-5",
+			"claude-haiku-4-5",
+			"claude-opus-4-8",
+			"claude-opus-5",
+			"claude-fable-5",
+			"claude-fable-5-1",
+		];
+		const { root, catalogPath, dataPath } = fixture(ids.map((id) => ({ ...haiku, id })));
+		hydrateModelCatalog(root, catalogPath);
+		validateGeneratedModelData(root);
+		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
+		expect(Object.keys(data["anthropic-messages"]).sort()).toEqual([
+			"chat:claude-fable-5-2",
+			"chat:claude-haiku-5-5",
+			"chat:claude-opus-5-5",
+			"chat:claude-sonnet-5-5",
+		]);
+		expect(data["anthropic-messages"]["chat:claude-fable-5-2"]).toEqual(fable);
+		expect(fable).toMatchObject({
+			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+			supportsFastMode: true,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsMidConvoEffort: true,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+				supportsTemperature: false,
+				supportsStrictTools: true,
+			},
+		});
+		expect(getSupportedThinkingLevels(fable)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
+	it("preserves supplied Fable 5.2 metadata instead of replacing it with the fallback", () => {
+		const [haiku, fable] = getForkChatModelFallbacks("anthropic");
+		const supplied = { ...fable, name: "Updated upstream Fable", cost: { ...fable.cost, input: 9 } };
+		const { root, catalogPath, dataPath } = fixture([supplied]);
+		hydrateModelCatalog(root, catalogPath);
+		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
+		expect(Object.values(data["anthropic-messages"])).toEqual([supplied, haiku]);
 	});
 });
