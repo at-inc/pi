@@ -3,6 +3,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { ANTHROPIC_CATALOG_MODEL_IDS } from "../catalog/providers/anthropic.ts";
 import { applyClassifierModelMetadata, getStaticClassifierModels } from "./classifier-model-data.ts";
 import { applyForkModelMetadata, type ForkModelData, getForkImageModels } from "./fork-model-data.ts";
 import { getForkChatModelFallbacks } from "./fork-model-fallbacks.ts";
@@ -56,6 +57,7 @@ export function hydrateModelCatalog(
 		const entries: CatalogEntry[] = [];
 		for (const model of models) {
 			if (!isCatalogEntry(model)) throw new Error(`Model catalog has an invalid entry for provider ${provider}`);
+			if (provider === "anthropic" && model.type === "chat" && !ANTHROPIC_CATALOG_MODEL_IDS.has(model.id)) continue;
 			applyForkModelMetadata(model);
 			applyClassifierModelMetadata(model);
 			entries.push(model);

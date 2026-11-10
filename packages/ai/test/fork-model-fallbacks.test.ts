@@ -75,13 +75,15 @@ describe("fork chat model fallbacks", () => {
 	});
 
 	it("returns isolated metadata for each use", () => {
-		const [model] = getForkChatModelFallbacks("anthropic");
-		const before = structuredClone(model);
+		const models = getForkChatModelFallbacks("anthropic");
+		const [model] = models;
+		const before = structuredClone(models);
 		model.cost.tiers![0].input = 99;
 		model.thinkingLevelMap!.high = null;
 		model.compat!.supportsStrictTools = false;
 		model.inputLimits!.images!.resize!.maxWidth = 1;
-		expect(getForkChatModelFallbacks("anthropic")).toEqual([before]);
+		models[1].cost.input = 99;
+		expect(getForkChatModelFallbacks("anthropic")).toEqual(before);
 	});
 
 	it("hydrates missing Haiku metadata offline and deterministically without changing existing entries", () => {
@@ -89,8 +91,8 @@ describe("fork chat model fallbacks", () => {
 			throw new Error("Unexpected network request");
 		});
 		vi.stubGlobal("fetch", fetch);
-		const [fallback] = getForkChatModelFallbacks("anthropic");
-		const existing = { ...fallback, id: "existing-chat", name: "Existing model", custom: true };
+		const [fallback, fable] = getForkChatModelFallbacks("anthropic");
+		const existing = { ...fallback, id: "claude-sonnet-5-5", name: "Existing model", custom: true };
 		const { root, catalogPath, dataPath } = fixture([existing]);
 		hydrateModelCatalog(root, catalogPath);
 		validateGeneratedModelData(root);
@@ -99,8 +101,9 @@ describe("fork chat model fallbacks", () => {
 		const manifest = readFileSync(manifestPath, "utf8");
 		const data = JSON.parse(first) as Record<string, Record<string, unknown>>;
 		expect(data["anthropic-messages"]).toEqual({
-			"chat:existing-chat": existing,
+			"chat:claude-sonnet-5-5": existing,
 			"chat:claude-haiku-5-5": fallback,
+			"chat:claude-fable-5-2": fable,
 		});
 		hydrateModelCatalog(root, catalogPath);
 		expect(readFileSync(dataPath, "utf8")).toBe(first);
@@ -124,6 +127,56 @@ describe("fork chat model fallbacks", () => {
 		hydrateModelCatalog(root, catalogPath);
 		validateGeneratedModelData(root);
 		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
-		expect(Object.values(data["anthropic-messages"])).toEqual([supplied]);
+		expect(Object.values(data["anthropic-messages"])).toEqual([supplied, getForkChatModelFallbacks("anthropic")[1]]);
+	});
+
+	it("hydrates only the selected Claude versions from an older pinned catalog", () => {
+		const [haiku, fable] = getForkChatModelFallbacks("anthropic");
+		const ids = [
+			"claude-sonnet-5-5",
+			"claude-opus-5-5",
+			"claude-sonnet-4-5",
+			"claude-sonnet-5",
+			"claude-haiku-4-5",
+			"claude-opus-4-8",
+			"claude-opus-5",
+			"claude-fable-5",
+			"claude-fable-5-1",
+		];
+		const { root, catalogPath, dataPath } = fixture(ids.map((id) => ({ ...haiku, id })));
+		hydrateModelCatalog(root, catalogPath);
+		validateGeneratedModelData(root);
+		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
+		expect(Object.keys(data["anthropic-messages"]).sort()).toEqual([
+			"chat:claude-fable-5-2",
+			"chat:claude-haiku-5-5",
+			"chat:claude-opus-5-5",
+			"chat:claude-sonnet-5-5",
+		]);
+		expect(data["anthropic-messages"]["chat:claude-fable-5-2"]).toEqual(fable);
+		expect(fable).toMatchObject({
+			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+			supportsFastMode: true,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsMidConvoEffort: true,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+				supportsTemperature: false,
+				supportsStrictTools: true,
+			},
+		});
+		expect(getSupportedThinkingLevels(fable)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
+	it("preserves supplied Fable 5.2 metadata instead of replacing it with the fallback", () => {
+		const [haiku, fable] = getForkChatModelFallbacks("anthropic");
+		const supplied = { ...fable, name: "Updated upstream Fable", cost: { ...fable.cost, input: 9 } };
+		const { root, catalogPath, dataPath } = fixture([supplied]);
+		hydrateModelCatalog(root, catalogPath);
+		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
+		expect(Object.values(data["anthropic-messages"])).toEqual([supplied, haiku]);
 	});
 });

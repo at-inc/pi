@@ -10,30 +10,20 @@ import {
 
 const MODELS_55 = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
 
+export const ANTHROPIC_CATALOG_MODEL_IDS = new Set([...MODELS_55, "claude-fable-5-2"]);
+
 export default defineProvider({
 	id: "anthropic",
 	models: (ctx) => [
 		...modelsDevModels(ctx, "anthropic", {
 			api: "anthropic-messages",
 			baseUrl: "https://api.anthropic.com",
-			include: (model) => MODELS_55.has(model.id) || model.id === "claude-fable-5-2",
+			include: (model) => ANTHROPIC_CATALOG_MODEL_IDS.has(model.id),
 			map: (model) => {
 				if (MODELS_55.has(model.id)) mergeThinking(model, claude55ThinkingLevels(model.id));
 				return model;
 			},
 		}),
-		{
-			id: "claude-fable-5-2",
-			name: "Claude Fable 5.2",
-			api: "anthropic-messages",
-			provider: "anthropic",
-			baseUrl: "https://api.anthropic.com",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
-			contextWindow: 1000000,
-			maxTokens: 128000,
-		},
 		...getForkChatModelFallbacks("anthropic"),
 	],
 	finalize: (model) => {
