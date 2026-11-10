@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type AnthropicOptions, stream } from "../src/api/anthropic-messages.ts";
-import { getModel, normalizeContext } from "../src/compat.ts";
+import { getModel, getModels, normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 import { getLegacyAnthropicModel } from "./fixtures/legacy-anthropic-models.ts";
 
@@ -259,12 +259,23 @@ describe("Anthropic mid-conversation effort", () => {
 		}
 	});
 
-	it("gates Fable 5.2 like Fable 5.1 without fallbacks to removed catalog models", () => {
+	it("gates Fable 5.2 like Fable 5.1 and retains fallback pricing without listing retired models", () => {
 		const direct = getModel("anthropic", "claude-fable-5-2");
 		expect(direct.compat?.supportsMidConvoEffort).toBe(true);
 		expect(direct.compat?.supportsMidConvoSystemMessages).toBe(true);
 		expect(direct.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max" });
-		expect(direct.compat?.allowedFallbackModels).toBeUndefined();
+		expect(direct.compat?.allowedFallbackModels).toEqual([
+			{
+				provider: "anthropic",
+				model: "claude-opus-5",
+				cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+			},
+		]);
+		expect(
+			getModels("anthropic")
+				.map((model) => model.id)
+				.sort(),
+		).toEqual(["claude-fable-5-2", "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5"]);
 		expect(getModel("openrouter", "anthropic/claude-fable-5.2").compat?.supportsMidConvoEffort).toBe(true);
 	});
 });

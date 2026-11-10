@@ -7,6 +7,7 @@ import { registerLazyBedrockProvider } from "@at-inc/pi-ai/lazy-bedrock-provider
 import { registerLazyOAuthFlows } from "@at-inc/pi-ai/lazy-oauth";
 import { isChordError } from "@earendil-works/chord";
 import { filesFacet } from "@earendil-works/chord/app/files";
+import { nodeCompression } from "@earendil-works/chord/compression";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { workerMain } from "@earendil-works/chord/workers/child";
 import { createHost, hostErrorText } from "../runtime/chord.ts";
@@ -50,6 +51,8 @@ workerMain(
 			address,
 			principal: HOST,
 			store,
+			// Large parts (a conversation's view) leave deflated; the server relays them as they are.
+			compression: nodeCompression,
 			onError: (error) => {
 				if (!(error.kind === "activation_failed" && isChordError(error.failure.error, "released")))
 					console.error(`p2 worker: ${hostErrorText(error)}`, error);

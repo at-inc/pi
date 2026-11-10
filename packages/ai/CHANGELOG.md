@@ -6,6 +6,12 @@
 
 - Added Claude Fable 5.2 to the Anthropic model catalog with official pricing, a 1M-token context window, 128K output, always-on adaptive thinking, mid-conversation updates, and fast mode.
 
+## [1.5.2] - 2026-11-10
+
+### Fixed
+
+- Fixed Anthropic OAuth requests reporting an outdated Claude Code version.
+
 ## [1.5.1] - 2026-11-09
 
 ### Breaking Changes
