@@ -31,7 +31,7 @@ export const MODEL_CATALOG_INDEX_KEY = `${MODEL_CATALOG_PREFIX}/index.json`;
 export const MODEL_CATALOG_REVISION_RE = /^sha256-[0-9a-f]{64}$/;
 
 const PI_VERSION_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
-const PI_USER_AGENT_RE = /^pi\/([^\s()]+)(?: \([^;()]+(?:;\s*[^;()]+(?:;\s*[^()]+)?)?\))?$/i;
+const PI_USER_AGENT_RE = /^pi\/([^\s()]+)(?: \([^;()]+(?:;[^;()]+(?:;[^()]+)?)?\))?$/i;
 const MODEL_TYPE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 type ParsedPiVersion = readonly [major: number, minor: number, patch: number, prerelease: string];
@@ -53,7 +53,6 @@ export type ModelCatalogIndex = {
 
 export type ModelCatalogRequest =
 	| { kind: "catalog"; piVersion: string | undefined; representation: ModelCatalogRepresentation }
-	| { kind: "redirect"; location: string }
 	| { kind: "invalid"; error: string };
 
 export function getModelCatalogArtifactKey(revision: string, artifact: ModelCatalogArtifact): string {
@@ -97,10 +96,11 @@ export function parseModelCatalogRepresentation(
 /**
  * Decide how to answer a catalog request from its URL and User-Agent.
  *
- * Released clients do not send `pi-version`. Responses are cached by URL, so
- * instead of varying the response on the User-Agent, clients that identify
- * as Pi are redirected to the equivalent URL with an explicit `pi-version`.
- * Requests without a Pi User-Agent receive the default catalog.
+ * Released clients do not send `pi-version`, so clients that identify as Pi
+ * are served the catalog for the version in their User-Agent. The response
+ * therefore varies on the User-Agent, and the server must say so with `Vary`.
+ * An explicit `pi-version` takes precedence. Requests without a Pi User-Agent
+ * receive the default catalog.
  */
 export function parseModelCatalogRequest(url: string | URL, userAgent: string | null | undefined): ModelCatalogRequest {
 	const requestUrl = new URL(url);
@@ -113,8 +113,7 @@ export function parseModelCatalogRequest(url: string | URL, userAgent: string | 
 	if (piVersion === null) {
 		const userAgentVersion = PI_USER_AGENT_RE.exec(userAgent ?? "")?.[1];
 		if (userAgentVersion !== undefined && isValidModelCatalogPiVersion(userAgentVersion)) {
-			requestUrl.searchParams.set("pi-version", userAgentVersion);
-			return { kind: "redirect", location: requestUrl.toString() };
+			return { kind: "catalog", piVersion: userAgentVersion, representation };
 		}
 		return { kind: "catalog", piVersion: undefined, representation };
 	}

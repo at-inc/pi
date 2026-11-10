@@ -17,18 +17,22 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(models: readonly AnyModel[]): { root: string; catalogPath: string; dataPath: string } {
+function fixture(
+	models: readonly AnyModel[],
+	provider = "anthropic",
+): { root: string; catalogPath: string; dataPath: string } {
 	const root = mkdtempSync(join(tmpdir(), "pi-fork-model-fallbacks-"));
 	roots.push(root);
 	mkdirSync(join(root, "src/providers"), { recursive: true });
-	writeFileSync(join(root, "src/providers/anthropic.models.ts"), "");
+	writeFileSync(join(root, `src/providers/${provider}.models.ts`), "");
+	const prefix = provider.toUpperCase();
 	writeFileSync(
 		join(root, "src/models.generated.ts"),
-		'import { ANTHROPIC_CLASSIFIER_MODELS, ANTHROPIC_IMAGE_MODELS, ANTHROPIC_MODELS } from "./providers/anthropic.models.ts";',
+		`import { ${prefix}_CLASSIFIER_MODELS, ${prefix}_IMAGE_MODELS, ${prefix}_MODELS } from "./providers/${provider}.models.ts";`,
 	);
 	const catalogPath = join(root, "models.all.json");
-	writeFileSync(catalogPath, JSON.stringify({ anthropic: models }));
-	return { root, catalogPath, dataPath: join(root, "src/providers/data/anthropic.json") };
+	writeFileSync(catalogPath, JSON.stringify({ [provider]: models }));
+	return { root, catalogPath, dataPath: join(root, `src/providers/data/${provider}.json`) };
 }
 
 describe("fork chat model fallbacks", () => {
@@ -76,8 +80,8 @@ describe("fork chat model fallbacks", () => {
 
 	it("returns isolated metadata for each use", () => {
 		const models = getForkChatModelFallbacks("anthropic");
-		const [model] = models;
 		const before = structuredClone(models);
+		const [model] = models;
 		model.cost.tiers![0].input = 99;
 		model.thinkingLevelMap!.high = null;
 		model.compat!.supportsStrictTools = false;
@@ -112,7 +116,7 @@ describe("fork chat model fallbacks", () => {
 	});
 
 	it("does not replace a supplied Haiku record or its provider-specific metadata", () => {
-		const [fallback] = getForkChatModelFallbacks("anthropic");
+		const [fallback, fable] = getForkChatModelFallbacks("anthropic");
 		const supplied = {
 			...fallback,
 			name: "Updated upstream Haiku",
@@ -127,7 +131,65 @@ describe("fork chat model fallbacks", () => {
 		hydrateModelCatalog(root, catalogPath);
 		validateGeneratedModelData(root);
 		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
-		expect(Object.values(data["anthropic-messages"])).toEqual([supplied, getForkChatModelFallbacks("anthropic")[1]]);
+		expect(data["anthropic-messages"]).toEqual({
+			"chat:claude-haiku-5-5": supplied,
+			"chat:claude-fable-5-2": fable,
+		});
+	});
+
+	it.each(["anthropic", "openrouter"])("hydrates missing %s Fable 5.2 with managed effort offline", (provider) => {
+		const fetch = vi.fn(() => {
+			throw new Error("Unexpected network request");
+		});
+		vi.stubGlobal("fetch", fetch);
+		const fallback = getForkChatModelFallbacks(provider).find((model) => model.id.includes("fable"))!;
+		const { root, catalogPath, dataPath } = fixture([{ ...fallback, id: "existing-chat" }], provider);
+		hydrateModelCatalog(root, catalogPath);
+		validateGeneratedModelData(root);
+		const first = readFileSync(dataPath, "utf8");
+		const data = JSON.parse(first) as Record<string, Record<string, unknown>>;
+		expect(data["anthropic-messages"][`chat:${fallback.id}`]).toEqual(fallback);
+		expect(fallback).toMatchObject({
+			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+			compat: { forceAdaptiveThinking: true, supportsMidConvoEffort: true, supportsTemperature: false },
+		});
+		expect(getSupportedThinkingLevels(fallback)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+		if (provider === "anthropic") {
+			expect(fallback.supportsFastMode).toBe(true);
+			expect(fallback.compat).toMatchObject({
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+				supportsStrictTools: true,
+			});
+			expect(fallback.compat?.allowedFallbackModels).toBeUndefined();
+		} else {
+			expect(fallback.baseUrl).toBe("https://openrouter.ai/api");
+			expect(fallback.supportsFastMode).toBeUndefined();
+			expect(fallback.compat?.allowedFallbackModels).toBeUndefined();
+			expect(fallback.compat?.supportsMidConvoSystemMessages).toBeUndefined();
+		}
+		hydrateModelCatalog(root, catalogPath);
+		expect(readFileSync(dataPath, "utf8")).toBe(first);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it.each(["anthropic", "openrouter"])("preserves a supplied %s Fable record without duplication", (provider) => {
+		const fallback = getForkChatModelFallbacks(provider).find((model) => model.id.includes("fable"))!;
+		const supplied = {
+			...fallback,
+			name: "Updated upstream Fable",
+			cost: { ...fallback.cost, input: 9 },
+			compat: { supportsMidConvoEffort: true, supportsStrictTools: false },
+			custom: { preserve: true },
+		};
+		const { root, catalogPath, dataPath } = fixture([supplied], provider);
+		hydrateModelCatalog(root, catalogPath);
+		validateGeneratedModelData(root);
+		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
+		expect(data["anthropic-messages"][`chat:${supplied.id}`]).toEqual(supplied);
+		expect(Object.keys(data["anthropic-messages"])).toHaveLength(provider === "anthropic" ? 2 : 1);
 	});
 
 	it("hydrates only the selected Claude versions from an older pinned catalog", () => {

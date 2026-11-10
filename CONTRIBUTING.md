@@ -18,24 +18,13 @@ Using AI to write code is fine. Submitting AI-generated slop without understandi
 
 If you use an agent, run it from the `pi` root directory so it picks up `AGENTS.md` automatically. Your agent must follow the rules and guidelines in that file.
 
-## Contribution Gate
+## Contributions to this fork
 
-All issues and PRs from new contributors are auto-closed by default.
-
-Issues submitted Friday through Sunday are not guaranteed to be reviewed.  If something is urgent, ask on Discord: https://discord.com/invite/3cU7Bz4UPx
-
-Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar below will not be reopened or receive a reply.
-
-Approval happens through maintainer replies on issues:
-
-- `lgtmi`: your future issues will not be auto-closed
-- `lgtm`: your future issues and PRs will not be auto-closed
-
-The command must be at the start of the reply (optionally after one or more `@username` mentions) or at the end. `lgtmi` does not grant rights to submit PRs. Only `lgtm` grants rights to submit PRs.
+This fork does not require contributor pre-approval. Issues and PRs are not automatically closed based on their author's approval status. The quality bar below, required CI checks, and required PR reviews still apply.
 
 ## Quality Bar For Issues
 
-If you open an issue, you must use one of the two GitHub issue templates.
+If you open an issue, use the appropriate GitHub issue template.
 
 If you open an issue, keep it short, concrete, and worth reading.
 
@@ -45,8 +34,6 @@ If you open an issue, keep it short, concrete, and worth reading.
 - Explain why it matters.
 - If you want to implement the change yourself, say so.
 
-If the issue is real and written well, a maintainer may reopen it or reply with `lgtmi` or `lgtm` in the command position described above.
-
 ## Blocking
 
 If you ignore this document twice, or if you spam the tracker with agent-generated issues, your GitHub account will be permanently blocked.
@@ -54,8 +41,6 @@ If you ignore this document twice, or if you spam the tracker with agent-generat
 If you send a large volume of issues through automation, your GitHub account will be permanently blocked. No taksies backsies.
 
 ## Before Submitting a PR
-
-Do not open a PR unless you have already been approved by a maintainer using `lgtm` in the command position described above.
 
 Before submitting a PR:
 
@@ -76,10 +61,6 @@ Ask on [Discord](https://discord.com/invite/nKXTsAcmbT).
 
 ## FAQ
 
-### Why are new issues and PRs auto-closed?
-
-pi receives more issues than the maintainers can responsibly review in real time. Many reports do not meet the quality bar in this guide or do not follow CONTRIBUTING.md. Some are slung at the repository mindlessly via an agent instead of being reviewed and shaped by the person submitting them. Auto-closing creates a buffer so maintainers can review the tracker on their own schedule and reopen the issues that meet the quality bar.
-
 ### Why are weekend issues lower priority?
 
 We triage the tracker during working hours. That means more issues can accumulate over the weekend. Anything submitted Friday through Sunday may be missed or given lower priority in the Monday review queue. If a problem is urgent, ask on Discord and include the short version, a repro, and the relevant logs.
@@ -99,4 +80,4 @@ No. It is a guardrail against burnout and tracker spam. Short, concrete, reprodu
 ## Where can I learn about plans?
 
 Earendil uses RFCs to discuss larger changes.  Not all of them are public, but
-quite a few are.  They can be found at [rfc.earendil.com](https://rfc.earendil.com/keyword/pi/).
+quite a few are.  They can be found at [rfc.earendil.com](https://rfc.earendil.com/keyword/pi).

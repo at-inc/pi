@@ -6,9 +6,19 @@ import { theme } from "../theme/theme.ts";
  * Format: "+123 content" or "-123 content" or " 123 content" or "     ..."
  */
 function parseDiffLine(line: string): { prefix: string; lineNum: string; content: string } | null {
-	const match = line.match(/^([+-\s])(\s*\d*)\s(.*)$/);
-	if (!match) return null;
-	return { prefix: match[1], lineNum: match[2], content: match[3] };
+	if (!/^[+-\s]/.test(line)) return null;
+	let whitespaceEnd = 1;
+	while (whitespaceEnd < line.length && /\s/.test(line[whitespaceEnd])) whitespaceEnd++;
+	let numberEnd = whitespaceEnd;
+	while (numberEnd < line.length && /[0-9]/.test(line[numberEnd])) numberEnd++;
+	const separator =
+		numberEnd > whitespaceEnd && numberEnd < line.length && /\s/.test(line[numberEnd])
+			? numberEnd
+			: whitespaceEnd - 1;
+	if (separator < 1) return null;
+	const content = line.slice(separator + 1);
+	if (/[\r\n\u2028\u2029]/.test(content)) return null;
+	return { prefix: line[0], lineNum: line.slice(1, separator), content };
 }
 
 /**
@@ -20,14 +30,22 @@ function replaceTabs(text: string): string {
 
 /**
  * Compute word-level diff and render with inverse on changed parts.
- * Uses diffWords which groups whitespace with adjacent words for cleaner highlighting.
- * Strips leading whitespace from inverse to avoid highlighting indentation.
+ * Separates common indentation before diffing so a leading insertion cannot consume it.
  */
 function renderIntraLineDiff(oldContent: string, newContent: string): { removedLine: string; addedLine: string } {
-	const wordDiff = Diff.diffWords(oldContent, newContent);
+	let commonIndentLength = 0;
+	while (
+		commonIndentLength < oldContent.length &&
+		oldContent[commonIndentLength] === newContent[commonIndentLength] &&
+		/\s/.test(oldContent[commonIndentLength])
+	) {
+		commonIndentLength++;
+	}
 
-	let removedLine = "";
-	let addedLine = "";
+	const commonIndent = oldContent.slice(0, commonIndentLength);
+	const wordDiff = Diff.diffWords(oldContent.slice(commonIndentLength), newContent.slice(commonIndentLength));
+	let removedLine = commonIndent;
+	let addedLine = commonIndent;
 	let isFirstRemoved = true;
 	let isFirstAdded = true;
 

@@ -1,6 +1,6 @@
 import { getForkChatModelFallbacks } from "../../scripts/fork-model-fallbacks.ts";
 import type { Model } from "../../src/types.ts";
-import { defineProvider, mergeCompat, mergeThinking, modelsDevModels, withInputLimits } from "../define.ts";
+import { addMissing, defineProvider, mergeCompat, mergeThinking, modelsDevModels, withInputLimits } from "../define.ts";
 import {
 	claude55ThinkingLevels,
 	enableClaudeMidConvoEffort,
@@ -14,18 +14,19 @@ export const ANTHROPIC_CATALOG_MODEL_IDS = new Set([...MODELS_55, "claude-fable-
 
 export default defineProvider({
 	id: "anthropic",
-	models: (ctx) => [
-		...modelsDevModels(ctx, "anthropic", {
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			include: (model) => ANTHROPIC_CATALOG_MODEL_IDS.has(model.id),
-			map: (model) => {
-				if (MODELS_55.has(model.id)) mergeThinking(model, claude55ThinkingLevels(model.id));
-				return model;
-			},
-		}),
-		...getForkChatModelFallbacks("anthropic"),
-	],
+	models: (ctx) =>
+		addMissing(
+			modelsDevModels(ctx, "anthropic", {
+				api: "anthropic-messages",
+				baseUrl: "https://api.anthropic.com",
+				include: (model) => ANTHROPIC_CATALOG_MODEL_IDS.has(model.id),
+				map: (model) => {
+					if (MODELS_55.has(model.id)) mergeThinking(model, claude55ThinkingLevels(model.id));
+					return model;
+				},
+			}),
+			getForkChatModelFallbacks("anthropic"),
+		),
 	finalize: (model) => {
 		if (model.api !== "anthropic-messages") return;
 		const messagesModel = model as Model<"anthropic-messages">;

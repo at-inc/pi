@@ -2,8 +2,8 @@
 
 import type { AssistantMessage, AssistantMessageEvent, ToolCall } from "@at-inc/pi-ai";
 import { type JsonChange, StreamingJsonParser } from "@at-inc/pi-ai/utils/streaming-json";
-import type { JsonRepresentation, JsonValue } from "@earendil-works/chord";
 import { appendText, type Draft } from "@earendil-works/chord/delta";
+import type { JsonRepresentation, JsonValue } from "@earendil-works/chord/json";
 import { type AssignPlan, assignJson } from "./json.ts";
 import type { LiveState } from "./live.ts";
 

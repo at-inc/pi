@@ -1,5 +1,6 @@
 import type { AssistantMessage, Usage } from "@at-inc/pi-ai";
-import type { Draft, JsonRepresentation, JsonValue } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import type { JsonRepresentation, JsonValue } from "@earendil-works/chord/json";
 import { defineDoc } from "../documents.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type {

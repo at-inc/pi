@@ -7,8 +7,6 @@ import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { createModels } from "@at-inc/pi-ai";
-import type { Context } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT, withTelemetry } from "@earendil-works/chord/context";
 import {
 	applyBatch,
 	type ChordStore,
@@ -24,7 +22,9 @@ import {
 	type Store,
 	sqliteBackend,
 	str,
-} from "@earendil-works/chord/next";
+} from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withTelemetry } from "@earendil-works/chord/context";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";

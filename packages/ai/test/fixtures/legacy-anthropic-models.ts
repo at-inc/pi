@@ -23,7 +23,7 @@ const legacyModels = {
 		name: "Claude Sonnet 5",
 		cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsStrictTools: true },
+		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
 	},
 	"claude-opus-4-5": {
 		name: "Claude Opus 4.5 (latest)",

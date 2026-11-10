@@ -1,4 +1,5 @@
-//! `exec`: Durable's `NodeExecutionEnv.exec` semantics (docs/semantics.md), output streamed as `output` events.
+//! `exec`: Durable's `NodeExecutionEnv.exec` semantics (docs/semantics.md), output streamed as `output` events; and what
+//! the commands of `exec`, `pty` and `process` share: cancellation, starting, reading pipes and reaping.
 
 use crate::decode::StreamDecoder;
 use crate::errors::Failure;
@@ -7,7 +8,7 @@ use crate::output::Output;
 use crate::sys;
 use crate::window::{Pending, Window};
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -188,44 +189,166 @@ impl Spill {
     }
 }
 
-fn spawn(
-    request: &ExecRequest,
+/// Where and with which environment a program starts.
+pub struct Launch<'a> {
+    pub cwd: &'a str,
+    pub env: &'a Map<String, Value>,
+    pub inherit_env: bool,
+}
+
+/// Start `program` with piped stdout and stderr, in a process group of its own, as libuv starts commands.
+pub fn spawn(
     program: &str,
     args: &[String],
-    piped_stdin: bool,
+    launch: &Launch,
+    stdin: Stdio,
 ) -> std::io::Result<Child> {
     let mut command = Command::new(program);
     command
-        .current_dir(&request.cwd)
-        .stdin(if piped_stdin {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .current_dir(launch.cwd)
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    sys::configure(&mut command, args, &request.env, request.inherit_env);
+    sys::configure(&mut command, args, launch.env, launch.inherit_env);
     let child = command.spawn()?;
     sys::after_spawn(&child);
     Ok(child)
 }
 
-/// Read one pipe on its own thread. Without an output window, reading waits while too much output is unsent.
-fn spawn_reader(
+/// A `process` program's group, killed once the program exits, and the daemon's groups, which forget the program
+/// before it is reaped.
+pub struct Ending {
+    pub group: sys::Group,
+    pub groups: Groups,
+}
+
+/// Reap `child` on a thread of its own, which sends its exit to `sender`. With `ending`, what the child started in its
+/// group is killed once it exits, before the exit is sent. A thread that cannot start hands the child back with the
+/// error, so the caller kills and reaps it.
+pub fn start_waiter(
+    child: Child,
+    ending: Option<Ending>,
+    sender: Sender<Message>,
+) -> Result<(), (Child, std::io::Error)> {
+    // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
+    let (give, take) = mpsc::channel::<Child>();
+    let started = thread::Builder::new().spawn(move || {
+        let Ok(mut child) = take.recv() else {
+            return;
+        };
+        let status = match &ending {
+            None => child.wait(),
+            Some(ending) => {
+                // After a failed wait, ending the group kills the program, so the reap below still returns.
+                let exited = ending.group.wait_for_exit(&mut child);
+                ending.group.end();
+                // Forgotten before it is reaped: a kill that checks `groups` under its lock never reaches a reused pid.
+                ending.groups.lock().unwrap().remove(&child.id());
+                exited.and(child.wait())
+            }
+        };
+        let _ = sender.send(match status {
+            Ok(status) => Message::Exit(status),
+            Err(error) => Message::WaitFailed(error.to_string()),
+        });
+    });
+    match started {
+        Ok(_) => {
+            let _ = give.send(child);
+            Ok(())
+        }
+        Err(error) => Err((child, error)),
+    }
+}
+
+/// The `argv` of a request: `None` when absent, else a non-empty array of strings.
+pub fn argv(json: &Value) -> Result<Option<Vec<String>>, Failure> {
+    match &json["argv"] {
+        Value::Null => Ok(None),
+        value => value
+            .as_array()
+            .and_then(|items| {
+                items
+                    .iter()
+                    .map(|item| item.as_str().map(str::to_string))
+                    .collect::<Option<Vec<String>>>()
+            })
+            .filter(|argv| !argv.is_empty())
+            .map(Some)
+            .ok_or_else(|| Failure::new("EINVAL", "argv must be a non-empty array of strings")),
+    }
+}
+
+/// The running request a follow-up request names in `target` (`ptyWrite`, `processWrite`, ...); `what` names its kind
+/// in the error.
+pub fn running<T>(
+    requests: &Mutex<HashMap<u32, Arc<T>>>,
+    json: &Value,
+    what: &str,
+) -> Result<Arc<T>, Failure> {
+    let target = json["target"]
+        .as_u64()
+        .ok_or_else(|| Failure::new("EINVAL", "missing field target"))?;
+    requests
+        .lock()
+        .unwrap()
+        .get(&(target as u32))
+        .cloned()
+        .ok_or_else(|| Failure::new("EBADF", format!("no running {what} with this id")))
+}
+
+/// The shared post-exit silence period of stdout and stderr, excluding time spent delivering output.
+#[derive(Default)]
+pub struct Drain {
+    idle_since: Option<Instant>,
+    delivering: usize,
+}
+
+impl Drain {
+    pub fn exited(&mut self) {
+        self.idle_since = Some(Instant::now());
+    }
+
+    fn is_idle(&self, now: Instant) -> bool {
+        self.delivering == 0
+            && self
+                .idle_since
+                .is_some_and(|idle| now.duration_since(idle) >= EXIT_STDIO_GRACE)
+    }
+
+    fn delivered(&mut self, now: Instant) {
+        self.delivering -= 1;
+        if self.idle_since.is_some() {
+            self.idle_since = Some(now);
+        }
+    }
+}
+
+/// Read one pipe until it ends, `stop` is set, or it is idle after exit. With `output`, reading waits while too
+/// much output is unsent; that wait does not count as pipe silence.
+pub fn spawn_reader(
     stream: usize,
     pipe: impl sys::Pipe + Send + 'static,
     sender: Sender<Message>,
     stop: Arc<AtomicBool>,
+    drain: Arc<Mutex<Drain>>,
     output: Option<Arc<Output>>,
 ) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new().spawn(move || {
-        sys::read_pipe(pipe, &stop, |bytes| {
-            let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
-            if let Some(output) = &output {
-                output.wait_for_room(&stop);
-            }
-            delivered
-        });
+        sys::read_pipe(
+            pipe,
+            &stop,
+            || drain.lock().unwrap().is_idle(Instant::now()),
+            |bytes| {
+                drain.lock().unwrap().delivering += 1;
+                let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
+                if let Some(output) = &output {
+                    output.wait_for_room(&stop);
+                }
+                drain.lock().unwrap().delivered(Instant::now());
+                delivered
+            },
+        );
         let _ = sender.send(Message::Eof(stream));
     })
 }
@@ -283,7 +406,17 @@ pub fn run(
             ),
         ));
     }
-    let mut child = spawn(&request, &program, &args, stdin_command.is_some())
+    let launch = Launch {
+        cwd: &request.cwd,
+        env: &request.env,
+        inherit_env: request.inherit_env,
+    };
+    let stdin = if stdin_command.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
+    let mut child = spawn(&program, &args, &launch, stdin)
         .map_err(|error| Failure::new("spawn_error", error.to_string()))?;
     if let (Some(command), Some(mut stdin)) = (stdin_command, child.stdin.take()) {
         let _ = stdin.write_all(command.as_bytes());
@@ -292,18 +425,17 @@ pub fn run(
     groups.lock().unwrap().insert(pid);
     let deadline = request.timeout.map(|timeout| Instant::now() + timeout);
     let stop = Arc::new(AtomicBool::new(false));
+    let drain = Arc::new(Mutex::new(Drain::default()));
     // Without a window, output is not coalesced; reading then waits for the link.
     let gate = if request.window.is_none() {
         Some(output.clone())
     } else {
         None
     };
-    // A thread that cannot start (a task limit) fails the command; the started child is killed and reaped.
-    let abandon = |mut child: Child, readers: &[JoinHandle<()>], error: std::io::Error| {
+    // A thread that cannot start (a task limit) fails the command; the started child is killed and reaped. Readers
+    // already running see `stop` within 100 ms.
+    let abandon = |mut child: Child, error: std::io::Error| {
         stop.store(true, Ordering::SeqCst);
-        for reader in readers {
-            sys::interrupt_reader(reader);
-        }
         kill_group(pid);
         // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
         let _ = child.kill();
@@ -311,33 +443,24 @@ pub fn run(
         groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
-    let mut readers = Vec::with_capacity(2);
     let stdout = child.stdout.take().unwrap();
-    match spawn_reader(0, stdout, sender.clone(), stop.clone(), gate.clone()) {
-        Ok(reader) => readers.push(reader),
-        Err(error) => return Err(abandon(child, &readers, error)),
+    if let Err(error) = spawn_reader(
+        0,
+        stdout,
+        sender.clone(),
+        stop.clone(),
+        drain.clone(),
+        gate.clone(),
+    ) {
+        return Err(abandon(child, error));
     }
     let stderr = child.stderr.take().unwrap();
-    match spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
-        Ok(reader) => readers.push(reader),
-        Err(error) => return Err(abandon(child, &readers, error)),
+    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), drain.clone(), gate) {
+        return Err(abandon(child, error));
     }
-    // The waiter receives the child once it runs, so a waiter that cannot start leaves the child here to reap.
-    let (give, take) = mpsc::channel::<Child>();
-    let waiter = sender.clone();
-    let started = thread::Builder::new().spawn(move || {
-        let Ok(mut child) = take.recv() else {
-            return;
-        };
-        let _ = waiter.send(match child.wait() {
-            Ok(status) => Message::Exit(status),
-            Err(error) => Message::WaitFailed(error.to_string()),
-        });
-    });
-    if let Err(error) = started {
-        return Err(abandon(child, &readers, error));
+    if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
+        return Err(abandon(child, error));
     }
-    let _ = give.send(child);
     drop(sender);
 
     let mut decoders = [StreamDecoder::new(), StreamDecoder::new()];
@@ -373,7 +496,6 @@ pub fn run(
     };
     let mut ended = [false, false];
     let mut status: Option<Result<ExitStatus, String>> = None;
-    let mut idle_until: Option<Instant> = None;
     let mut timed_out = false;
     let mut aborted = false;
     let mut killed = false;
@@ -392,12 +514,9 @@ pub fn run(
         if !timed_out && deadline.is_some_and(|deadline| now >= deadline) {
             timed_out = true;
             kill(&mut killed);
+            stop.store(true, Ordering::SeqCst);
         }
         if status.is_some() && ended[0] && ended[1] {
-            break;
-        }
-        if idle_until.is_some_and(|idle| now >= idle) {
-            // A descendant may hold the pipes open after the process exited; stop waiting for it.
             break;
         }
         if let Some(pending) = &mut pending
@@ -410,9 +529,6 @@ pub fn run(
         let mut wait = Duration::from_secs(3600);
         if let Some(deadline) = deadline.filter(|_| !timed_out) {
             wait = wait.min(deadline.saturating_duration_since(now));
-        }
-        if let Some(idle) = idle_until {
-            wait = wait.min(idle.saturating_duration_since(now));
         }
         if let Some(pending) = pending.as_ref().filter(|pending| !pending.is_empty()) {
             wait = wait.min(if unsent.load(Ordering::SeqCst) > 0 {
@@ -430,33 +546,29 @@ pub fn run(
                         kill(&mut killed);
                     }
                 }
-                if status.is_some() {
-                    idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
-                }
             }
             Ok(Message::Eof(stream)) => ended[stream] = true,
             Ok(Message::Exit(exit)) => {
                 status = Some(Ok(exit));
-                idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
+                drain.lock().unwrap().exited();
             }
             Ok(Message::WaitFailed(error)) => {
                 status = Some(Err(error));
-                idle_until = Some(Instant::now());
+                stop.store(true, Ordering::SeqCst);
             }
             Ok(Message::Cancel) => {
                 aborted = true;
                 kill(&mut killed);
+                stop.store(true, Ordering::SeqCst);
             }
             Ok(Message::Kill) => kill(&mut killed),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
-    // Like Node destroying its streams: stop reading, so the pipes close even if a descendant still holds them.
+    // Like Node destroying its streams: readers stop within 100 ms, so the pipes close even if a descendant still holds
+    // them.
     stop.store(true, Ordering::SeqCst);
-    for reader in &readers {
-        sys::interrupt_reader(reader);
-    }
     groups.lock().unwrap().remove(&pid);
     emit(&mut pending, 0, decoders[0].decode(&[], true));
     emit(&mut pending, 1, decoders[1].decode(&[], true));
@@ -497,4 +609,154 @@ pub fn run(
         result["spillPath"] = json!(path);
     }
     Ok(result)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn closing_output_releases_a_reader_waiting_for_link_space() {
+        let (pipe, mut writer) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let output = Arc::new(Output::default());
+        output.bulk(
+            Frame::with_payload(EVENT, 0, json!({}), vec![0; 5 * 1024 * 1024]),
+            None,
+        );
+        let reader = spawn_reader(
+            0,
+            pipe,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(Drain::default())),
+            Some(output.clone()),
+        )
+        .unwrap();
+        writer.write_all(b"output").unwrap();
+        drop(writer);
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::Data(0, _))
+        ));
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(20)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        output.close();
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::Eof(0))
+        ));
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn silent_pipes_end_after_exit_even_when_a_writer_holds_them() {
+        let (pipe, _writer) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let drain = Arc::new(Mutex::new(Drain::default()));
+        drain.lock().unwrap().exited();
+        let reader = spawn_reader(
+            0,
+            pipe,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+            drain,
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(Message::Eof(0))
+        ));
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn output_resets_the_shared_idle_deadline_after_exit() {
+        let mut now = Instant::now();
+        let mut drain = Drain::default();
+        assert!(!drain.is_idle(now));
+        drain.delivering += 1;
+        drain.delivered(now);
+        assert!(drain.idle_since.is_none());
+        drain.idle_since = Some(now);
+        for _ in 0..10 {
+            now += Duration::from_millis(25);
+            assert!(!drain.is_idle(now));
+            drain.delivering += 1;
+            drain.delivered(now);
+            assert_eq!(drain.idle_since, Some(now));
+        }
+        assert!(!drain.is_idle(now + EXIT_STDIO_GRACE - Duration::from_nanos(1)));
+        assert!(drain.is_idle(now + EXIT_STDIO_GRACE));
+    }
+
+    #[test]
+    fn delivery_time_does_not_count_as_post_exit_silence() {
+        let now = Instant::now();
+        let mut drain = Drain {
+            idle_since: Some(now),
+            delivering: 2,
+        };
+        let delivered_at = now + EXIT_STDIO_GRACE * 3;
+        assert!(!drain.is_idle(delivered_at));
+        drain.delivered(delivered_at);
+        assert!(!drain.is_idle(delivered_at + EXIT_STDIO_GRACE));
+        drain.delivered(delivered_at + EXIT_STDIO_GRACE);
+        assert!(!drain.is_idle(delivered_at + EXIT_STDIO_GRACE * 2 - Duration::from_nanos(1)));
+        assert!(drain.is_idle(delivered_at + EXIT_STDIO_GRACE * 2));
+    }
+
+    #[test]
+    fn output_on_one_pipe_keeps_the_other_pipe_open_after_exit() {
+        let (stdout, mut stdout_writer) = UnixStream::pair().unwrap();
+        let (stderr, mut stderr_writer) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let drain = Arc::new(Mutex::new(Drain::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let output = Arc::new(Output::default());
+        output.bulk(
+            Frame::with_payload(EVENT, 0, json!({}), vec![0; 5 * 1024 * 1024]),
+            None,
+        );
+        let readers = [
+            spawn_reader(0, stdout, sender.clone(), stop.clone(), drain.clone(), None).unwrap(),
+            spawn_reader(1, stderr, sender, stop, drain.clone(), Some(output.clone())).unwrap(),
+        ];
+        stderr_writer.write_all(b"ready").unwrap();
+        assert!(
+            matches!(receiver.recv_timeout(Duration::from_secs(1)), Ok(Message::Data(1, bytes)) if bytes == b"ready")
+        );
+        drain.lock().unwrap().exited();
+        for _ in 0..10 {
+            stdout_writer.write_all(b"stdout").unwrap();
+            assert!(
+                matches!(receiver.recv_timeout(Duration::from_secs(1)), Ok(Message::Data(0, bytes)) if bytes == b"stdout")
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        stderr_writer.write_all(b"stderr").unwrap();
+        drop(stdout_writer);
+        drop(stderr_writer);
+        output.close();
+        let mut ended = [false, false];
+        let mut stderr = Vec::new();
+        while !ended.iter().all(|ended| *ended) {
+            match receiver.recv_timeout(Duration::from_secs(1)).unwrap() {
+                Message::Data(1, bytes) => stderr.extend(bytes),
+                Message::Eof(stream) => {
+                    assert!(!ended[stream]);
+                    ended[stream] = true;
+                }
+                _ => panic!("unexpected pipe message"),
+            }
+        }
+        assert_eq!(stderr, b"stderr");
+        for reader in readers {
+            reader.join().unwrap();
+        }
+    }
 }

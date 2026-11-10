@@ -120,7 +120,10 @@ describe("Markdown component", () => {
 			const markdown = new Markdown("[a][x]\n\n[x]: https://one.example", 0, 0, defaultMarkdownTheme);
 			markdown.render(80);
 			markdown.setText("[a][x]\n\n[x]: https://two.example");
-			assert.ok(stripAnsi(markdown.render(80).join("\n")).includes("https://two.example"));
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trimEnd()),
+				["a (https://two.example)", ""],
+			);
 		});
 	});
 
@@ -1970,6 +1973,49 @@ bar`,
 				joinedPlain.includes("<div>") && joinedPlain.includes("</div>"),
 				"Should render HTML in code blocks",
 			);
+		});
+	});
+
+	describe("HTML comments", () => {
+		// Regression tests for https://github.com/earendil-works/pi/issues/11710
+		function renderPlain(text: string): string[] {
+			return new Markdown(text, 0, 0, defaultMarkdownTheme).render(60).map((line) => stripAnsi(line).trimEnd());
+		}
+
+		it("hides block and inline comments without extra spacing", () => {
+			assert.deepStrictEqual(
+				renderPlain(
+					"## [1.0.0]\n\n<!-- release-notes:start -->\nFixed a bug.\n\nSee <!-- todo: link --> the docs.",
+				),
+				renderPlain("## [1.0.0]\n\nFixed a bug.\n\nSee the docs."),
+			);
+		});
+
+		it("drops one blank line around comment-only blocks", () => {
+			assert.deepStrictEqual(
+				renderPlain(
+					"<!-- start -->\n\n## [1.0.0]\n\n<!-- a -->\n\n- item\n\n<!-- b -->\n\n## [0.9.0]\n\n<!-- end -->",
+				),
+				renderPlain("## [1.0.0]\n\n- item\n\n## [0.9.0]"),
+			);
+		});
+
+		it("hides multi-line and unclosed comments", () => {
+			assert.deepStrictEqual(renderPlain("<!--\nmulti\nline\n-->\ntext"), renderPlain("text"));
+			assert.deepStrictEqual(renderPlain("text\n\n<!-- streaming"), renderPlain("text"));
+		});
+
+		it("hides comments in blockquotes and list items", () => {
+			assert.deepStrictEqual(
+				renderPlain("> q\n>\n> <!-- c -->\n>\n> r\n\n- a\n\n  <!-- c -->\n\n  b\n- <!-- c --> item"),
+				renderPlain("> q\n>\n> r\n\n- a\n\n  b\n- item"),
+			);
+		});
+
+		it("keeps other HTML and the text after a comment in a block", () => {
+			assert.deepStrictEqual(renderPlain("with <tag> markers"), ["with <tag> markers"]);
+			assert.deepStrictEqual(renderPlain("<!-- c --> trailing text"), ["trailing text"]);
+			assert.deepStrictEqual(renderPlain("<div>\n<!-- c -->a</div>"), ["<div>", "a</div>"]);
 		});
 	});
 

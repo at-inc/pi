@@ -112,7 +112,7 @@ describe("Anthropic SDK v1 wire compatibility", () => {
 			identity: { userAgent: { custom: "not-claude-code" } },
 		});
 
-		expect(request.headers.get("user-agent")).toBe("claude-cli/2.1.307");
+		expect(request.headers.get("user-agent")).toBe("claude-cli/2.1.322");
 		expect(request.headers.get("authorization")).toBe("Bearer sk-ant-oat-test");
 		expect(request.headers.has("x-api-key")).toBe(false);
 		expect(request.headers.get("anthropic-version")).toBe("2026-10-21");

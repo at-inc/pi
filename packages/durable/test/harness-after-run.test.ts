@@ -2,7 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@at-inc/pi-ai";
-import type { Draft, JsonValue } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	CompactionTask,
 	ConversationBusy,

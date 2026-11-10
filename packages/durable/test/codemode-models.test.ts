@@ -10,7 +10,7 @@ import {
 	fauxToolCall,
 	type MutableModels,
 } from "@at-inc/pi-ai";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { MemoryStorage, ToolResultEntry, UsageDoc } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";

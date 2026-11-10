@@ -1,3 +1,4 @@
+import { getForkChatModelFallbacks } from "../../scripts/fork-model-fallbacks.ts";
 import type { Model, OpenAICompletionsCompat } from "../../src/types.ts";
 import { addMissing, type ChatModel, defineProvider, mergeCompat, mergeThinking } from "../define.ts";
 import { enableClaudeMidConvoEffort, supportsClaudeMidConvoEffort } from "../families/anthropic.ts";
@@ -67,7 +68,10 @@ const ROUTER_MODELS: Model<"openai-completions">[] = [
 export default defineProvider({
 	id: "openrouter",
 	models: (ctx) =>
-		addMissing(structuredClone(ctx.sources.openRouter.chat).map(correctUpstream), structuredClone(ROUTER_MODELS)),
+		addMissing(structuredClone(ctx.sources.openRouter.chat).map(correctUpstream), [
+			...structuredClone(ROUTER_MODELS),
+			...getForkChatModelFallbacks("openrouter"),
+		]),
 	images: (ctx) => structuredClone(ctx.sources.openRouter.images),
 	classifiers: (ctx) => structuredClone(ctx.sources.openRouter.classifiers),
 	compat: {

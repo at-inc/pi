@@ -1,0 +1,402 @@
+//! `process`: a long-lived program with plain pipes, for programs that speak a protocol on stdin and stdout (an MCP
+//! server). Unlike `exec`, the program reads input (`processWrite`, `processCloseStdin`, addressed by the `process`
+//! request's id) and output is raw bytes per stream; unlike `pty`, nothing is echoed, translated or merged.
+
+use crate::errors::Failure;
+use crate::exec::{
+    Control, Drain, Ending, Groups, Launch, Message, kill_group, running, spawn, spawn_reader,
+    start_waiter,
+};
+use crate::frame::{EVENT, Frame};
+use crate::output::Output;
+use crate::sys;
+use serde_json::{Map, Value, json};
+use std::collections::HashMap;
+use std::path::Path;
+use std::process::{Child, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+/// Input for a program's stdin, in arrival order.
+enum Input {
+    Data(Vec<u8>),
+    Close,
+}
+
+/// What `processWrite` and `processCloseStdin` reach: the stdin of one running `process` request.
+pub struct Process {
+    input: Sender<Input>,
+}
+
+/// Running programs by the id of their `process` request.
+pub type Processes = Arc<Mutex<HashMap<u32, Arc<Process>>>>;
+
+pub struct ProcessRequest {
+    argv: Vec<String>,
+    cwd: String,
+    env: Map<String, Value>,
+    inherit_env: bool,
+}
+
+impl ProcessRequest {
+    pub fn from_json(json: &Value) -> Result<ProcessRequest, Failure> {
+        Ok(ProcessRequest {
+            argv: crate::exec::argv(json)?
+                .ok_or_else(|| Failure::new("EINVAL", "process needs argv"))?,
+            cwd: json["cwd"]
+                .as_str()
+                .ok_or_else(|| Failure::new("EINVAL", "process needs cwd"))?
+                .to_string(),
+            env: json["env"].as_object().cloned().unwrap_or_default(),
+            inherit_env: json["inheritEnv"].as_bool().unwrap_or(true),
+        })
+    }
+}
+
+/// Queue input for the program's stdin; it is written in the order it arrives, without holding up other requests.
+pub fn write(processes: &Processes, json: &Value, payload: Vec<u8>) -> Result<Value, Failure> {
+    running(processes, json, "process")?
+        .input
+        .send(Input::Data(payload))
+        .map_err(|_| Failure::new("EBADF", "the program's stdin is closed"))?;
+    Ok(json!({}))
+}
+
+/// Close the program's stdin once the input queued before has been written.
+pub fn close_stdin(processes: &Processes, json: &Value) -> Result<Value, Failure> {
+    running(processes, json, "process")?
+        .input
+        .send(Input::Close)
+        .map_err(|_| Failure::new("EBADF", "the program's stdin is closed"))?;
+    Ok(json!({}))
+}
+
+/// Run the program, sending a `started` event and then its output, until it exits.
+pub fn run(
+    id: u32,
+    request: ProcessRequest,
+    output: &Arc<Output>,
+    control: &Control,
+    groups: &Groups,
+    processes: &Processes,
+) -> Result<Value, Failure> {
+    let (sender, receiver) = mpsc::channel();
+    control.attach(sender.clone());
+    if control.aborted.load(Ordering::SeqCst) {
+        return Err(Failure::new("aborted", "aborted"));
+    }
+    let program = sys::resolve_program(&request.argv[0], &request.cwd, &request.env)?;
+    if !Path::new(&request.cwd).exists() {
+        return Err(Failure::new(
+            "spawn_error",
+            format!("Working directory does not exist: {}", request.cwd),
+        ));
+    }
+    let launch = Launch {
+        cwd: &request.cwd,
+        env: &request.env,
+        inherit_env: request.inherit_env,
+    };
+    let mut child = spawn(&program, &request.argv[1..], &launch, Stdio::piped())
+        .map_err(|error| Failure::new("spawn_error", error.to_string()))?;
+    let pid = child.id();
+    groups.lock().unwrap().insert(pid);
+    let stop = Arc::new(AtomicBool::new(false));
+    let drain = Arc::new(Mutex::new(Drain::default()));
+    // A thread that cannot start (a task limit) fails the request; the started program is killed and reaped. Threads
+    // already running see `stop` within 100 ms.
+    let abandon = |mut child: Child, error: std::io::Error| {
+        stop.store(true, Ordering::SeqCst);
+        kill_group(pid);
+        // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
+        let _ = child.kill();
+        let _ = child.wait();
+        groups.lock().unwrap().remove(&pid);
+        Failure::new("spawn_error", error.to_string())
+    };
+    // What the program starts in its group dies when it exits: a wrapper such as `npx` that exits does not leave the
+    // server it started running, out of reach of `close()` and of a lost connection.
+    let group = match sys::group(&child) {
+        Ok(group) => group,
+        Err(error) => return Err(abandon(child, error)),
+    };
+    // Like a full pipe: a program that writes faster than the link waits.
+    let stdout = child.stdout.take().unwrap();
+    if let Err(error) = spawn_reader(
+        0,
+        stdout,
+        sender.clone(),
+        stop.clone(),
+        drain.clone(),
+        Some(output.clone()),
+    ) {
+        return Err(abandon(child, error));
+    }
+    let stderr = child.stderr.take().unwrap();
+    if let Err(error) = spawn_reader(
+        1,
+        stderr,
+        sender.clone(),
+        stop.clone(),
+        drain.clone(),
+        Some(output.clone()),
+    ) {
+        return Err(abandon(child, error));
+    }
+    let (input, inputs) = mpsc::channel::<Input>();
+    let mut stdin = child.stdin.take().unwrap();
+    let started = {
+        let stop = stop.clone();
+        thread::Builder::new().spawn(move || {
+            for input in inputs {
+                match input {
+                    Input::Data(bytes) => {
+                        if !sys::write_pipe(&mut stdin, &bytes, &stop) {
+                            return;
+                        }
+                    }
+                    // Returning drops stdin, which closes it; later input fails with `EBADF`.
+                    Input::Close => return,
+                }
+            }
+        })
+    };
+    if let Err(error) = started {
+        return Err(abandon(child, error));
+    }
+    if let Err((child, error)) = start_waiter(
+        child,
+        Some(Ending {
+            group,
+            groups: groups.clone(),
+        }),
+        sender.clone(),
+    ) {
+        return Err(abandon(child, error));
+    }
+    drop(sender);
+    // Registered before `started` goes out, so input sent after it always finds the program.
+    processes
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(Process { input }));
+    output.control(Frame::new(
+        EVENT,
+        id,
+        json!({ "kind": "started", "pid": pid }),
+    ));
+
+    let names = ["stdout", "stderr"];
+    let mut ended = [false, false];
+    let mut status: Option<Result<ExitStatus, String>> = None;
+    let mut aborted = false;
+    let mut killed = false;
+    let kill = |killed: &mut bool| {
+        if !*killed {
+            *killed = true;
+            // Only while the program is in `groups`: the waiter removes it under this lock before reaping it.
+            let groups = groups.lock().unwrap();
+            if groups.contains(&pid) {
+                kill_group(pid);
+            }
+        }
+    };
+    if control.killed.load(Ordering::SeqCst) {
+        kill(&mut killed);
+    }
+    loop {
+        if status.is_some() && ended[0] && ended[1] {
+            break;
+        }
+        match receiver.recv() {
+            Ok(Message::Data(stream, bytes)) => {
+                output.bulk(
+                    Frame::with_payload(
+                        EVENT,
+                        id,
+                        json!({ "kind": "output", "stream": names[stream] }),
+                        bytes,
+                    ),
+                    None,
+                );
+            }
+            Ok(Message::Eof(stream)) => ended[stream] = true,
+            Ok(Message::Exit(exit)) => {
+                // The waiter already ended the group; nothing is left to kill.
+                killed = true;
+                status = Some(Ok(exit));
+                drain.lock().unwrap().exited();
+            }
+            Ok(Message::WaitFailed(error)) => {
+                status = Some(Err(error));
+                stop.store(true, Ordering::SeqCst);
+            }
+            Ok(Message::Cancel) => {
+                aborted = true;
+                kill(&mut killed);
+                stop.store(true, Ordering::SeqCst);
+            }
+            Ok(Message::Kill) => kill(&mut killed),
+            Err(_) => break,
+        }
+    }
+    // Readers and the writer stop within 100 ms, also when a descendant still holds a pipe; removing the program
+    // drops its input channel, which ends a writer waiting for input.
+    stop.store(true, Ordering::SeqCst);
+    processes.lock().unwrap().remove(&id);
+    groups.lock().unwrap().remove(&pid);
+    if aborted {
+        return Err(Failure::new("aborted", "aborted"));
+    }
+    match status {
+        Some(Ok(status)) => Ok(json!({ "exitCode": sys::exit_code(status) })),
+        Some(Err(error)) => Err(Failure::new("spawn_error", error)),
+        None => Err(Failure::new(
+            "spawn_error",
+            "process did not report its exit",
+        )),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::frame;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn drains_output_after_exit_while_the_link_is_blocked() {
+        assert_drains_output("process");
+    }
+
+    #[test]
+    fn exec_drains_output_after_exit_while_the_link_is_blocked() {
+        assert_drains_output("exec");
+    }
+
+    #[test]
+    fn aborts_and_timeouts_stop_readers_while_the_link_is_blocked() {
+        for (operation, failure) in [
+            ("process", "aborted"),
+            ("exec", "aborted"),
+            ("exec", "timeout"),
+        ] {
+            let directory = sys::mkdtemp(&format!("{}/pi-env-cancel-", sys::tmpdir())).unwrap();
+            let output = Arc::new(Output::default());
+            output.bulk(
+                Frame::with_payload(EVENT, 0, json!({}), vec![0; 5 * 1024 * 1024]),
+                None,
+            );
+            let control = Arc::new(Control::default());
+            let request = json!({
+                "cwd": directory,
+                "argv": ["/bin/sh", "-c", "printf first; touch started; sleep 30"],
+                "timeoutMs": if failure == "timeout" { Some(300) } else { None },
+            });
+            let worker = start_request(operation, request, output.clone(), control.clone());
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !Path::new(&directory).join("started").exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let started = Path::new(&directory).join("started").exists();
+            if failure == "aborted" {
+                control.cancel(false);
+            }
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !worker.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let finished = worker.is_finished();
+            output.close();
+            let result = worker.join().unwrap();
+            std::fs::remove_dir_all(directory).unwrap();
+            assert!(started);
+            assert!(
+                finished,
+                "{operation} waited for the blocked link after {failure}"
+            );
+            assert_eq!(result.unwrap_err().to_json()["code"], failure);
+        }
+    }
+
+    fn assert_drains_output(operation: &str) {
+        let directory = sys::mkdtemp(&format!("{}/pi-env-drain-", sys::tmpdir())).unwrap();
+        let output = Arc::new(Output::default());
+        output.bulk(
+            Frame::with_payload(EVENT, 0, json!({}), vec![0; 5 * 1024 * 1024]),
+            None,
+        );
+        let request = json!({
+            "cwd": directory,
+            "argv": ["/bin/sh", "-c", "printf first; printf first >&2; sleep 0.05; printf last; printf last >&2; touch written"]
+        });
+        let worker = start_request(
+            operation,
+            request,
+            output.clone(),
+            Arc::new(Control::default()),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !Path::new(&directory).join("written").exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(Path::new(&directory).join("written").exists());
+        thread::sleep(Duration::from_millis(300));
+        let writer = {
+            let output = output.clone();
+            thread::spawn(move || {
+                let mut bytes = Vec::new();
+                output.run(&mut bytes);
+                bytes
+            })
+        };
+        let result = worker.join().unwrap();
+        output.close();
+        let bytes = writer.join().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+        assert_eq!(result.unwrap()["exitCode"], 0);
+        let mut input = bytes.as_slice();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        while let Some(frame) = frame::read_frame(&mut input).unwrap() {
+            if frame.id == 1 && frame.json["stream"] == "stdout" {
+                stdout.extend(frame.payload);
+            } else if frame.id == 1 && frame.json["stream"] == "stderr" {
+                stderr.extend(frame.payload);
+            }
+        }
+        assert_eq!(stdout, b"firstlast");
+        assert_eq!(stderr, b"firstlast");
+    }
+
+    fn start_request(
+        operation: &str,
+        request: Value,
+        output: Arc<Output>,
+        control: Arc<Control>,
+    ) -> thread::JoinHandle<Result<Value, Failure>> {
+        let operation = operation.to_string();
+        thread::spawn(move || {
+            if operation == "exec" {
+                return crate::exec::run(
+                    1,
+                    crate::exec::ExecRequest::from_json(&request).unwrap(),
+                    &sys::tmpdir(),
+                    &output,
+                    &control,
+                    &Arc::new(Mutex::new(Default::default())),
+                );
+            }
+            run(
+                1,
+                ProcessRequest::from_json(&request).unwrap(),
+                &output,
+                &control,
+                &Arc::new(Mutex::new(Default::default())),
+                &Arc::new(Mutex::new(HashMap::new())),
+            )
+        })
+    }
+}

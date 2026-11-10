@@ -114,6 +114,12 @@ describe("fork catalog integration", () => {
 		expect(matches[0]).toMatchObject({ name: supplied.name, contextWindow: 2000000 });
 	});
 
+	it.each(["anthropic", "openrouter"])("shares complete %s Fable metadata with pinned hydration", (provider) => {
+		const catalog = buildCatalog(PROVIDERS, sources, false);
+		const fallback = getForkChatModelFallbacks(provider).find((model) => model.id.includes("fable"))!;
+		expect(catalog[provider].chat.filter((model) => model.id === fallback.id)).toEqual([fallback]);
+	});
+
 	it("includes Fable 5.2 with official pricing, limits, and always-on adaptive thinking", () => {
 		const catalog = buildCatalog(PROVIDERS, sources, false);
 		const matches = catalog.anthropic.chat.filter((model) => model.id === "claude-fable-5-2");
