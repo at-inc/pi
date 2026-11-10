@@ -33,6 +33,7 @@ import type {
 } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
+import { getLegacyAnthropicModel } from "./fixtures/legacy-anthropic-models.ts";
 
 function fakeAuthContext(env: Record<string, string>, files: string[] = []): AuthContext {
 	return {
@@ -59,7 +60,7 @@ describe("builtin providers", () => {
 		expect(providers.length).toBe(builtinProviders().length);
 		expect(providers.map((p) => p.id)).toContain("anthropic");
 
-		const anthropic = models.getModel("anthropic", "claude-haiku-4-5");
+		const anthropic = models.getModel("anthropic", "claude-haiku-5-5");
 		expect(anthropic?.api).toBe("anthropic-messages");
 
 		const all = models.getModels();
@@ -99,7 +100,7 @@ describe("builtin providers", () => {
 			supportsStrictMode: true,
 			supportsOpenAIGrammarTools: true,
 		});
-		expect(getBuiltinModel("anthropic", "claude-haiku-4-5").compat?.supportsStrictTools).toBe(true);
+		expect(getBuiltinModel("anthropic", "claude-haiku-5-5").compat?.supportsStrictTools).toBe(true);
 	});
 
 	it("keeps the conservative resize profile on every vision model", () => {
@@ -113,11 +114,15 @@ describe("builtin providers", () => {
 	});
 
 	it("records known direct-provider image request limits", () => {
-		expect(getBuiltinModel("anthropic", "claude-haiku-4-5").inputLimits).toMatchObject({
+		expect(getLegacyAnthropicModel("claude-haiku-4-5").inputLimits).toMatchObject({
 			maxRequestBytes: 32 * 1024 * 1024,
 			images: { maxPerRequest: 100 },
 		});
-		expect(getBuiltinModel("anthropic", "claude-opus-5").inputLimits?.images?.maxPerRequest).toBe(600);
+		expect(getBuiltinModel("anthropic", "claude-opus-5-5").inputLimits?.images?.maxPerRequest).toBe(600);
+		expect(getBuiltinModel("anthropic", "claude-haiku-5-5").inputLimits).toMatchObject({
+			maxRequestBytes: 32 * 1024 * 1024,
+			images: { maxPerRequest: 600 },
+		});
 		expect(getBuiltinModel("amazon-bedrock", "anthropic.claude-haiku-4-5-20251001-v1:0").inputLimits).toMatchObject({
 			images: { maxPerMessage: 20 },
 		});
@@ -176,7 +181,7 @@ describe("builtin providers", () => {
 			["openai", "gpt-5.5"],
 			["openai", "gpt-6-astra"],
 			["openai-codex", "gpt-5.6-sol"],
-			["anthropic", "claude-opus-5"],
+			["anthropic", "claude-opus-5-5"],
 			["opencode", "gpt-5.4"],
 			["opencode", "gpt-5.6-terra"],
 			["opencode-go", "gpt-5.6-luna"],
@@ -212,9 +217,10 @@ describe("builtin providers", () => {
 			);
 		}
 		for (const [provider, modelId] of unsupported) {
-			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).not.toHaveProperty(
-				"compat.supportsMidConvoSystemMessages",
-			);
+			expect(
+				provider === "anthropic" ? getLegacyAnthropicModel(modelId) : models.getModel(provider, modelId),
+				`${provider}/${modelId}`,
+			).not.toHaveProperty("compat.supportsMidConvoSystemMessages");
 		}
 	});
 
@@ -238,7 +244,7 @@ describe("builtin providers", () => {
 				"supportsMidConvoToolChanges",
 			);
 		}
-		expect(models.getModel("anthropic", "claude-opus-5")?.compat).toMatchObject({
+		expect(models.getModel("anthropic", "claude-opus-5-5")?.compat).toMatchObject({
 			supportsMidConvoToolChanges: true,
 		});
 		// Kimi-style tool-bearing system messages survive Moonshot and OpenCode but not Copilot.

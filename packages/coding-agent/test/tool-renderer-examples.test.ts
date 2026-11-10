@@ -52,7 +52,7 @@ describe("tool renderer examples", () => {
 		const { session } = await createAgentSession({
 			cwd: tempDir,
 			agentDir,
-			model: getModel("anthropic", "claude-sonnet-4-5"),
+			model: getModel("anthropic", "claude-sonnet-5-5"),
 			settingsManager,
 			sessionManager: SessionManager.inMemory(tempDir),
 			resourceLoader,

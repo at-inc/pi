@@ -78,7 +78,7 @@ describe("system prompt updates", () => {
 			const created = await createAgentSession({
 				cwd: tempDir,
 				agentDir: join(tempDir, "agent"),
-				model: getModel("anthropic", "claude-sonnet-4-5")!,
+				model: getModel("anthropic", "claude-sonnet-5-5")!,
 				settingsManager: SettingsManager.inMemory(),
 				sessionManager,
 				noTools: "all",

@@ -53,7 +53,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		it.skipIf(!process.env.ANTHROPIC_API_KEY)(
 			"should use default cache TTL (no ttl field) when PI_CACHE_RETENTION is not set",
 			async () => {
-				const model = getModel("anthropic", "claude-haiku-4-5");
+				const model = getModel("anthropic", "claude-haiku-5-5");
 				let capturedPayload: any = null;
 
 				const s = stream(model, context, {
@@ -76,7 +76,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 		it.skipIf(!process.env.ANTHROPIC_API_KEY)("should use 1h cache TTL when PI_CACHE_RETENTION=long", async () => {
 			process.env.PI_CACHE_RETENTION = "long";
-			const model = getModel("anthropic", "claude-haiku-4-5");
+			const model = getModel("anthropic", "claude-haiku-5-5");
 			let capturedPayload: any = null;
 
 			const s = stream(model, context, {
@@ -100,7 +100,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			process.env.PI_CACHE_RETENTION = "long";
 
 			// Create a model with a different baseUrl (simulating a proxy)
-			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const baseModel = getModel("anthropic", "claude-haiku-5-5");
 			const proxyModel = {
 				...baseModel,
 				baseUrl: "https://my-proxy.example.com/v1",
@@ -136,7 +136,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("should omit ttl when supportsLongCacheRetention is false", async () => {
-			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const baseModel = getModel("anthropic", "claude-haiku-5-5");
 			const proxyModel = {
 				...baseModel,
 				baseUrl: "https://my-proxy.example.com/v1",
@@ -165,7 +165,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("should omit cache_control when cacheRetention is none", async () => {
-			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const baseModel = getModel("anthropic", "claude-haiku-5-5");
 			let capturedPayload: any = null;
 
 			try {
@@ -189,7 +189,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("should add cache_control to string user messages", async () => {
-			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const baseModel = getModel("anthropic", "claude-haiku-5-5");
 			let capturedPayload: any = null;
 
 			try {
@@ -208,14 +208,15 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			}
 
 			expect(capturedPayload).not.toBeNull();
-			const lastMessage = capturedPayload.messages[capturedPayload.messages.length - 1];
+			const lastMessage = capturedPayload.messages.findLast((message: { role: string }) => message.role === "user");
+			expect(lastMessage.content[0].text).toBe("Hello");
 			expect(Array.isArray(lastMessage.content)).toBe(true);
 			const lastBlock = lastMessage.content[lastMessage.content.length - 1];
 			expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
 		});
 
 		it("should set 1h cache TTL when cacheRetention is long", async () => {
-			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const baseModel = getModel("anthropic", "claude-haiku-5-5");
 			let capturedPayload: any = null;
 
 			try {

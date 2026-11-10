@@ -603,7 +603,7 @@ describe("Large session fixture", () => {
 describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 	it("should generate a compaction result for the large session", async () => {
 		const entries = loadLargeSessionEntries();
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 
 		const preparation = prepareCompaction(entries, DEFAULT_COMPACTION_SETTINGS);
 		expect(preparation).toBeDefined();
@@ -624,7 +624,7 @@ describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 	it("should produce valid session after compaction", async () => {
 		const entries = loadLargeSessionEntries();
 		const loaded = buildSessionContext(entries);
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 
 		const preparation = prepareCompaction(entries, DEFAULT_COMPACTION_SETTINGS);
 		expect(preparation).toBeDefined();

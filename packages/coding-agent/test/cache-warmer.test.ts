@@ -30,12 +30,16 @@ import { type SessionEntry, SessionManager, type UsageEntry } from "../src/core/
 import type { CacheWarmingMode } from "../src/core/settings-manager.ts";
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 
-const adaptiveModel: Model<Api> = {
-	...getBuiltinModel("anthropic", "claude-opus-4-6"),
+const adaptiveModel: Model<"anthropic-messages"> = {
+	...getBuiltinModel("anthropic", "claude-opus-5-5"),
+	cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+	compat: { forceAdaptiveThinking: true },
 	promptCache: { short: 300, long: 3600 },
 };
-const budgetModel: Model<Api> = {
-	...getBuiltinModel("anthropic", "claude-sonnet-4-5"),
+const budgetModel: Model<"anthropic-messages"> = {
+	...getBuiltinModel("anthropic", "claude-sonnet-5-5"),
+	thinkingLevelMap: {},
+	compat: { forceAdaptiveThinking: false },
 	promptCache: { short: 300, long: 3600 },
 };
 const openaiModel: Model<Api> = {
