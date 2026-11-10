@@ -18,21 +18,6 @@ const ALLOWED_FALLBACK_MODELS: Record<string, string[]> = {
 const MODELS_WITH_1M_CONTEXT = new Set(["claude-opus-4-6", "claude-sonnet-4-6"]);
 const MODELS_55 = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
 
-// Released 2026-11-09; models.dev does not list it for Anthropic yet.
-// https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2
-const CLAUDE_FABLE_5_2: Model<"anthropic-messages"> = {
-	id: "claude-fable-5-2",
-	name: "Claude Fable 5.2",
-	api: "anthropic-messages",
-	baseUrl: "https://api.anthropic.com",
-	provider: "anthropic",
-	reasoning: true,
-	input: ["text", "image"],
-	cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
-	contextWindow: 1000000,
-	maxTokens: 128000,
-};
-
 export default defineProvider({
 	id: "anthropic",
 	models: (ctx) =>
@@ -46,7 +31,7 @@ export default defineProvider({
 					return model;
 				},
 			}),
-			[CLAUDE_FABLE_5_2, ...getForkChatModelFallbacks("anthropic")],
+			getForkChatModelFallbacks("anthropic"),
 		),
 	finalize: (model) => {
 		if (model.api !== "anthropic-messages") return;

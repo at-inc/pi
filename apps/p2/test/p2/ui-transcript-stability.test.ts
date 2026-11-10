@@ -1,10 +1,10 @@
 // Browser: the transcript holds still. A long conversation (about 100 turns) is open at phone size (390×844); while a
 // new turn arrives and its answer streams, the rows already shown do not render again and keep their DOM (React's
-// commits and a MutationObserver, render-probe.ts), and a run going Working… → wheel → words → wheel → answer shifts
-// nothing (Chromium's layout-shift entries). A reader scrolled up keeps what they look at. Fake provider, disposable
-// data. With P2_SCREENSHOTS=<dir> it also saves screenshots of a mixed turn and of incoming messages.
+// commits and a MutationObserver, render-probe.ts), and a run at detail 3 (thoughts retained in the transcript) going
+// Working… → wheel → words → wheel → answer shifts nothing. A reader scrolled up keeps what they look at. Fake
+// provider, disposable data. With P2_SCREENSHOTS=<dir> it also saves screenshots of a mixed turn and incoming messages.
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fauxAssistantMessage } from "@at-inc/pi-ai/providers/faux";
@@ -216,12 +216,16 @@ describe("transcript stability", { skip: !browserTests }, () => {
 		}
 	});
 
-	it("a run going Working… → wheel → words → wheel → answer shifts nothing", async () => {
+	it("at detail 3, a run going Working… → wheel → words → wheel → answer shifts nothing", async () => {
+		const settings = join(fixture.dataDir, "settings.json");
+		const base = readFileSync(settings, "utf8");
+		writeFileSync(settings, JSON.stringify({ ...(JSON.parse(base) as Record<string, unknown>), detail: 3 }));
 		const session = await seeded("Steps", bigSessionEntries(40, 400));
 		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
 		const stop = follow(chat.view, () => {});
 		try {
 			await browser.open(url(`/s/${session}`));
+			await browser.wait("localStorage.getItem('p2-detail') === '3'");
 			await browser.wait(
 				`document.querySelector('.composer textarea') && document.querySelectorAll('[data-row]').length > 3`,
 			);
@@ -273,6 +277,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 			);
 			assert.equal(moved, top, "the row the reader looked at stays put");
 		} finally {
+			writeFileSync(settings, base);
 			stop();
 			chat.release();
 		}

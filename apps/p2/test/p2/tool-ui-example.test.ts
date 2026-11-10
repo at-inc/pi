@@ -140,19 +140,28 @@ test(
 			);
 			assert.match(steps[0] ?? "", /^word_countThe quick brown fox✓/);
 			assert.match(steps[1] ?? "", /^word_count✗ empty text/);
-			// The detail: the tool's own, under the tool's words.
-			await browser.click("[data-testid=step] button");
-			await browser.wait("document.querySelector('[data-testid=word-count]')");
+			// Details expand under their step, without replacing the activity panel or its history entry.
+			const index = await browser.evaluate("history.state.index");
+			const step = '[data-testid=step][data-step-id="w1"]';
+			await browser.click(`${step} > button`);
+			await browser.wait(`document.querySelector('${step} > .activity-detail [data-testid=word-count]')`);
+			assert.equal(await browser.evaluate("history.state.index"), index);
 			assert.equal(
-				await browser.evaluate("document.querySelector('.sheet-head h2').textContent"),
-				"Counted words in The quick brown fox",
+				await browser.evaluate(`document.querySelector('${step} > button').getAttribute('aria-expanded')`),
+				"true",
 			);
 			assert.equal(
-				await browser.evaluate("document.querySelector('[data-testid=word-count]').textContent"),
+				await browser.evaluate(
+					'document.querySelector(\'[data-testid=step][data-step-id="w2"] > button\').getAttribute("aria-expanded")',
+				),
+				"false",
+			);
+			assert.equal(
+				await browser.evaluate(`document.querySelector('${step} [data-testid=word-count]').textContent`),
 				"9 words, 2 lines",
 			);
 			assert.match(
-				await browser.evaluate<string>("document.querySelector('[data-testid=detail-input]').textContent"),
+				await browser.evaluate<string>(`document.querySelector('${step} [data-testid=detail-input]').textContent`),
 				/jumps over the lazy dog/,
 			);
 		} finally {

@@ -406,8 +406,8 @@ describe("base code compared with what the running bases read (p3 step 0a)", () 
 			await mkdir(join(root, "ancestor", "dir"), { recursive: true });
 			const pipe = join(root, "ancestor", "dir", "held.ts");
 			execFileSync("mkfifo", [pipe]);
-			watcher.recordBase(new Map([[pipe, hashOf("as built")]]));
-			await writeWhenRead(pipe, "as built");
+			watcher.recordBase(new Map([[pipe, hashOf("")]]));
+			await writeWhenRead(pipe, "");
 			await settled();
 			expect(watcher.value).toMatchObject({ base: false });
 			for (let round = 0; round < 20; round++) {
@@ -415,12 +415,12 @@ describe("base code compared with what the running bases read (p3 step 0a)", () 
 				await chmod(join(root, "ancestor", "dir"), round % 2 === 0 ? 0o700 : 0o755);
 			}
 			await settled();
-			// A renewal would compare the file again: a reader would wait on the pipe.
+			// A renewal would compare again; the empty write itself emits no change that would queue another read.
 			expect(readerWaits(pipe)).toBe(false);
 			await rename(join(root, "ancestor"), join(root, "moved"));
 			await baseIs(watcher, true);
 			await rename(join(root, "moved"), join(root, "ancestor"));
-			await writeWhenRead(pipe, "as built");
+			await writeWhenRead(pipe, "");
 			await baseIs(watcher, false);
 			watcher.close();
 		},

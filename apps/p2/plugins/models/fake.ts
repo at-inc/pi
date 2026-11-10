@@ -60,7 +60,7 @@ const SCRIPTED: Record<string, () => ReturnType<typeof fauxToolCall>> = {
 			code: [
 				'const one = (await tools.bash({ command: "echo one >> codemode.log; printf one" })).output;',
 				"let two;",
-				'try { two = (await tools.bash({ command: "sleep 5; echo two >> codemode.log; printf two" })).output; }',
+				'try { two = (await tools.bash({ command: "echo two >> codemode.log; printf two; sleep 5" })).output; }',
 				'catch (error) { two = "two failed: " + error.message; }',
 				'const three = (await tools.bash({ command: "echo three >> codemode.log; printf three" })).output;',
 				'return [one, two, three].join(" | ");',

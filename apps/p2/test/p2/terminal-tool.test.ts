@@ -5,7 +5,8 @@
 // loads the tool.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -21,7 +22,7 @@ import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame, type TerminalEvent, type TerminalInfo } from "../../plugins/terminals/protocol.ts";
 import { Hosts } from "../../src/runtime/server.ts";
-import { APP, expectChord, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { APP, expectChord, holdIn, http, type LocalOwner, poll, startFixture, until } from "./helpers.ts";
 
 let unavailable: string | undefined;
 try {
@@ -49,8 +50,11 @@ test(
 	{ timeout: 180_000, skip: unavailable },
 	async (t) => {
 		const shell = process.env.SHELL;
+		const home = process.env.HOME;
+		const testHome = mkdtempSync(join(tmpdir(), "p2-terminal-home-"));
 		// The terminal host and its shells inherit this: a plain shell, without the developer's rc files.
 		process.env.SHELL = "/bin/sh";
+		process.env.HOME = testHome;
 		const fixture = await startFixture({ allowedHosts: ["share.test"] });
 		t.after(async () => {
 			await fixture.close();
@@ -60,6 +64,9 @@ test(
 			await new Promise((resolve) => host.once("close", resolve));
 			if (shell === undefined) delete process.env.SHELL;
 			else process.env.SHELL = shell;
+			if (home === undefined) delete process.env.HOME;
+			else process.env.HOME = home;
+			rmSync(testHome, { recursive: true, force: true });
 		});
 		const workspace = realpathSync(fixture.workspace);
 		const owner = fixture.browser();
@@ -84,7 +91,7 @@ test(
 		};
 		// The owner's terminal panel: its byte channel hears the session's terminals change.
 		const view = await holdIn(owner, Terminals, { session: session.id, view: randomUUID() }, "owner");
-		const bytes = await byteChannel(fixture.server.port, (await view.channel({}, BACKGROUND_CONTEXT)).token);
+		const bytes = await byteChannel(fixture.owner, (await view.channel({}, BACKGROUND_CONTEXT)).token);
 		t.after(() => bytes.socket.terminate());
 		await view.list({}, BACKGROUND_CONTEXT);
 		const listed = () =>
@@ -96,7 +103,7 @@ test(
 		await t.test("a script opens a window, types into it and reads its output", async () => {
 			const value = (await script(
 				[
-					'const opened = await tools.terminal({ command: "new-window", args: ["-n", "dev", "-w", "/^hello-agent$/", "echo hello-age\'\'nt"] });',
+					'const opened = await tools.terminal({ command: "new-window", args: ["-n", "dev", "-w", "/^hello-agent$/", "echo; echo hello-age\'\'nt"] });',
 					'const sent = await tools.terminal({ command: "send-keys", args: ["-t", "dev", "-w", "/^two$/", "echo t\'\'wo", "Enter"] });',
 					'const windows = await tools.terminal({ command: "list-windows" });',
 					"return { opened, sent, windows };",
@@ -215,7 +222,7 @@ test(
 			const own = join(workspace, "own");
 			mkdirSync(own);
 			const opener =
-				'return await tools.terminal({ command: "new-window", args: ["-n", "sub", "-w", "/^in-sub$/", "echo in-s\'\'ub"] });';
+				'return await tools.terminal({ command: "new-window", args: ["-n", "sub", "-w", "/^in-sub$/", "echo; echo in-s\'\'ub"] });';
 			const spawn = { action: "spawn", name: "own", message: `codemode ${opener}`, cwd: "own" };
 			const spawned = await call(`subagent ${JSON.stringify(spawn)}`);
 			assert.equal(spawned.isError, false, text(spawned));
@@ -238,8 +245,8 @@ test(
 		await t.test("archiving the session closes its terminals", async () => {
 			await sessions.archive({ id: session.id }, BACKGROUND_CONTEXT);
 			const service = (await fixture.server.host.registry(TerminalServices, BACKGROUND_CONTEXT)).value!.service;
-			assert.deepEqual(await service.call({ op: "list", sessionId: session.id }), { kind: "list", windows: [] });
 			await poll(() => listed().length === 0);
+			assert.deepEqual(await service.call({ op: "list", sessionId: session.id }), { kind: "list", windows: [] });
 		});
 
 		await t.test("without code mode, tool_search loads the tool for the model", async () => {
@@ -262,8 +269,10 @@ test(
 	},
 );
 
-async function byteChannel(port: number, token: string) {
-	const socket = new WebSocket(`ws://127.0.0.1:${port}/terminal?${new URLSearchParams({ token })}`);
+async function byteChannel(owner: LocalOwner, token: string) {
+	const socket = new WebSocket(`ws://127.0.0.1:${owner.port}/terminal?${new URLSearchParams({ token })}`, {
+		headers: { Cookie: owner.cookie },
+	});
 	const events: TerminalEvent[] = [];
 	socket.on("message", (data, binary) => {
 		if (!binary) {

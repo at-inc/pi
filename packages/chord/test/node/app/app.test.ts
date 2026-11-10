@@ -347,7 +347,7 @@ describe("base code", () => {
 		"answers before the scan of its own code finished: the scan runs after the start",
 		async () => {
 			const dir = await tempDir();
-			// A file only the scan reads (Node never runs the import): a pipe, so the scan waits until it is written.
+			// A file only the scan reads (Node never runs the import): a pipe, so the scan waits for a writer.
 			execFileSync("mkfifo", [join(dir, "held.mjs")]);
 			const stdout = await runStart(
 				dir,
@@ -355,8 +355,8 @@ describe("base code", () => {
 				[
 					'const owner = await fetch(new URL(started.ownerLink()).origin + "/_chord/owner");',
 					'console.log("answered", owner.status);',
-					// The pipe is fed from now on: each read of it (the scan's, the watcher's first comparison) gets the file.
-					`let feeding = true; void (async () => { while (feeding) { try { const fd = openSync(${JSON.stringify(join(dir, "held.mjs"))}, constants.O_WRONLY | constants.O_NONBLOCK); writeSync(fd, "export {};"); closeSync(fd); } catch {} await new Promise((resolve) => setTimeout(resolve, 10)); } })();`,
+					// Each reader gets an empty module: writing bytes would emit a change and queue another comparison.
+					`let feeding = true; void (async () => { while (feeding) { try { const fd = openSync(${JSON.stringify(join(dir, "held.mjs"))}, constants.O_WRONLY | constants.O_NONBLOCK); closeSync(fd); } catch {} await new Promise((resolve) => setTimeout(resolve, 10)); } })();`,
 					"await started.baseWatched;",
 					"feeding = false;",
 					'console.log("scanned");',

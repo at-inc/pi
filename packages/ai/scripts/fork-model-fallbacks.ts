@@ -1,8 +1,43 @@
+import { applyClaudeFamilyRules, enableClaudeMidConvoEffort } from "../catalog/families/anthropic.ts";
 import type { Model } from "../src/types.ts";
 import { applyForkModelMetadata, applyImageInputMetadata } from "./fork-model-data.ts";
 
 export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-messages"> & { type: "chat" })[] {
-	if (provider !== "anthropic") return [];
+	if (provider !== "anthropic" && provider !== "openrouter") return [];
+	const fable: Model<"anthropic-messages"> & { type: "chat" } = {
+		type: "chat",
+		id: provider === "anthropic" ? "claude-fable-5-2" : "anthropic/claude-fable-5.2",
+		name: provider === "anthropic" ? "Claude Fable 5.2" : "Anthropic: Claude Fable 5.2",
+		api: "anthropic-messages",
+		provider,
+		baseUrl: provider === "anthropic" ? "https://api.anthropic.com" : "https://openrouter.ai/api",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	};
+	applyClaudeFamilyRules(fable);
+	enableClaudeMidConvoEffort(fable);
+	if (provider === "anthropic") {
+		fable.compat = {
+			...fable.compat,
+			supportsMidConvoSystemMessages: true,
+			supportsMidConvoToolChanges: true,
+			supportsStrictTools: true,
+			allowedFallbackModels: [
+				{
+					provider: "anthropic",
+					model: "claude-opus-5",
+					cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+				},
+			],
+		};
+		fable.promptCache = { short: 300, long: 3600 };
+	}
+	applyForkModelMetadata(fable);
+	applyImageInputMetadata(fable);
+	if (provider === "openrouter") return [fable];
 	const model: Model<"anthropic-messages"> & { type: "chat" } = {
 		type: "chat",
 		id: "claude-haiku-5-5",
@@ -41,5 +76,5 @@ export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-m
 	};
 	applyForkModelMetadata(model);
 	applyImageInputMetadata(model);
-	return [model];
+	return [model, fable];
 }
