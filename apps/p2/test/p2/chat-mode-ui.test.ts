@@ -5,10 +5,10 @@ import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
-	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
+	`(()=>{const e=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${jsString(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 
 describe("chat mode in the browser", { skip: !browserTests }, () => {
 	let fixture: Fixture;
@@ -71,7 +71,7 @@ describe("chat mode in the browser", { skip: !browserTests }, () => {
 			`(()=>{const r=document.querySelector('.chat-message .bubble').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
 		);
 		await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: bubble.x, y: bubble.y });
-		await browser.wait(`getComputedStyle(document.querySelector(${JSON.stringify(reply("Owner"))})).opacity==='1'`);
+		await browser.wait(`getComputedStyle(document.querySelector(${jsString(reply("Owner"))})).opacity==='1'`);
 		await browser.click(reply("Owner"));
 		await browser.wait(`document.querySelector('.composer .replying')?.textContent==='Replying to Owner'`);
 		await browser.click('.composer button[aria-label="Cancel reply"]');

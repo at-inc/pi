@@ -6,7 +6,7 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { ServerNatives } from "../../src/runtime/server.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import { holdIn, jsString, startFixture, until } from "./helpers.ts";
 
 test(
 	"owner Logs sheet filters worker sources, follows live lines, copies the filtered text and restores its locator",
@@ -39,7 +39,7 @@ test(
 		}
 		await browser.wait(`document.querySelector('[role=dialog] [aria-label=Logs] #logs-source')`);
 		await browser.evaluate(
-			`(()=>{const e=document.querySelector('#logs-source');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(worker)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+			`(()=>{const e=document.querySelector('#logs-source');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${jsString(worker)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
 		);
 		await browser.wait(`document.querySelector('.logs-output')?.textContent.includes('worker-start-failure')`);
 		const visible = await browser.evaluate<string>("document.querySelector('.logs-output').textContent");
@@ -59,7 +59,7 @@ test(
 		await browser.wait("window.logsCopied?.includes('second-failure live-marker')");
 		assert(!(await browser.evaluate<string>("window.logsCopied")).includes("worker-ready-marker"));
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/new`);
-		await browser.wait(`document.querySelector('#logs-source')?.value===${JSON.stringify(worker)}`);
+		await browser.wait(`document.querySelector('#logs-source')?.value===${jsString(worker)}`);
 		await browser.wait(`document.querySelector('.logs-output')?.textContent.includes('worker-start-failure')`);
 		await browser.click("[role=dialog] button[aria-label=Close]");
 		await browser.wait("!document.querySelector('[role=dialog]')");
@@ -105,7 +105,7 @@ test(
 		await browser.evaluate(
 			"[...document.querySelectorAll('.worker-start-error button')].find(e=>e.textContent==='Show logs').click()",
 		);
-		await browser.wait(`document.querySelector('#logs-source')?.value===${JSON.stringify(`session:${session.id}`)}`);
+		await browser.wait(`document.querySelector('#logs-source')?.value===${jsString(`session:${session.id}`)}`);
 		await browser.wait("document.querySelector('.logs-output')?.textContent.includes('not configured')");
 		assert(
 			!(await browser.evaluate<string>("document.querySelector('.logs-output').textContent")).includes(

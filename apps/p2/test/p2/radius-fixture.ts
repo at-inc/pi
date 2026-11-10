@@ -12,7 +12,7 @@ import { type WebSocket, WebSocketServer } from "ws";
 import { ForwardsNative } from "../../plugins/ports/contract.ts";
 import { writeRadiusConfig } from "../../plugins/radius/brain.ts";
 import { RadiusConnections } from "../../plugins/radius/contract.ts";
-import { startServer } from "../../src/hosts/server.ts";
+import { type P2Server, startServer } from "../../src/hosts/server.ts";
 import { defineFacet } from "../../src/runtime/chord.ts";
 import { isOwner } from "../../src/runtime/principals.ts";
 import { Routes } from "../../src/runtime/server.ts";
@@ -179,7 +179,9 @@ export async function radiusFixture(
 ) {
 	const directory = await mkdtemp(join(tmpdir(), "p2-radius-"));
 	const radius = await fakeRadius(relay);
+	let server: P2Server | undefined;
 	t.after(async () => {
+		await server?.close();
 		await radius.close();
 		await rm(directory, { recursive: true, force: true });
 	});
@@ -217,14 +219,13 @@ export async function radiusFixture(
 			},
 		}),
 	);
-	const server = await startServer({
+	server = await startServer({
 		dataDir: directory,
 		port: 0,
 		fake: true,
 		web: false,
 		facets: [{ name: "radius-probe", facet: probe }],
 	});
-	t.after(() => server.close());
 	await radius.hostReady;
 	// The natives the radius and ports plugins contribute once open (their objects live from the load).
 	const natives = await Promise.all([

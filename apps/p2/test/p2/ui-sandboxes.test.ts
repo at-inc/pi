@@ -8,12 +8,12 @@ import { Envs } from "../../plugins/envs/contract.ts";
 import type { EnvConfig } from "../../plugins/envs/schema.ts";
 import { Catalog } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, startFixture } from "./helpers.ts";
+import { type Fixture, jsString, startFixture } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
-	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
+	`(()=>{const e=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${jsString(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 const button = (text: string) =>
-	`[...document.querySelectorAll('[role=dialog] button')].find(e => e.textContent.trim() === ${JSON.stringify(text)})`;
+	`[...document.querySelectorAll('[role=dialog] button')].find(e => e.textContent.trim() === ${jsString(text)})`;
 
 describe("sandbox UI", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser;

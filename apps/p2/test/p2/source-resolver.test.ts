@@ -15,6 +15,7 @@ test("source aliases resolve fork packages alongside upstream packages and the p
 	await copyFile(new URL("../../src/source-resolver.ts", import.meta.url), join(project, "src/source-resolver.ts"));
 	await writeFile(join(directory, "package.json"), '{"type":"module"}');
 	await writeFile(join(directory, "packages/probe/src/index.ts"), 'export const value = "source";');
+	await writeFile(join(directory, "packages/probe/src/$&.ts"), 'export const value = "literal";');
 	await writeFile(join(project, "src/api.ts"), 'export const value = "api";');
 	await writeFile(
 		join(directory, "tsconfig.json"),
@@ -39,11 +40,12 @@ test("source aliases resolve fork packages alongside upstream packages and the p
 		[
 			'import { value as ai } from "@at-inc/pi-ai";',
 			'import { value as subpath } from "@at-inc/pi-ai/index";',
+			'import { value as literal } from "@at-inc/pi-ai/$&";',
 			'import { value as agent } from "@at-inc/pi-agent-core";',
 			'import { value as coding } from "@at-inc/pi";',
 			'import { value as chord } from "@earendil-works/chord";',
 			'import { value as api } from "@p2/app/v1";',
-			"console.log(JSON.stringify([ai, subpath, agent, coding, chord, api]));",
+			"console.log(JSON.stringify([ai, subpath, agent, coding, chord, api, literal]));",
 		].join("\n"),
 	);
 	const { stdout } = await promisify(execFile)(
@@ -51,5 +53,5 @@ test("source aliases resolve fork packages alongside upstream packages and the p
 		["--import", "./src/source-resolver.ts", "src/probe.ts"],
 		{ cwd: project },
 	);
-	assert.deepEqual(JSON.parse(stdout), ["source", "source", "source", "source", "source", "api"]);
+	assert.deepEqual(JSON.parse(stdout), ["source", "source", "source", "source", "source", "api", "literal"]);
 });

@@ -14,6 +14,14 @@ export type Placement = "server" | "worker";
  */
 export type ContractVersion = "v1" | "v2";
 
+/** Encodes a string as a JavaScript literal without HTML delimiters or Unicode line separators. */
+export function jsString(value: string): string {
+	return JSON.stringify(value).replace(
+		/[<>&\u2028\u2029]/g,
+		(character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+	);
+}
+
 /** The latches, by name: a method marks one entered and waits until the test opens it. */
 const LATCH = `
 type Latch = { readonly entered: PromiseWithResolvers<void>; readonly open: PromiseWithResolvers<void> };
@@ -95,7 +103,7 @@ export function counterPlugin(code: CounterCode): Record<string, string> {
  * count document and the visits table, and the counter the page holds, its label naming the code.
  */
 function counterFacet(code: CounterCode, contract: ContractVersion): string {
-	const v = JSON.stringify(code.code);
+	const v = jsString(code.code);
 	const label = contract === "v2" ? `({ text: ${v} + ":" + n, code: ${v} })` : `${v} + ":" + n`;
 	const add =
 		contract === "v2"
@@ -188,10 +196,10 @@ export type WebCode = {
 
 /** A web plugin's files: its view (the counter's label, count and state, a draft and a kept input) and contract copy. */
 export function webPlugin(code: WebCode): Record<string, string> {
-	const name = JSON.stringify(code.name);
+	const name = jsString(code.name);
 	const counter = code.counter;
 	const lines = [
-		`// The ${code.name} web plugin, code ${code.code}.`,
+		`// The ${name} web plugin, code ${jsString(code.code)}.`,
 		'import { createElement as h, useEffect, useState } from "react";',
 		'import { defineFacet } from "@test/app/v1";',
 		'import { probe, useHold, usePageState, useRefState, useWatch, Views } from "@test/app/v1/web";',
@@ -219,9 +227,9 @@ export function webPlugin(code: WebCode): Record<string, string> {
 		"}",
 		"function View() {",
 		'\tconst [draft, setDraft] = useState("");',
-		`\tconst [kept, setKept] = usePageState(${JSON.stringify(`${code.name}.kept`)}, "");`,
+		`\tconst [kept, setKept] = usePageState(${jsString(`${code.name}.kept`)}, "");`,
 		'\treturn h("div", null,',
-		`\t\th("span", { className: "code" }, ${JSON.stringify(`${code.name}:${code.code}`)}),`,
+		`\t\th("span", { className: "code" }, ${jsString(`${code.name}:${code.code}`)}),`,
 		"\t\th(Shown),",
 		'\t\th("input", { className: "draft", value: draft, onChange: (event: { target: { value: string } }) => setDraft(event.target.value) }),',
 		'\t\th("input", { className: "kept", value: kept, onChange: (event: { target: { value: string } }) => setKept(event.target.value) }),',
@@ -259,19 +267,20 @@ export const Summary = remote("reload.summary", {
  * plugin's file, imported by relative path (copied into the summary's script).
  */
 export function summaryPlugin(code: string): Record<string, string> {
+	const label = jsString(code);
 	return {
 		"contract.ts": SUMMARY_CONTRACT,
 		"server.ts": [
-			`// The summary's server facet, code ${code}.`,
+			`// The summary's server facet, code ${label}.`,
 			'import { defineFacet } from "@test/app/v1";',
 			'import { Counter } from "../counter/contract.ts";',
 			'import { Summary } from "./contract.ts";',
 			"export default defineFacet((host) => host.serve(Summary, ({ id }, _principal, self) => {",
 			"\tconst counter = self.get(Counter, { id });",
 			'\treturn { variant: "main", members: {',
-			`\t\tlabel: self.derive([counter.count], ([count]) => \`${code}(\${count})\`),`,
+			`\t\tlabel: self.derive([counter.count], ([count]) => ${label} + "(" + count + ")"),`,
 			"\t\tcount: self.derive([counter.count], ([count]) => count),",
-			`\t\tcode: async () => ${JSON.stringify(code)},`,
+			`\t\tcode: async () => ${label},`,
 			"\t} };",
 			"}));",
 		].join("\n"),
@@ -295,11 +304,11 @@ export const Tasks = remote("reload.tasks", {
  * native, so a reload restarts it. The page reaches it through `Tasks`.
  */
 export function tasksPlugin(code: string, native = false): Record<string, string> {
-	const v = JSON.stringify(code);
+	const v = jsString(code);
 	return {
 		"contract.ts": TASKS_CONTRACT,
 		"worker.ts": [
-			`// The tasks' worker facet, code ${code}.`,
+			`// The tasks' worker facet, code ${v}.`,
 			'import { arr, defineFacet, defineJob, defineState, int, local, method, obj, str } from "@test/app/v1";',
 			'import { Tasks } from "./contract.ts";',
 			LATCH,
@@ -318,11 +327,11 @@ export function tasksPlugin(code: string, native = false): Record<string, string
 			"\t\t\t\t\tvoid held.open.promise.then(resolve);",
 			'\t\t\t\t\tctx.abortSignal?.addEventListener("abort", () => reject(new Error("aborted")));',
 			"\t\t\t\t});",
-			`\t\t\t\treturn \`run-${code}:\${name}\`;`,
+			`\t\t\t\treturn "run-" + ${v} + ":" + name;`,
 			"\t\t\t},",
 			"\t\t\tfinish: async (outcome, tx) => {",
 			'\t\t\t\tconst what = outcome.kind === "done" ? "done:" + outcome.result : outcome.error.kind === "aborted" ? "aborted:" + outcome.error.reason : outcome.error.kind;',
-			`\t\t\t\t(await tx.draft(entries)).list.push(\`${code}-finish(\${what})\`);`,
+			`\t\t\t\t(await tx.draft(entries)).list.push(${v} + "-finish(" + what + ")");`,
 			"\t\t\t},",
 			"\t\t});",
 			"\t\treturn {",

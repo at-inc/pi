@@ -9,7 +9,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture, until } from "./helpers.ts";
 
 const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
 	!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run;
@@ -110,9 +110,9 @@ describe("branches in the browser", { skip: !browserTests }, () => {
 			await browser.evaluate(
 				`document.querySelector('.branch-rename[aria-label="Rename branch ${label}"]').click()`,
 			);
-			await browser.wait(`document.querySelector('.sheet input')?.value===${JSON.stringify(label)}`);
+			await browser.wait(`document.querySelector('.sheet input')?.value===${jsString(label)}`);
 			await browser.evaluate(
-				`(()=>{const e=document.querySelector('.sheet input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+				`(()=>{const e=document.querySelector('.sheet input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${jsString(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
 			);
 			await browser.evaluate(`document.querySelector('.sheet button[type="submit"]').click()`);
 			await browser.wait(`!document.querySelector('.sheet')`);

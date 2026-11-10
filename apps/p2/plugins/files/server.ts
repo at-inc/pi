@@ -31,8 +31,6 @@ import { Catalog } from "../sessions/contract.ts";
 import { DownloadStore, FileSummaries, SessionFiles, SpaceSummarySchema } from "./contract.ts";
 import { MAX_UPLOAD_BYTES, UploadError } from "./uploads.ts";
 
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
 /** The requested byte range of a seekable (audio/video) file, `undefined` for all of it, or "invalid". */
 function byteRange(header: string | undefined, size: number): { start: number; end: number } | "invalid" | undefined {
 	if (header === undefined || size === 0) return undefined;
@@ -200,7 +198,7 @@ export default defineFacet((host) => {
 			} catch (error) {
 				request.resume();
 				sendJson(response, error instanceof UploadError ? error.status : 400, {
-					error: errorMessage(error),
+					error: error instanceof Error ? error.message : "Upload failed",
 					limit: MAX_UPLOAD_BYTES,
 				});
 			}

@@ -1,8 +1,8 @@
 import { fork } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { serveDevChannel } from "../src/hosts/dev-channel.ts";
+import { isWorkerGroup, workerGroup } from "../src/hosts/dev-process.ts";
 import { capturePublishedLogs } from "../src/runtime/logs.ts";
 
 // Source saves never restart this process or its child. The private channel/SIGUSR2 request explicit restarts.
@@ -63,7 +63,8 @@ function start() {
 					workerGenerations.set(message.sessionId, message.generation);
 					if (message.running === true && Number.isSafeInteger(message.pid) && message.pid > 0) {
 						running.add(message.sessionId);
-						workerGroups.set(message.sessionId, message.pid);
+						const group = workerGroup(message.pid, current.pid);
+						if (group) workerGroups.set(message.sessionId, group);
 					} else if (message.running === false) {
 						running.delete(message.sessionId);
 						workerGroups.delete(message.sessionId);
@@ -90,20 +91,6 @@ function start() {
 	return ready;
 }
 
-function isWorkerGroup(pid) {
-	try {
-		const lock = `CHORD2_LOCK=p2:${realpathSync(dataDir)}:worker:`;
-		const environment = readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
-		if (!environment.some((entry) => entry.startsWith(lock))) return false;
-		// /proc/<pid>/stat: fields after the parenthesized command begin with state, ppid, pgrp.
-		const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-		const fields = stat.slice(stat.lastIndexOf(") ") + 2).split(" ");
-		return Number(fields[2]) === pid;
-	} catch {
-		return false;
-	}
-}
-
 async function stop() {
 	const current = child;
 	if (current) {
@@ -118,10 +105,10 @@ async function stop() {
 	}
 	// A graceful server close already killed these groups. If the deadline killed the server first, its detached
 	// workers still own their stores and locks; kill exactly the groups that server reported before replacement.
-	for (const pid of workerGroups.values()) {
-		if (!isWorkerGroup(pid)) continue;
+	for (const group of workerGroups.values()) {
+		if (!isWorkerGroup(group)) continue;
 		try {
-			process.kill(-pid, "SIGKILL");
+			process.kill(-group.pid, "SIGKILL");
 		} catch {
 			// The server closed it already.
 		}

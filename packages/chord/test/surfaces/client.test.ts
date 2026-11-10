@@ -23,6 +23,7 @@ import {
 	WebScripts,
 } from "../../src/index.ts";
 import { publishTo, scriptsFacet } from "../../src/node/surfaces/current.ts";
+import { transported } from "../support.ts";
 
 type TestPrincipal = { readonly kind: "server" } | { readonly kind: "user"; readonly id: string };
 
@@ -314,6 +315,49 @@ describe("a failed update (audit F7)", () => {
 });
 
 describe("outdated clients", () => {
+	it("keeps plugins and styles through an unbuilt snapshot, then handles real sets and changed bases", async () => {
+		const a1 = script("@test/a", "d1", "hello");
+		const a2 = script("@test/a", "d2", "hello again");
+		const calls: string[] = [];
+		const styles: ClientStyles = {
+			prepare: async (set) => {
+				calls.push(`prepare ${set.base} ${set.plugins.map(({ css }) => css).join(" ")}`);
+			},
+			settle: (set) => {
+				calls.push(`settle ${set.base} ${set.plugins.length}`);
+			},
+		};
+		const { client, server, outdated, fetched } = await setup([a1], [a2], { styles });
+		try {
+			const greeting = await client.host.get(Greeting, {}, context);
+			await transported();
+			const before = [...calls];
+			await publishTo(server, "web", { base: "", combined: "", plugins: [] }, context);
+			await transported();
+			expect(outdated).toEqual([]);
+			expect(fetched).toEqual([]);
+			expect(calls).toEqual(before);
+			expect(greeting.state.value.kind).toBe("live");
+			expect(greeting.text.value).toBe("hello");
+
+			await publishTo(server, "web", setOf("B1", [a2]), context);
+			await until(() => greeting.text.value === "hello again");
+			await transported();
+			expect(outdated).toEqual([]);
+			expect(fetched).toEqual(["/@test/a.d2.js"]);
+			expect(calls).toEqual([...before, "prepare B1 /@test/a.d2.css", "settle B1 1"]);
+
+			await publishTo(server, "web", setOf("B2", []), context);
+			await until(() => outdated.length === 1);
+			expect(greeting.text.value).toBe("hello again");
+			expect(fetched).toEqual(["/@test/a.d2.js"]);
+			expect(calls).toEqual([...before, "prepare B1 /@test/a.d2.css", "settle B1 1"]);
+		} finally {
+			await client.stop(context);
+			await server.close(context);
+		}
+	});
+
 	it("calls outdated for a set with another base", async () => {
 		const { client, server, outdated } = await setup([]);
 		await publishTo(server, "web", setOf("B2", []), context);

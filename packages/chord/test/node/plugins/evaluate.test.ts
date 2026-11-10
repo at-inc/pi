@@ -18,7 +18,7 @@ import {
 } from "../../../src/node/plugins/index.ts";
 import { expectCollected } from "../../support.ts";
 import * as esmHost from "../fixtures/esm-host.ts";
-import { HOST_PACKAGES, KINDS, tempRoot, writeFiles, writePackage, writePlugin } from "./support.ts";
+import { HOST_PACKAGES, jsString, KINDS, tempRoot, writeFiles, writePackage, writePlugin } from "./support.ts";
 
 const HOSTS = { ...HOST_PACKAGES, "esm-host": esmHost, "cjs-host": { named: "cjs named" } };
 
@@ -192,7 +192,7 @@ describe("a computed require refuses what the build refuses (slice 12 fix round 
 		const root = await tempRoot();
 		const api = { name: "@acme/app", versions: ["v3", "v2"] };
 		const modules = { "@acme/app/v3": { value: 3 }, "@acme/app/v2": { value: 2 }, "@earendil-works/chord": {} };
-		const join = (...parts: string[]) => `[${parts.map((part) => JSON.stringify(part)).join(", ")}].join("/")`;
+		const join = (...parts: string[]) => `[${parts.map(jsString).join(", ")}].join("/")`;
 		await writePlugin(root, "mixed", "@test/mixed", {
 			"worker.ts": [
 				'import { value } from "@acme/app/v3";',

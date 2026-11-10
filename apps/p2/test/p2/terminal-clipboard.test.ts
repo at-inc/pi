@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
@@ -7,7 +10,7 @@ import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { APP, holdIn, startFixture } from "./helpers.ts";
+import { APP, holdIn, jsString, startFixture } from "./helpers.ts";
 
 let unavailable: string | undefined;
 try {
@@ -25,7 +28,10 @@ try {
 /** A page with a touch screen showing a new terminal; its socket is wrapped so tests see sent bytes and inject output. */
 async function withTerminal(run: (page: Browser, origin: string) => Promise<void>): Promise<void> {
 	const shell = process.env.SHELL;
+	const home = process.env.HOME;
+	const testHome = await mkdtemp(join(tmpdir(), "p2-terminal-home-"));
 	process.env.SHELL = "/bin/sh";
+	process.env.HOME = testHome;
 	const fixture = await startFixture({ web: true });
 	let browser: Browser | undefined;
 	try {
@@ -68,13 +74,16 @@ async function withTerminal(run: (page: Browser, origin: string) => Promise<void
 		await fixture.close();
 		if (shell === undefined) delete process.env.SHELL;
 		else process.env.SHELL = shell;
+		if (home === undefined) delete process.env.HOME;
+		else process.env.HOME = home;
+		await rm(testHome, { recursive: true, force: true });
 	}
 }
 
 /** Output from the program, straight into the page's terminal (the shell does not see it). */
 function output(page: Browser, text: string): Promise<unknown> {
 	return page.evaluate(
-		`window.terminalSocket.dispatchEvent(new MessageEvent('message',{data:new TextEncoder().encode(${JSON.stringify(text)}).buffer}))`,
+		`window.terminalSocket.dispatchEvent(new MessageEvent('message',{data:new TextEncoder().encode(${jsString(text)}).buffer}))`,
 	);
 }
 
@@ -130,7 +139,7 @@ test(
 			await delay(100);
 			const pasted = "first\nsecond\u001bthird";
 			await page.evaluate(
-				`(()=>{const data=new DataTransfer();data.setData('text/plain',${JSON.stringify(pasted)});document.querySelector('.terminal-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));})()`,
+				`(()=>{const data=new DataTransfer();data.setData('text/plain',${jsString(pasted)});document.querySelector('.terminal-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));})()`,
 			);
 			assert.equal(
 				await page.evaluate<string>("new TextDecoder().decode(new Uint8Array(window.terminalBytes.at(-1)))"),
@@ -168,7 +177,7 @@ test(
 			// A swipe cancels the editing target and still moves through the terminal's scrollback.
 			const lines = Array.from({ length: 80 }, (_, index) => `copy-line-${index}\r\n`).join("");
 			await page.evaluate(
-				`window.terminalSocket.dispatchEvent(new MessageEvent('message',{data:new TextEncoder().encode(${JSON.stringify(lines)}).buffer}))`,
+				`window.terminalSocket.dispatchEvent(new MessageEvent('message',{data:new TextEncoder().encode(${jsString(lines)}).buffer}))`,
 			);
 			await page.wait("document.querySelector('.terminal-content').textContent.includes('copy-line-79')");
 			const beforeScroll = await page.evaluate<string>("document.querySelector('.terminal-row').textContent");
@@ -183,7 +192,7 @@ test(
 			}
 			await delay(120); // Lift after stopping, without a fling that redraws the selection below.
 			await touch("touchEnd");
-			await page.wait(`document.querySelector('.terminal-row').textContent !== ${JSON.stringify(beforeScroll)}`);
+			await page.wait(`document.querySelector('.terminal-row').textContent !== ${jsString(beforeScroll)}`);
 			assert.equal(
 				await page.evaluate<boolean>("document.querySelector('.terminal-input').hasAttribute('data-native-menu')"),
 				false,

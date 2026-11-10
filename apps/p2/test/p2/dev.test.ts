@@ -14,7 +14,7 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import type { DevCommand, DevStatus } from "../../src/runtime/dev-protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, http, type LocalOwner, localOwner, poll, until, webBundle } from "./helpers.ts";
+import { clientHost, holdIn, http, jsString, type LocalOwner, localOwner, poll, until, webBundle } from "./helpers.ts";
 
 /** Local owner sessions of a dev server by port (each restart listens on a new one), signed in on first use. */
 function localOwners(dataDir: string): (port: number) => Promise<LocalOwner> {
@@ -72,13 +72,13 @@ import { defineFacet, local } from "@p2/app/v1";
 import { Routes } from "@p2/app/v1/server";
 import { Probe, ServerProbe } from "./contract.ts";
 import { label } from "./nested/label.ts";
-const Eager = local(${JSON.stringify(`test.${name}.lifecycle`)}, { version: 1, params: {}, members: {} });
+const Eager = local(${jsString(`test.${name}.lifecycle`)}, { version: 1, params: {}, members: {} });
 export default defineFacet((host) => {
  const probe = () => ({ variant: "reader" as const, members: { label: async () => label, pid: async () => process.pid } });
  host.serve(${kind === "server" ? "ServerProbe" : "Probe"}, probe);
  host.serve(Eager, (_params, self) => {
-  ${kind === "server" ? `self.contribute(Routes, { ${JSON.stringify(`GET ${route}`)}: (_request, response) => response.end(${JSON.stringify(name)}) });` : ""}
-  self.open(async () => null, () => writeFileSync(join(${JSON.stringify(directory)}, ${JSON.stringify(`${name}-disposed-`)} + process.pid), "closed"));
+  ${kind === "server" ? `self.contribute(Routes, { ${jsString(`GET ${route}`)}: (_request, response) => response.end(${jsString(name)}) });` : ""}
+  self.open(async () => null, () => writeFileSync(join(${jsString(directory)}, ${jsString(`${name}-disposed-`)} + process.pid), "closed"));
   return {};
  });
 });`;
@@ -139,6 +139,38 @@ test(
 			chatWorker,
 			`import { input } from "./dev-input.ts";\n${(await readFile(chatWorker, "utf8")).replace("await content(text, files", "await content(input(text), files")}`,
 		);
+		const streamGate = join(directory, "stream-gate");
+		const fakeProvider = join(project, "plugins/models/fake.ts");
+		const fakeSource = await readFile(fakeProvider, "utf8");
+		const streamCall = "return faux.provider.streamSimple(model, context, options);";
+		assert(fakeSource.includes(streamCall), "fake provider stream injection point exists");
+		await writeFile(
+			fakeProvider,
+			`import { existsSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+import { AssistantMessageEventStream } from "@at-inc/pi-ai";
+${fakeSource.replace(
+	streamCall,
+	`
+const source = faux.provider.streamSimple(model, context, options);
+if (!userText(context.messages.findLast((message) => message.role === "user")).startsWith("slow")) return source;
+const output = new AssistantMessageEventStream();
+void (async () => {
+ for await (const event of source) {
+  if (event.type === "done") {
+   while (existsSync(${jsString(streamGate)}) && !options?.signal?.aborted) await delay(25);
+   if (options?.signal?.aborted) {
+    output.push({ type: "error", reason: "aborted", error: { ...event.message, stopReason: "aborted", errorMessage: "Aborted" } });
+    break;
+   }
+  }
+  output.push(event);
+ }
+ output.end();
+})();
+return output;`,
+)}`,
+		);
 		const child = spawn(process.execPath, ["--import", "./src/source.ts", "scripts/dev.mjs"], {
 			cwd: project,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -163,6 +195,7 @@ test(
 		const ports = () => [...log.matchAll(/p2: http:\/\/127\.0\.0\.1:(\d+)/g)].map((match) => Number(match[1]));
 		let browser: Host | undefined;
 		let page: Browser | undefined;
+		let lastDevStatus: DevStatus | undefined;
 		try {
 			await poll(() => ports().length === 1, 30_000, "initial server");
 			const port = ports()[0]!;
@@ -170,7 +203,8 @@ test(
 			const local = async (at: number) => ({ Cookie: (await ownerOf(at)).cookie });
 			const devState = async () => {
 				const at = ports().at(-1)!;
-				return JSON.parse((await http(at, "/__p2_dev", { headers: await local(at) })).body) as DevStatus;
+				lastDevStatus = JSON.parse((await http(at, "/__p2_dev", { headers: await local(at) })).body) as DevStatus;
+				return lastDevStatus;
 			};
 			const button = async (command: DevCommand) => {
 				const at = ports().at(-1)!;
@@ -231,6 +265,7 @@ test(
 			await poll(async () => !(await devState()).restartNeeded);
 			const status = await holdIn(browser, SessionStatus, {}, "reader");
 			await until(status.statuses, (value) => Boolean(value?.[first.id]?.running && value?.[second.id]?.running));
+			await writeFile(streamGate, "hold completion through reload");
 			await chat.send({ text: "slow reload-stream-sentinel", requestId: "reload-stream" }, BACKGROUND_CONTEXT);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
 			let publications = 0;
@@ -253,6 +288,7 @@ test(
 				(await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true))?.[first.id]
 					?.running,
 			);
+			await rm(streamGate);
 			await until(chat.view, (value) =>
 				Boolean(
 					value?.entries.some(
@@ -374,7 +410,7 @@ test(
 			assert.notEqual(updated, original);
 			assert.equal((await http(port, original, { headers })).status, 200);
 			await page?.wait(
-				`window.beforeReload === undefined && document.querySelector('script[type=module]')?.getAttribute('src') === ${JSON.stringify(updated)}`,
+				`window.beforeReload === undefined && document.querySelector('script[type=module]')?.getAttribute('src') === ${jsString(updated)}`,
 			);
 
 			// CSS is a separate output: its edit keeps the script name but changes the complete manifest version, which
@@ -389,7 +425,7 @@ test(
 			assert.equal(afterCss.script, beforeCss.script);
 			assert.notEqual(afterCss.style, beforeCss.style);
 			await page?.wait(
-				`window.beforeCssReload === undefined && document.documentElement.dataset.webVersion === ${JSON.stringify(afterCss.version)}`,
+				`window.beforeCssReload === undefined && document.documentElement.dataset.webVersion === ${jsString(afterCss.version)}`,
 			);
 			await page?.close();
 			page = undefined;
@@ -410,7 +446,8 @@ test(
 			const serverPid = await removedServer.pid(BACKGROUND_CONTEXT);
 			const removedPid = await removedWorker.pid(BACKGROUND_CONTEXT);
 			assert.equal(await removedUnseen.label(BACKGROUND_CONTEXT), "removable-plugin");
-			assert.equal((await http(port, "/__dev_removable")).body, "removable");
+			assert.equal((await http(port, "/__dev_removable", { headers: await local(port) })).body, "removable");
+			await writeFile(streamGate, "hold completion through removal");
 			await chat.send({ text: "slow plugin-removal-sentinel", requestId: "plugin-removal" }, BACKGROUND_CONTEXT);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
 			let revision = (await devState()).revision;
@@ -420,7 +457,11 @@ test(
 			const removedRefs = [removedServer, removedWorker, removedUnseen];
 			await poll(() => removedRefs.every((ref) => statusOf(ref) === "failed"));
 			for (const ref of removedRefs) ref.release();
-			assert.equal((await http(port, "/__dev_removable")).status, 404, "registration was removed");
+			assert.equal(
+				(await http(port, "/__dev_removable", { headers: await local(port) })).status,
+				404,
+				"registration was removed",
+			);
 			for (const pid of [serverPid, removedPid, secondPid])
 				await poll(
 					async () =>
@@ -428,6 +469,7 @@ test(
 				);
 			assert.equal(await workerProbe.pid(BACKGROUND_CONTEXT), firstPid);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
+			await rm(streamGate);
 			await until(chat.view, (value) =>
 				Boolean(
 					value?.entries.some(
@@ -447,6 +489,7 @@ test(
 				),
 			);
 
+			await writeFile(streamGate, "hold completion through addition");
 			await chat.send({ text: "slow plugin-addition-sentinel", requestId: "plugin-addition" }, BACKGROUND_CONTEXT);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
 			revision = (await devState()).revision;
@@ -472,9 +515,14 @@ test(
 			const addedSecond = browser.hold(Added.worker, { session: second.id }, BACKGROUND_CONTEXT);
 			assert.equal(await addedSecond.label(BACKGROUND_CONTEXT), "added-plugin");
 			addedSecond.release();
-			assert.equal((await http(port, "/__dev_added")).body, "added", "new host object activated");
+			assert.equal(
+				(await http(port, "/__dev_added", { headers: await local(port) })).body,
+				"added",
+				"new host object activated",
+			);
 			assert.equal(await workerProbe.pid(BACKGROUND_CONTEXT), firstPid);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
+			await rm(streamGate);
 			await until(chat.view, (value) =>
 				Boolean(
 					value?.entries.some(
@@ -495,9 +543,10 @@ test(
 			await poll(() => statusOf(addedServer) === "failed" && statusOf(addedWorker) === "failed");
 			addedServer.release();
 			addedWorker.release();
-			assert.equal((await http(port, "/__dev_added")).status, 404);
+			assert.equal((await http(port, "/__dev_added", { headers: await local(port) })).status, 404);
 			assert.equal(ports().length, 1, "add/remove never restarts the backend");
 			assert(!log.includes("Unknown p2 plugin: dev-removable"));
+			await writeFile(streamGate, "hold completion through restart");
 			await chat.send({ text: "slow restart-stream-sentinel", requestId: "restart-stream" }, BACKGROUND_CONTEXT);
 			await until(status.statuses, (value) => value?.[first.id]?.busy.includes(1) === true);
 			await appendFile(join(project, "src/runtime/local-owner.ts"), "\n// restart runtime\n");
@@ -525,6 +574,7 @@ test(
 				probe.release();
 			}
 			const resumed = await holdIn(browser, Chat, { session: first.id, conversation: 1 }, "participant");
+			await rm(streamGate);
 			const completed = await until(resumed.view, (value) =>
 				Boolean(
 					value?.entries.some(
@@ -567,7 +617,7 @@ test(
 			assert.equal(recovered.code, 0, recovered.output);
 			await poll(() => ports().length === 5, 30_000);
 		} catch (error) {
-			console.error(log);
+			console.error(log, lastDevStatus);
 			throw error;
 		} finally {
 			await browser?.close(BACKGROUND_CONTEXT);
@@ -596,22 +646,33 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 	for (const name of ["packages", "node_modules", "tsconfig.json", "tsconfig.base.json"])
 		await symlink(new URL(`../../../../${name}`, import.meta.url).pathname, join(directory, name));
 
-	// The old server misses its shutdown deadline before SessionHosts.close, and its worker ignores IPC disconnect.
+	// The old server misses its shutdown deadline before workers.close, and its worker ignores IPC disconnect.
 	// This reproduces a detached lock owner that only the supervisor can reap.
 	const serverEntry = join(project, "src/hosts/server.ts");
+	const serverSource = await readFile(serverEntry, "utf8");
+	const fsImport = 'import { chmodSync, mkdirSync } from "node:fs";';
+	const closeWorkers = "\t\t\t\tawait workers.close(BACKGROUND_CONTEXT);";
+	assert(serverSource.includes(fsImport), "server fs import injection point exists");
+	assert(serverSource.includes(closeWorkers), "server worker shutdown injection point exists");
 	await writeFile(
 		serverEntry,
-		(await readFile(serverEntry, "utf8"))
-			.replace('import { mkdirSync } from "node:fs";', 'import { existsSync, mkdirSync, rmSync } from "node:fs";')
+		serverSource
+			.replace(fsImport, 'import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";')
 			.replace(
-				"\t\t\t\tawait hosts.close();",
-				'\t\t\t\tif (existsSync(join(dataDir, "test-hang-close"))) { rmSync(join(dataDir, "test-hang-close")); await new Promise<void>(() => {}); }\n\t\t\t\tawait hosts.close();',
+				closeWorkers,
+				`\t\t\t\tif (existsSync(join(dataDir, "test-hang-close"))) { rmSync(join(dataDir, "test-hang-close")); console.log("fixture server blocked worker shutdown"); await new Promise<void>(() => {}); }\n${closeWorkers}`,
 			),
 	);
 	const workerEntry = join(project, "src/hosts/worker.ts");
+	const workerSource = await readFile(workerEntry, "utf8");
+	const workerInit = "\t\tconst init = start as unknown as WorkerInit;";
+	assert(workerSource.includes(workerInit), "worker initialization injection point exists");
 	await writeFile(
 		workerEntry,
-		(await readFile(workerEntry, "utf8")).replace('process.once("disconnect", () => void stop());', ""),
+		`import { writeFileSync } from "node:fs";\n${workerSource.replace(
+			workerInit,
+			`${workerInit}\n\t\tprocess.removeAllListeners("disconnect");\n\t\tprocess.on("disconnect", () => {});\n\t\tsetInterval(() => {}, 1000);\n\t\twriteFileSync(init.dataDir + "/test-worker-ignores-disconnect-" + process.pid, "armed");`,
+		)}`,
 	);
 	const probeDirectory = join(project, "plugins/dev-probe");
 	await mkdir(join(probeDirectory, "nested"), { recursive: true });
@@ -652,6 +713,7 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 		const probe = browser.hold(Probe, { session: session.id }, BACKGROUND_CONTEXT);
 		const oldPid = await probe.pid(BACKGROUND_CONTEXT);
 		oldWorkerPid = oldPid;
+		assert.equal(await readFile(join(dataDir, `test-worker-ignores-disconnect-${oldPid}`), "utf8"), "armed");
 		const chat = await holdIn(browser, Chat, { session: session.id, conversation: 1 }, "participant");
 		await chat.send({ text: "forced-restart-persisted", requestId: "forced-restart" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (value) =>
@@ -678,6 +740,8 @@ test("a forced dev restart reaps locked workers before resuming their stores", {
 		await writeFile(join(dataDir, "test-hang-close"), "hang once");
 		child.kill("SIGUSR2");
 		await poll(() => ports().length === 2, 30_000, "replacement server");
+		assert(log.includes("fixture server blocked worker shutdown"));
+		assert(log.includes("the close did not finish within 8 s"));
 		await browser.close(BACKGROUND_CONTEXT);
 		browser = clientHost(await ownerOf(ports()[1]!));
 		const replacement = browser.hold(Probe, { session: session.id }, BACKGROUND_CONTEXT);

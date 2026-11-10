@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { testApp } from "../app/support.ts";
+import { jsString } from "../plugins/support.ts";
 
 /** The fixture's terminal entry and the launcher driver. */
 const MAIN = fileURLToPath(new URL("../fixtures/tui/main.ts", import.meta.url));
@@ -43,7 +44,7 @@ export function linesPlugin(text: string): Record<string, string> {
 			'import { escapes } from "./escapes.ts";',
 			"const found = Object.entries(escapes());",
 			'const escaped = found.filter(([, outcome]) => outcome === "ok").map(([name]) => name).join(", ") || "none";',
-			`export default defineFacet((_host, self) => self.contribute(Lines, ${JSON.stringify(text)} + " tried=" + found.length + " escaped=" + escaped));`,
+			`export default defineFacet((_host, self) => self.contribute(Lines, ${jsString(text)} + " tried=" + found.length + " escaped=" + escaped));`,
 		].join("\n"),
 	};
 }

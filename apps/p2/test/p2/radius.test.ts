@@ -291,7 +291,10 @@ test(
 				response.writeHead(302, { location: `http://localhost:${servicePort}/home?x=1` });
 				response.end();
 			} else {
-				response.writeHead(200);
+				response.writeHead(200, {
+					"content-type": "text/plain; charset=utf-8",
+					"x-content-type-options": "nosniff",
+				});
 				response.end(`service ${request.url}`);
 			}
 		});
@@ -319,7 +322,18 @@ test(
 				[RELAY_SECRET_HEADER.toUpperCase(), "forged"],
 			],
 		});
-		assert.equal((await f.radius.response(hello)).status, 200);
+		const helloResponse = await f.radius.response(hello);
+		assert.equal(helloResponse.status, 200);
+		assert.deepEqual(
+			(helloResponse.headers as [string, string][]).find(([name]) => name.toLowerCase() === "content-type"),
+			["content-type", "text/plain; charset=utf-8"],
+		);
+		assert.deepEqual(
+			(helloResponse.headers as [string, string][]).find(
+				([name]) => name.toLowerCase() === "x-content-type-options",
+			),
+			["x-content-type-options", "nosniff"],
+		);
 		assert.equal((await f.radius.body(hello)).toString(), "service /hello");
 		assert.equal(seen.at(-1)?.host, `localhost:${servicePort}`);
 		assert.equal(seen.at(-1)?.origin, `http://localhost:${servicePort}`);

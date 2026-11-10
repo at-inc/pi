@@ -33,6 +33,7 @@ import {
 import {
 	gitRepository,
 	HOST_PACKAGES,
+	jsString,
 	kindsOf,
 	settleFileEvents,
 	tempRoot,
@@ -58,7 +59,7 @@ async function itemPlugin(root: string, dir: string, label: string): Promise<voi
 		"worker.ts": [
 			'import { constant, defineFacet, local, str } from "@earendil-works/chord";',
 			`const Item = local("test.${dir}", { version: 1, params: {}, members: { label: str() } });`,
-			`export default defineFacet((host) => host.serve(Item, () => ({ label: constant(${JSON.stringify(label)}) })));`,
+			`export default defineFacet((host) => host.serve(Item, () => ({ label: constant(${jsString(label)}) })));`,
 		].join("\n"),
 	});
 }
@@ -514,7 +515,7 @@ describe("plugins whose files move, and removed plugins (slice 12 fix round 2, S
 			[
 				'import { constant, defineFacet, local, str } from "@earendil-works/chord";',
 				'const Item = local("test.hello", { version: 1, params: {}, members: { label: str() } });',
-				`export default defineFacet((host) => host.serve(Item, () => ({ label: constant(${JSON.stringify(label)}) })));`,
+				`export default defineFacet((host) => host.serve(Item, () => ({ label: constant(${jsString(label)}) })));`,
 			].join("\n");
 		await writeFiles(root, { "hello.worker.ts": facet("from a file") });
 		const { plugins } = await component(root);

@@ -13,7 +13,7 @@ import { Sessions } from "../../plugins/sessions/contract.ts";
 import { ViewState, Views } from "../../plugins/views/contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, poll, startFixture, until } from "./helpers.ts";
 
 /** A small editor: three points; clicking one selects it (state and selection), the agent's state redraws it. */
 const EDITOR = `<!doctype html><html><head><style>body{margin:0;padding:12px;font-family:sans-serif}</style></head><body>
@@ -35,7 +35,7 @@ document.getElementById('points').addEventListener('click', (event) => {
 </script></body></html>`;
 
 const tabCentre = (title: string) =>
-	`(() => {const t=[...document.querySelectorAll('.views-tab')].find(e=>e.textContent===${JSON.stringify(title)});const r=t.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`;
+	`(() => {const t=[...document.querySelectorAll('.views-tab')].find(e=>e.textContent===${jsString(title)});const r=t.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`;
 
 describe("views in Chromium", { skip: !browserTests }, () => {
 	let fixture: Fixture;

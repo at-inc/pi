@@ -38,7 +38,11 @@ function blocksOf(book: string): Block[] {
 		const open = /^```(\w*)$/.exec(lines[n]!);
 		if (open === null) continue;
 		const end = lines.indexOf("```", n + 1);
-		const marker = /^<!-- (.+) -->$/.exec(lines[n - 1] ?? "")?.[1];
+		const previous = lines[n - 1] ?? "";
+		const marker =
+			previous.length > 9 && previous.startsWith("<!-- ") && previous.endsWith(" -->")
+				? previous.slice(5, -4)
+				: undefined;
 		found.push({ lang: open[1]!, marker, text: lines.slice(n + 1, end).join("\n"), line: n + 1 });
 		n = end;
 	}
@@ -75,6 +79,23 @@ async function run(node: string, script: string, ...args: string[]): Promise<str
 }
 
 describe("the tutorial's code blocks", () => {
+	it("recognizes only a complete marker on the line immediately before a fence", () => {
+		for (const [marker, expected] of [
+			["<!-- quote: file.ts -->", "quote: file.ts"],
+			["<!-- output: main -->", "output: main"],
+			["<!--  -->", undefined],
+			["<!-- quote: file.ts --> trailing", undefined],
+			["prefix <!-- quote: file.ts -->", undefined],
+			["<!-- quote:\nfile.ts -->", undefined],
+			["<!-- quote: file.ts -->\n", undefined],
+		] as const) {
+			const blocks = blocksOf(`${marker}\n\`\`\`ts\nconst value = 1;\n\`\`\``);
+			expect(blocks).toHaveLength(1);
+			expect(blocks[0]?.marker).toBe(expected);
+			expect(blocks[0]?.text).toBe("const value = 1;");
+		}
+	});
+
 	it("quotes every TypeScript, JSON and CSS block from a file", () => {
 		const unquoted = BLOCKS.filter(
 			({ lang, marker }) =>

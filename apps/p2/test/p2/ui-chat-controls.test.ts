@@ -8,10 +8,10 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, poll, startFixture, until } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
-	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
+	`(()=>{const e=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${jsString(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 describe("chat control parity", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, id: string;
 	before(async () => {
@@ -120,10 +120,10 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			await browser.evaluate(input("input[aria-label=Directory]", directory));
 			await browser.evaluate(`document.querySelector('input[aria-label=Directory]').form.requestSubmit()`);
 			await browser.wait(
-				`document.querySelector('.directory-use:not(:disabled)')?.textContent.trim()===${JSON.stringify(`Use ${directory}`)}`,
+				`document.querySelector('.directory-use:not(:disabled)')?.textContent.trim()===${jsString(`Use ${directory}`)}`,
 			);
 			await browser.click(".directory-use");
-			await browser.wait(`document.querySelector('.title-cwd')?.textContent===${JSON.stringify(directory)}`);
+			await browser.wait(`document.querySelector('.title-cwd')?.textContent===${jsString(directory)}`);
 			await browser.wait(
 				`document.querySelector('.messages .assistant')?.textContent.includes('Echo: hello controls')`,
 			);

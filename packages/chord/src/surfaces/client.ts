@@ -294,11 +294,12 @@ class Updates<P extends Principal> {
 	}
 
 	/**
-	 * Applies `set`: a new base calls `outdated`; else the changed scripts fetched, their new stylesheets loaded, the
-	 * host reloaded with all and the stylesheets settled. `false` when it failed (reported `update_failed`): it is tried
-	 * again.
+	 * Applies `set`: an unbuilt base leaves the running set untouched; a new base calls `outdated`; else the changed
+	 * scripts are fetched, their new stylesheets loaded, the host reloaded with all and the stylesheets settled.
+	 * `false` when it failed (reported `update_failed`): it is tried again.
 	 */
 	async #apply(set: ScriptSet, context: Context): Promise<boolean> {
+		if (set.base === "") return true;
 		const options = this.#options;
 		if (set.base !== options.base) {
 			options.outdated();

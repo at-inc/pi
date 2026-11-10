@@ -16,7 +16,7 @@ import {
 	type PluginScript,
 } from "../../../src/node/plugins/index.ts";
 import { rejection } from "../../support.ts";
-import { HOST_PACKAGES, tempRoot, writePlugin } from "./support.ts";
+import { HOST_PACKAGES, jsString, tempRoot, writePlugin } from "./support.ts";
 
 /** Writes plugin `@test/<dir>` serving `test.<dir>` labelled `label` from its worker facet (or `source` as it is). */
 async function plugin(root: string, dir: string, label: string, source?: string): Promise<void> {
@@ -26,7 +26,7 @@ async function plugin(root: string, dir: string, label: string, source?: string)
 			[
 				'import { constant, defineFacet, local, str } from "@earendil-works/chord";',
 				`const Item = local("test.${dir}", { version: 1, params: {}, members: { label: str() } });`,
-				`export default defineFacet((host) => host.serve(Item, () => ({ label: constant(${JSON.stringify(label)}) })));`,
+				`export default defineFacet((host) => host.serve(Item, () => ({ label: constant(${jsString(label)}) })));`,
 			].join("\n"),
 	});
 }

@@ -9,10 +9,10 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, http, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, http, jsString, startFixture, until } from "./helpers.ts";
 
 const setInput = (selector: string, value: string) =>
-	`(() => { const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
+	`(() => { const input=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${jsString(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
 
 const cookieOf = (headers: Record<string, string | string[] | undefined>, name: string): string | undefined =>
 	[headers["set-cookie"] ?? []]
@@ -117,7 +117,7 @@ describe("share links on loopback", () => {
 				assert.equal(await owner.evaluate<string>("location.hash"), "", "the token left the address bar");
 				// The owner opening its own link goes straight to the session.
 				await owner.open(`${origin}${view}`);
-				await owner.wait(`location.pathname === ${JSON.stringify(`/s/${session}`)}`);
+				await owner.wait(`location.pathname === ${jsString(`/s/${session}`)}`);
 				await owner.wait(ownerUi);
 
 				// A fresh profile (incognito) gets the join form and joins read-only: no composer, cannot send.

@@ -78,6 +78,14 @@ const reportTo =
 /** The context of test calls made outside any Chord call (a test's own steps). */
 export const TEST = BACKGROUND_CONTEXT;
 
+/** Encodes a string as a JavaScript literal, including inside an HTML script element. */
+export function jsString(value: string): string {
+	return JSON.stringify(value).replace(
+		/[<>&\u2028\u2029]/g,
+		(character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+	);
+}
+
 /** What `clientHost` connects over: a WebSocket to a p2 server's `/chord` (`ws`'s or the global one). */
 export type ClientSocket = NodeWebSocket | WebSocket;
 

@@ -156,6 +156,7 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 	const nav = useNavigation();
 	const route = useRoute();
 	const selected = useSheet("providers")?.locator;
+	const starting = useRef<{ providerId: string; attempt: Promise<string | undefined> } | undefined>(undefined);
 	const current = useRef(state);
 	current.current = state;
 	const host = useHost();
@@ -166,20 +167,22 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 		const held = host.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
 		return () => {
 			const flow = current.current;
-			if (flow?.providerId !== selected) {
-				held.release();
-				return;
-			}
-			const cancel =
-				flow.status === "working"
-					? held.cancel({ attemptId: flow.attemptId }, BACKGROUND_CONTEXT)
-					: Promise.resolve();
-			void cancel
-				.then(() => held.dismiss({ attemptId: flow.attemptId }, BACKGROUND_CONTEXT))
-				.catch(() => {})
+			const pending = starting.current?.providerId === selected ? starting.current : undefined;
+			if (pending) starting.current = undefined;
+			const attempt =
+				pending?.attempt ?? Promise.resolve(flow?.providerId === selected ? flow.attemptId : undefined);
+			void attempt
+				.then(async (attemptId) => {
+					if (!attemptId) return;
+					// A completed or superseded attempt cannot be cancelled; dismiss still targets only its ID.
+					if (pending || flow?.status === "working")
+						await held.cancel({ attemptId }, BACKGROUND_CONTEXT).catch(() => {});
+					await held.dismiss({ attemptId }, BACKGROUND_CONTEXT);
+				})
+				.catch(fail)
 				.finally(() => held.release());
 		};
-	}, [host, login, selected]);
+	}, [host, login, selected, fail]);
 	const [result, setResult] = useState<string>();
 	const [busy, setBusy] = useState(false);
 	const providerId = selected;
@@ -265,7 +268,18 @@ function ProvidersSheet({ onClose }: { onClose: () => void }) {
 											prompt: null,
 											notices: [],
 										},
-										() => login.start({ providerId: provider.id, authType: method.type }, BACKGROUND_CONTEXT),
+										() => {
+											const held = host.hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
+											const result = held
+												.start({ providerId: provider.id, authType: method.type }, BACKGROUND_CONTEXT)
+												.finally(() => held.release());
+											const attempt = result.then(
+												({ attemptId }) => attemptId,
+												() => undefined,
+											);
+											starting.current = { providerId: provider.id, attempt };
+											return result;
+										},
 									)
 								}
 							>

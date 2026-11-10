@@ -12,7 +12,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Devices } from "../../plugins/devices/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { browserTests } from "./browser.ts";
-import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, http, jsString, poll, startFixture, until } from "./helpers.ts";
 
 const termux = process.env.PREFIX !== undefined;
 const chromium =
@@ -229,17 +229,17 @@ describe("Pi Mobile UI regressions", { skip: !browserTests }, () => {
 			'Boolean(document.querySelector("input[aria-label=Directory]:not(:disabled)") && document.querySelector(".directory-use:not(:disabled)"))',
 		);
 		await browser.evaluate(
-			`(() => { const input = document.querySelector("input[aria-label=Directory]"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, ${JSON.stringify(fixture.workspace)}); input.dispatchEvent(new Event("input", { bubbles: true })); })()`,
+			`(() => { const input = document.querySelector("input[aria-label=Directory]"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, ${jsString(fixture.workspace)}); input.dispatchEvent(new Event("input", { bubbles: true })); })()`,
 		);
 		await browser.evaluate('document.querySelector("input[aria-label=Directory]").form.requestSubmit()');
 		await browser.wait(
-			`Boolean([...document.querySelectorAll("button")].find(button => button.textContent.trim() === ${JSON.stringify(`Use ${fixture.workspace}`)}))`,
+			`Boolean([...document.querySelectorAll("button")].find(button => button.textContent.trim() === ${jsString(`Use ${fixture.workspace}`)}))`,
 		);
 		await browser.evaluate(
-			`[...document.querySelectorAll("button")].find(button => button.textContent.trim() === ${JSON.stringify(`Use ${fixture.workspace}`)}).click()`,
+			`[...document.querySelectorAll("button")].find(button => button.textContent.trim() === ${jsString(`Use ${fixture.workspace}`)}).click()`,
 		);
 		await browser.wait(
-			`document.querySelector('.cwd-pick span')?.textContent===${JSON.stringify(fixture.workspace)} && !document.querySelector('[role=dialog]')`,
+			`document.querySelector('.cwd-pick span')?.textContent===${jsString(fixture.workspace)} && !document.querySelector('[role=dialog]')`,
 		);
 		assert.equal(
 			await browser.evaluate<string>('document.querySelector(".cwd-pick span").textContent'),

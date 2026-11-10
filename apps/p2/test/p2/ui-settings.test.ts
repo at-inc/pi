@@ -5,12 +5,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, poll, startFixture } from "./helpers.ts";
+import { type Fixture, jsString, poll, startFixture } from "./helpers.ts";
 
 const setValue = (selector: string, value: string, event: "input" | "change") =>
-	`(() => { const element=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element),'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event(${JSON.stringify(event)},{bubbles:true})); })()`;
+	`(() => { const element=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element),'value').set.call(element,${jsString(value)});element.dispatchEvent(new Event(${jsString(event)},{bubbles:true})); })()`;
 const navItem = (label: string) =>
-	`[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${JSON.stringify(label)})`;
+	`[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${jsString(label)})`;
 const screenshot = async (browser: Browser, name: string) => {
 	if (!process.env.P2_SCREENSHOTS) return;
 	const shot = (await browser.call("Page.captureScreenshot")) as { data: string };
@@ -51,10 +51,10 @@ describe("Settings window", { skip: !browserTests }, () => {
 		assert.deepEqual(read(), { thinkingLevel: "low", detail: 4 });
 
 		const name = `.settings-page input[placeholder=Owner]`;
-		await browser.evaluate(`document.querySelector(${JSON.stringify(name)}).focus()`);
+		await browser.evaluate(`document.querySelector(${jsString(name)}).focus()`);
 		await browser.evaluate(setValue(name, "Mario", "input"));
 		assert.equal(read().ownerName, undefined, "a text field saves when it loses focus");
-		await browser.evaluate(`document.querySelector(${JSON.stringify(name)}).blur()`);
+		await browser.evaluate(`document.querySelector(${jsString(name)}).blur()`);
 		await poll(() => read().ownerName === "Mario");
 
 		// Back to the default: the setting leaves the file.

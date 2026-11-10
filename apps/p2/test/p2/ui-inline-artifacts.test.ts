@@ -15,12 +15,12 @@ import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { RefIn } from "../../src/runtime/chord.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, poll, startFixture, until } from "./helpers.ts";
 
 type Call = { name: string; title: string; type: "html" | "svg" | "markdown" | "text"; content: string };
 
 const setInput = (selector: string, value: string) =>
-	`(() => { const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
+	`(() => { const input=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${jsString(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
 const frame = (name: string) => `document.querySelector('.inline-artifact[data-artifact="${name}:1"] iframe')`;
 
 /** The drawing's rendered size inside an SVG preview (its viewBox through the root's scale) and the frame's. */

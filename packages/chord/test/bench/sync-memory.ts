@@ -113,7 +113,8 @@ async function connect(url: string): Promise<Inspector> {
 	const pending = new Map<number, (value: never) => void>();
 	ws.on("message", (raw) => {
 		const message = JSON.parse(String(raw)) as { id?: number };
-		if (message.id !== undefined) pending.get(message.id)?.(message as never);
+		const callback = message.id === undefined ? undefined : pending.get(message.id);
+		callback?.(message as never);
 		pending.delete(message.id ?? -1);
 	});
 	const inspector: Inspector = {

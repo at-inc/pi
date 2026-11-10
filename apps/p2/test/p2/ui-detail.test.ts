@@ -10,7 +10,7 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 /** The kinds of the transcript's rows after the first message: "user", "text", "activity", "thought", "answer". */
@@ -95,10 +95,13 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 		).id;
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
-		await browser.wait(`!${ROWS}.split(',').some((kind) => kind === 'thought' || kind === 'text')`);
+		await browser.wait(
+			`document.querySelector('.rows [data-testid=activity]') && !${ROWS}.split(',').some((kind) => kind === 'thought' || kind === 'text')`,
+		);
 		const row = (title: string) =>
-			`[...document.querySelectorAll('.drawer .session-title')].find((e) => e.textContent === ${JSON.stringify(title)})`;
+			`[...document.querySelectorAll('.drawer .session-title')].find((e) => e.textContent === ${jsString(title)})`;
 		// Away to another chat and back: from the moment its rows show, no thought or text row (detail 3's) ever does.
+		await browser.wait(row("Other"));
 		await browser.evaluate(`${row("Other")}.click()`);
 		await browser.wait(`location.pathname === '/s/${other}'`);
 		await browser.evaluate(`(() => {
@@ -107,6 +110,7 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 				if (document.querySelector('.rows [data-testid=thought]')) window.__regrouped = true;
 			}).observe(document.body, { childList: true, subtree: true });
 		})()`);
+		await browser.wait(row("Detail"));
 		await browser.evaluate(`${row("Detail")}.click()`);
 		await browser.wait("document.querySelector('.rows [data-testid=activity]')");
 		await browser.evaluate("new Promise((resolve) => setTimeout(resolve, 1500))");
@@ -145,7 +149,9 @@ describe("detail in the browser", { skip: !browserTests }, () => {
 		writeFileSync(settings, JSON.stringify({ ...base, detail: 1 }));
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${session}`);
 		// Detail 1 applied: no thought or text rows, only wheels and answers.
-		await browser.wait(`!${ROWS}.split(',').some((kind) => kind === 'thought' || kind === 'text')`);
+		await browser.wait(
+			`document.querySelector('.rows [data-testid=activity]') && !${ROWS}.split(',').some((kind) => kind === 'thought' || kind === 'text')`,
+		);
 		// Every row the transcript adds from now on: whether it is an answer, and whether it fades in.
 		await browser.evaluate(`(() => {
 			window.__added = [];

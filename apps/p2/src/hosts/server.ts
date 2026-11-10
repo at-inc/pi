@@ -452,9 +452,12 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 			if (command.action === "restart")
 				watcher.notify({
 					ok: false,
-					message: `Restart refused: ${error instanceof Error ? error.message : String(error)}`,
+					message: `Restart refused: ${error instanceof Error ? error.message : "Server restart failed"}`,
 				});
-			return { ok: false, message: watcher.status().message ?? String(error) };
+			return {
+				ok: false,
+				message: watcher.status().message ?? (error instanceof Error ? error.message : "Dev command failed"),
+			};
 		}
 	};
 	const onDevMessage = (message: unknown): void => {
@@ -466,7 +469,7 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 				try {
 					result = await execute(parseDevCommand(message.command));
 				} catch (error) {
-					result = { ok: false, message: String(error) };
+					result = { ok: false, message: error instanceof Error ? error.message : "Dev command failed" };
 				}
 				process.send?.({ type: "dev-result", id, result });
 			})();
@@ -591,7 +594,10 @@ export async function startServer(options: ServerOptions = {}): Promise<P2Server
 							const result = await execute(command);
 							sendJson(response, result.ok ? 200 : 409, result);
 						} catch (error) {
-							sendJson(response, 400, { ok: false, message: String(error) });
+							sendJson(response, 400, {
+								ok: false,
+								message: error instanceof Error ? error.message : "Dev command failed",
+							});
 						}
 					} else {
 						sendJson(response, 200, watcher ? { ...watcher.status(), hasLogs: plugins.includes("logs") } : null);

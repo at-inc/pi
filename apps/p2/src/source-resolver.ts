@@ -60,7 +60,10 @@ registerHooks({
 			if (wildcard === undefined) continue;
 			matchedPattern ??= alias.pattern;
 			for (const replacement of alias.replacements) {
-				const resolved = resolveSourcePath(replacement.replace("*", wildcard));
+				const marker = replacement.indexOf("*");
+				const path =
+					marker === -1 ? replacement : replacement.slice(0, marker) + wildcard + replacement.slice(marker + 1);
+				const resolved = resolveSourcePath(path);
 				if (resolved) return { url: pathToFileURL(resolved).href, shortCircuit: true };
 			}
 		}

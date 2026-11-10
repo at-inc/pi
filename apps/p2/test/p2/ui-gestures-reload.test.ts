@@ -14,12 +14,12 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const center = (selector: string) =>
-	`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`;
+	`(() => { const r = document.querySelector(${jsString(selector)}).getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`;
 const sheet = "document.querySelector('[data-testid=activity-sheet]')";
 
 describe("phone gestures across a live plugin reload", { skip: !browserTests }, () => {
@@ -74,11 +74,14 @@ describe("phone gestures across a live plugin reload", { skip: !browserTests }, 
 		);
 		await sleep(300);
 		// The drawer: a swipe toward the inline end on the chat opens it, one back on the drawer closes it.
-		await drag(60, 400, 330, 400);
+		const chat = await browser.evaluate<{ left: number; right: number; y: number }>(
+			`(() => { const r = document.querySelector('.scroller').getBoundingClientRect(); return { left: r.left + 4, right: r.right - 24, y: r.top + r.height / 2 }; })()`,
+		);
+		await drag(chat.left, chat.y, chat.right, chat.y);
 		await browser
 			.wait("document.querySelector('.app.drawer-open') && !document.querySelector('.drawer').style.transform")
 			.catch(() => assert.fail(`${when}: the swipe opens the drawer`));
-		await drag(300, 400, 20, 400);
+		await drag(300, chat.y, 20, chat.y);
 		await browser
 			.wait("!document.querySelector('.app.drawer-open') && !document.querySelector('.drawer').style.transform")
 			.catch(() => assert.fail(`${when}: the swipe closes the drawer`));
@@ -92,7 +95,7 @@ describe("phone gestures across a live plugin reload", { skip: !browserTests }, 
 		const reach = first ? -70 : 70;
 		await drag(wheel.x, wheel.y - Math.sign(reach) * 10, wheel.x, wheel.y + reach, 10);
 		await browser
-			.wait(`${face} !== ${JSON.stringify(before)}`)
+			.wait(`${face} !== ${jsString(before)}`)
 			.catch(() => assert.fail(`${when}: the drag rolls the wheel`));
 		// The sheet: a tap on the wheel opens the run's steps, a swipe down on its top edge closes it.
 		await sleep(2500);

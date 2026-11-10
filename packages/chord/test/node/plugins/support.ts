@@ -10,6 +10,8 @@ import { afterEach } from "vitest";
 import * as chord from "../../../src/index.ts";
 import type { HostPackages, KindDefinition } from "../../../src/node/plugins/index.ts";
 
+export { jsString } from "../fixtures/reload/plugins.ts";
+
 /** The fixture plugins' directory. */
 export const FIXTURES = fileURLToPath(new URL("../fixtures/plugins/", import.meta.url));
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { buildBrowserScript } from "../../src/hosts/bundles.ts";
-import { poll } from "./helpers.ts";
+import { jsString, poll } from "./helpers.ts";
 
 export const chromium =
 	process.env.CHROMIUM_BIN ?? (process.env.PREFIX ? `${process.env.PREFIX}/lib/chromium/chrome` : "/usr/bin/chromium");
@@ -23,6 +23,9 @@ export class Browser {
 	readonly socket: WebSocket;
 	private id = 0;
 	private loaded = new Set<string>();
+	private mainFrame: { id: string; loaderId: string } | undefined;
+	private navigation = 0;
+	private navigating = false;
 	private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 	private constructor(process: ChildProcess, profile: string, socket: WebSocket) {
 		this.process = process;
@@ -34,8 +37,23 @@ export class Browser {
 				result?: unknown;
 				error?: { message: string };
 				method?: string;
-				params?: { name?: string; loaderId?: string };
+				params?: {
+					name?: string;
+					loaderId?: string;
+					frameId?: string;
+					frame?: { id: string; loaderId: string; parentId?: string };
+				};
 			};
+			if (message.method === "Page.frameNavigated" && message.params?.frame && !message.params.frame.parentId) {
+				this.mainFrame = message.params.frame;
+				this.navigation++;
+			}
+			if (message.params?.frameId === this.mainFrame?.id) {
+				if (message.method === "Page.frameStartedLoading") {
+					this.navigating = true;
+					this.navigation++;
+				} else if (message.method === "Page.frameStoppedLoading") this.navigating = false;
+			}
 			if (
 				message.method === "Page.lifecycleEvent" &&
 				message.params?.name === "DOMContentLoaded" &&
@@ -132,7 +150,28 @@ export class Browser {
 		return response.result.value;
 	}
 	wait(expression: string): Promise<void> {
-		return poll(() => this.evaluate<boolean>(`Boolean(${expression})`), 30_000, expression);
+		return poll(
+			async () => {
+				const navigation = this.navigation;
+				try {
+					return await this.evaluate<boolean>(`Boolean(${expression})`);
+				} catch (error) {
+					if (
+						(this.navigating || this.navigation !== navigation) &&
+						error instanceof Error &&
+						[
+							"Inspected target navigated or closed",
+							"Execution context was destroyed.",
+							"Cannot find context with specified id",
+						].includes(error.message)
+					)
+						return false;
+					throw error;
+				}
+			},
+			30_000,
+			expression,
+		);
 	}
 	/** Gives this profile the local owner's session cookie, as the owner's sign-in link would. */
 	async signIn(owner: { readonly port: number; readonly cookie: string }): Promise<void> {
@@ -154,9 +193,23 @@ export class Browser {
 		});
 	}
 	async open(url: string): Promise<void> {
-		const result = (await this.call("Page.navigate", { url })) as { loaderId?: string; errorText?: string };
+		const previous = this.mainFrame?.loaderId;
+		const result = (await this.call("Page.navigate", { url })) as {
+			frameId: string;
+			loaderId?: string;
+			errorText?: string;
+		};
 		if (result.errorText) throw new Error(result.errorText);
-		if (result.loaderId) await poll(() => this.loaded.has(result.loaderId!), 30_000, "new document loaded");
+		if (result.loaderId)
+			await poll(
+				() =>
+					this.loaded.has(result.loaderId!) ||
+					(this.mainFrame?.id === result.frameId &&
+						this.mainFrame.loaderId !== previous &&
+						this.loaded.has(this.mainFrame.loaderId)),
+				30_000,
+				"new document loaded",
+			);
 	}
 	/**
 	 * Runs a browser-only component fixture (`test/fixtures/<name>`) in the open page, compiled like the web bundle
@@ -168,10 +221,10 @@ export class Browser {
 	}
 	async click(selector: string): Promise<void> {
 		await this.wait(
-			`(() => { const e=document.querySelector(${JSON.stringify(selector)});if(!e||e.disabled)return false;for(let p=e;p;p=p.parentElement)if(p.getAnimations().some(a=>a.playState==='running'&&a.effect?.getTiming().iterations!==Infinity))return false;const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return r.width>0&&r.height>0&&e.contains(hit); })()`,
+			`(() => { const e=document.querySelector(${jsString(selector)});if(!e||e.disabled)return false;for(let p=e;p;p=p.parentElement)if(p.getAnimations().some(a=>a.playState==='running'&&a.effect?.getTiming().iterations!==Infinity))return false;const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return r.width>0&&r.height>0&&e.contains(hit); })()`,
 		);
 		const point = await this.evaluate<{ x: number; y: number }>(
-			`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
+			`(() => {const r=document.querySelector(${jsString(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
 		);
 		await this.clickPoint(point.x, point.y);
 	}
@@ -182,7 +235,7 @@ export class Browser {
 	async openSettings(label: string): Promise<void> {
 		await this.wait(`document.querySelector('.drawer-foot .settings-open')`);
 		await this.evaluate(`document.querySelector('.drawer-foot .settings-open').click()`);
-		const item = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${JSON.stringify(label)})`;
+		const item = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${jsString(label)})`;
 		await this.wait(item);
 		await this.evaluate(`${item}.click()`);
 		await this.wait(`document.querySelector('.settings-pane > .settings-page')`);

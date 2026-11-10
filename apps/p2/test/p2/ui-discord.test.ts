@@ -11,15 +11,15 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { processLogs } from "../../src/runtime/logs.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { holdIn, poll, startFixture } from "./helpers.ts";
+import { holdIn, jsString, poll, startFixture } from "./helpers.ts";
 
 const LEGACY = "MTIzNDU2Nzg5MDEyMzQ1Njc4.legacy-0.discord-token-sentinel";
 const ADDED = "MTIzNDU2Nzg5MDEyMzQ1Njc4.added-0.discord-token-sentinel";
 
 const dialog = "document.querySelector('[role=dialog]')";
-const text = (needle: string) => `${dialog}?.textContent.includes(${JSON.stringify(needle)})`;
+const text = (needle: string) => `${dialog}?.textContent.includes(${jsString(needle)})`;
 const press = (label: string) =>
-	`[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent.includes(${JSON.stringify(label)})).click()`;
+	`[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent.includes(${jsString(label)})).click()`;
 
 test(
 	"owner Discord sheets: bots, add bot, a bot's sheet, a session's link form",
@@ -55,7 +55,7 @@ test(
 			`document.querySelector('[role=dialog] [aria-label="Add bot"] input[aria-label="Bot token"]')`,
 		);
 		await browser.evaluate(
-			`(()=>{const e=document.querySelector('input[aria-label="Bot token"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(ADDED)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+			`(()=>{const e=document.querySelector('input[aria-label="Bot token"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${jsString(ADDED)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
 		);
 		await browser.click("[role=dialog] button[type=submit]");
 		await browser.wait(`${dialog}?.querySelector('.notice.error')`);
@@ -116,11 +116,11 @@ test(
 		const body = () => browser.evaluate<string>("document.querySelector('.discord-form').innerText");
 		const checked = (label: string) =>
 			browser.evaluate<boolean>(
-				`[...document.querySelectorAll('.discord-form label.check')].find(e=>e.textContent.includes(${JSON.stringify(label)})).querySelector('input').checked`,
+				`[...document.querySelectorAll('.discord-form label.check')].find(e=>e.textContent.includes(${jsString(label)})).querySelector('input').checked`,
 			);
 		const tick = (label: string) =>
 			browser.evaluate(
-				`[...document.querySelectorAll('.discord-form label.check')].find(e=>e.textContent.includes(${JSON.stringify(label)})).querySelector('input').click()`,
+				`[...document.querySelectorAll('.discord-form label.check')].find(e=>e.textContent.includes(${jsString(label)})).querySelector('input').click()`,
 			);
 		const save = "document.querySelector('.discord-form button[type=submit]')";
 		// What is fixed shows as rows, not fields.

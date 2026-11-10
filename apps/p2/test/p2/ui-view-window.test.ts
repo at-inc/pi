@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture } from "./helpers.ts";
 
 /** Counts what the page's WebSockets receive (`window.__received`, characters). */
 const COUNT_RECEIVED = `(() => {
@@ -66,10 +66,12 @@ describe("long conversation in the browser", { skip: !browserTests }, () => {
 		// Another session and back: the held view and its pages are still there, nothing is sent again.
 		const before = await browser.evaluate<number>("window.__received");
 		const row = (title: string) =>
-			`[...document.querySelectorAll('.session-row button')].find((button) => button.textContent.includes(${JSON.stringify(title)}))?.click() ?? true`;
-		await browser.evaluate(row("Other one"));
+			`[...document.querySelectorAll('.session-row a.session-main')].find((link) => link.textContent.includes(${jsString(title)}))`;
+		await browser.wait(row("Other one"));
+		await browser.evaluate(`${row("Other one")}.click()`);
 		await browser.wait(`document.querySelector('.topbar h1')?.textContent === 'Other one'`);
-		await browser.evaluate(row("Long one"));
+		await browser.wait(row("Long one"));
+		await browser.evaluate(`${row("Long one")}.click()`);
 		await browser.wait(`document.querySelector('.topbar h1')?.textContent === 'Long one'`);
 		// It opens at the bottom (only the rows near the viewport are rendered); its start is a scroll away.
 		await browser.wait(`(() => {
@@ -83,10 +85,12 @@ describe("long conversation in the browser", { skip: !browserTests }, () => {
 	});
 
 	it("a search hit opens the conversation at an old message, paging back to it", async () => {
-		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${other}`);
-		await browser.wait(`document.querySelector('.topbar h1')?.textContent === 'Other one'`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/list/recent`);
+		await browser.wait(
+			`document.querySelector('.list-page input[aria-label="Search sessions and messages"]') && !document.querySelector('.offline')`,
+		);
 		await browser.evaluate(
-			`(()=>{const e=document.querySelector('input[type=search]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'module 2 and fix');e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+			`(()=>{const e=document.querySelector('.list-page input[aria-label="Search sessions and messages"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'module 2 and fix');e.dispatchEvent(new Event('input',{bubbles:true}));})()`,
 		);
 		await browser.wait(
 			`[...document.querySelectorAll('.hit')].some((hit) => hit.textContent.includes('module 2 and fix'))`,

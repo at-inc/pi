@@ -84,7 +84,7 @@ export function devControl<T>(options: {
 					notify({
 						ok: false,
 						plugins: names,
-						message: `Reload refused: ${error instanceof Error ? error.message : String(error)}`,
+						message: `Reload refused: ${error instanceof Error ? error.message : "Plugin reload failed"}`,
 					});
 					throw error;
 				}

@@ -18,7 +18,7 @@ import { claimOwner } from "../../src/hosts/tui-config.ts";
 import { TERMINAL_COLOR_QUERY } from "../../src/hosts/tui-terminal-colors.ts";
 import { cookieTransport, type TuiTransport } from "../../src/hosts/tui-transport.ts";
 import { DARK_THEME } from "../../src/tui/theme/builtin-themes.ts";
-import { holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { holdIn, http, jsString, poll, startFixture, until } from "./helpers.ts";
 
 const supported = Number(process.versions.node.split(".")[0]) >= 26;
 type Snapshot = { session?: string; drafts: [string, string][]; screen: string };
@@ -336,7 +336,7 @@ test(
 		const file = join(directory, "sessions/tui.ts");
 		const module = fileURLToPath(new URL("../../src/runtime/tui.ts", import.meta.url));
 		const source = (label: string) =>
-			`import {tuiFacet} from ${JSON.stringify(module)};process.stdout.write("raw-output\\x1b]52;c;raw\\x07");process.stderr.write("raw-error");export default tuiFacet("sessions",()=>({render:()=>[${JSON.stringify(label)}],invalidate(){},dispose(){}}));`;
+			`import {tuiFacet} from ${jsString(module)};process.stdout.write("raw-output\\x1b]52;c;raw\\x07");process.stderr.write("raw-error");export default tuiFacet("sessions",()=>({render:()=>[${jsString(label)}],invalidate(){},dispose(){}}));`;
 		writeFileSync(file, source("Original server facet"));
 		const fixture = await startFixture({ tuiDirectory: directory });
 		t.after(() => fixture.close());

@@ -14,10 +14,10 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { clientHost, holdIn, localOwner, poll, until } from "./helpers.ts";
+import { clientHost, holdIn, jsString, localOwner, poll, until } from "./helpers.ts";
 
 const draft = (text: string) =>
-	`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
+	`(()=>{const e=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${jsString(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 
 describe("an open Chromium tab reconnects after backend downtime", { skip: !browserTests, timeout: 150_000 }, () => {
 	let browser: Browser,
@@ -73,9 +73,7 @@ describe("an open Chromium tab reconnects after backend downtime", { skip: !brow
 			await browser.wait(`document.querySelector('[role=dialog][aria-label=Session]')`);
 			await browser.click("[role=dialog] button[aria-label=Close]");
 			await browser.click("button[aria-label=Send]");
-			await browser.wait(
-				`document.querySelector('.messages')?.textContent.includes(${JSON.stringify(`Echo: ${text}`)})`,
-			);
+			await browser.wait(`document.querySelector('.messages')?.textContent.includes(${jsString(`Echo: ${text}`)})`);
 		} catch (error) {
 			console.error(log);
 			console.error(
@@ -216,7 +214,7 @@ export default defineFacet((host) => host.serve(Delay, (_params, self) => {
 			const failed = await browser.evaluate<{ noticeId: string }>(`fetch('/__p2_dev').then(r=>r.json())`);
 			assert.equal(
 				await browser.evaluate<string>(
-					`localStorage.getItem('pi-owner-notice-dismissed:dev:'+${JSON.stringify(failed.noticeId)})`,
+					`localStorage.getItem('pi-owner-notice-dismissed:dev:'+${jsString(failed.noticeId)})`,
 				),
 				"1",
 			);

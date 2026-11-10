@@ -34,7 +34,10 @@ export async function serveDevChannel(dataDir: string, execute: (command: DevCom
 				const result = await execute(await readDevCommand(request));
 				sendJson(response, result.ok ? 200 : 409, result);
 			} catch (error) {
-				sendJson(response, 400, { ok: false, message: error instanceof Error ? error.message : String(error) });
+				sendJson(response, 400, {
+					ok: false,
+					message: error instanceof Error ? error.message : "Dev command failed",
+				});
 			}
 		})();
 	});

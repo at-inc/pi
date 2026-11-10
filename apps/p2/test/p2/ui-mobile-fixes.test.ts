@@ -19,17 +19,17 @@ import type { Host } from "../../src/runtime/chord.ts";
 import { Hosts } from "../../src/runtime/server.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const answered = (text: string) => (view: ConversationView | null | undefined) =>
 	JSON.stringify(view?.entries ?? []).includes(text) && !live(view)?.run;
 const input = (selector: string, value: string) =>
-	`(() => { const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true})); })()`;
+	`(() => { const e=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${jsString(value)});e.dispatchEvent(new Event('input',{bubbles:true})); })()`;
 const messages = "(document.querySelector('.messages')?.textContent ?? '')";
 /** The texts of the people's messages shown (a compaction summary may quote old answers; bubbles are exact). */
 const bubbles = "[...document.querySelectorAll('.messages .user .bubble')].map((e) => e.textContent.trim())";
-const shows = (text: string) => `${bubbles}.some((t) => t.endsWith(${JSON.stringify(text)}))`;
+const shows = (text: string) => `${bubbles}.some((t) => t.endsWith(${jsString(text)}))`;
 /**
  * Which of the test's messages the whole transcript shows, sorted: it renders only the rows near the viewport, so this scrolls
  * from the top to the bottom in half viewports and collects what each position shows.
@@ -104,6 +104,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			}
 			assert.ok(chat.view.value?.before !== undefined, "the window starts after the first entries");
 			// The watching page shows every turn.
+			await browser.wait(`${messages}.includes('Echo: slow three')`);
 			assert.deepEqual(await browser.evaluate<string[]>(SEEN), ["one", "slow three", "two"]);
 
 			// A fresh page starts from the window; scrolling up loads earlier pages without a click.
@@ -344,7 +345,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await browser.wait(`document.querySelector('output.notice.stopped')`);
 			// Another conversation, then back: the notice belonged to that stop, not to every later visit.
 			const row = (title: string) =>
-				`[...document.querySelectorAll('.drawer .session-main')].find((e) => e.querySelector('.session-title')?.textContent === ${JSON.stringify(title)})`;
+				`[...document.querySelectorAll('.drawer .session-main')].find((e) => e.querySelector('.session-title')?.textContent === ${jsString(title)})`;
 			await browser.evaluate(`${row("Elsewhere")}.click()`);
 			await browser.wait(`location.pathname === '/s/${second.id}'`);
 			await browser.evaluate(`${row("Stopped here")}.click()`);
@@ -394,10 +395,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			await browser.click(".diff-line button.diff-number");
 			await browser.wait(`document.querySelector('textarea[aria-label=Comment]')`);
 			await browser.evaluate(input("textarea[aria-label=Comment]", "Why 42?"));
-			await browser.evaluate(
-				`[...document.querySelectorAll('.line-comment-actions button')].find((e) => e.textContent === 'Add comment').classList.add('test-add')`,
-			);
-			await browser.click(".test-add");
+			await browser.click(".line-comment-actions button:last-child");
 			await browser.wait(`document.querySelector('.review-bar')?.textContent.includes('1 comment')`);
 			const rows = await browser.evaluate<number>(`Number(document.querySelector('.rows').dataset.rows)`);
 			await browser.click(".review-bar .button.primary");

@@ -14,7 +14,7 @@ import { Projects } from "../../plugins/projects/contract.ts";
 import { Sessions, SidebarSettings } from "../../plugins/sessions/contract.ts";
 import { folderKey, projectKey } from "../../plugins/sessions/sidebar/model.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture, until } from "./helpers.ts";
 
 /** Each rollup's key, then its sessions' titles, or its groups' names with their sessions' titles. */
 const SECTIONS = `[...document.querySelectorAll('.sidebar-section')].map(s=>[s.dataset.key,s.querySelector('.sidebar-group')?[...s.querySelectorAll('.sidebar-group')].map(g=>[g.querySelector('.group-link').textContent,[...g.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)]):[...s.querySelectorAll('.session-main .session-title')].map(e=>e.textContent)])`;
@@ -27,10 +27,10 @@ const SELECTED = `[...document.querySelectorAll('.sidebar-nav .nav-row.selected 
 
 /** Clicks the button of the open sheet whose text is `text`. */
 const clickInSheet = (text: string) =>
-	`[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent.trim()===${JSON.stringify(text)}).click()`;
+	`[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent.trim()===${jsString(text)}).click()`;
 
 const setInput = (selector: string, value: string) =>
-	`(() => { const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
+	`(() => { const input=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${jsString(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
 
 /** A selector for the element with `attribute` equal to `value`, quoted for any value. */
 const withAttribute = (attribute: string, value: string) => `[${attribute}=${JSON.stringify(value)}]`;
@@ -182,7 +182,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 			assert.deepEqual(await browser.evaluate(PAGE), ["Pinned old", "Plain old aged"]);
 			// Dimmed: the aged row's title is another colour than the relevant one's.
 			const color = (selector: string) =>
-				browser.evaluate<string>(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).color`);
+				browser.evaluate<string>(`getComputedStyle(document.querySelector(${jsString(selector)})).color`);
 			assert.notEqual(
 				await color(".list-page .session-row.aged .session-title"),
 				await color(".list-page .session-row:not(.aged) .session-title"),
@@ -208,13 +208,13 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		assert.deepEqual(await browser.evaluate(SELECTED), ["recent"]);
 		// Opened from its folder: selected there only, after a reload, and when Back returns to it.
 		await browser.click(`.sidebar-group${withAttribute("data-key", homeKey)} a.session-main[href="/s/${first.id}"]`);
-		await browser.wait(`${SELECTED}.join()===${JSON.stringify(homeKey)}`);
+		await browser.wait(`${SELECTED}.join()===${jsString(homeKey)}`);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${first.id}`);
-		await browser.wait(`${SELECTED}.join()===${JSON.stringify(homeKey)}`);
+		await browser.wait(`${SELECTED}.join()===${jsString(homeKey)}`);
 		await browser.click(`.sidebar-section[data-key=recent] a.session-main[href="/s/${second.id}"]`);
 		await browser.wait(`location.pathname==='/s/${second.id}' && ${SELECTED}.join()==='recent'`);
 		await browser.evaluate("history.back()");
-		await browser.wait(`location.pathname==='/s/${first.id}' && ${SELECTED}.join()===${JSON.stringify(homeKey)}`);
+		await browser.wait(`location.pathname==='/s/${first.id}' && ${SELECTED}.join()===${jsString(homeKey)}`);
 	});
 
 	it("collapses rollups and groups, and sets a rollup's window and place from its options", async () => {
@@ -231,7 +231,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		// A group's row shows or hides its sessions.
 		await browser.click(`${group} .group-link`);
 		await until(settings.collapsed, (collapsed) => collapsed?.[homeKey] === true);
-		await browser.wait(`!document.querySelector(${JSON.stringify(`${group} .session-main`)})`);
+		await browser.wait(`!document.querySelector(${jsString(`${group} .session-main`)})`);
 		// The rollup's options: its window, and its place among the rollups.
 		await browser.click('.sidebar-section[data-key=folders] button[aria-label="Folders options"]');
 		await browser.wait(`document.querySelector('[role=dialog][aria-label=Folders]')`);
@@ -279,7 +279,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		assert.equal(created?.cwd, place);
 		await until(projects.sessions, (members) => members?.[created!.id] === "zebra");
 		await browser.wait(
-			`document.querySelector(${JSON.stringify(`.sidebar-group${withAttribute("data-key", projectKey("zebra"))} .session-main`)})`,
+			`document.querySelector(${jsString(`.sidebar-group${withAttribute("data-key", projectKey("zebra"))} .session-main`)})`,
 		);
 		// The next new session joins no project.
 		await browser.click(".new-session");
@@ -312,11 +312,10 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 				["Other", other],
 			],
 		);
-		const glyph = (selector: string) =>
-			browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).innerHTML`);
+		const glyph = (selector: string) => browser.evaluate(`document.querySelector(${jsString(selector)}).innerHTML`);
 		const inRecents = (title: string) =>
 			browser.evaluate(
-				`[...document.querySelectorAll('${recent} .session-row')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(title)}).querySelector('.nav-glyph svg').innerHTML`,
+				`[...document.querySelectorAll('${recent} .session-row')].find(e=>e.querySelector('.session-title').textContent===${jsString(title)}).querySelector('.nav-glyph svg').innerHTML`,
 			);
 		const project = await glyph(`.sidebar-group${withAttribute("data-key", projectKey("glyphed"))} .nav-marker svg`);
 		// The project, a folder inside its place, a session there and a member elsewhere share the project's glyph.
@@ -335,7 +334,7 @@ describe("sidebar rollups", { skip: !browserTests }, () => {
 		// A group's tooltip: a project's places, a folder's path.
 		assert.equal(
 			await browser.evaluate(
-				`document.querySelector(${JSON.stringify(`.sidebar-group${withAttribute("data-key", projectKey("glyphed"))} .group-link`)}).title`,
+				`document.querySelector(${jsString(`.sidebar-group${withAttribute("data-key", projectKey("glyphed"))} .group-link`)}).title`,
 			),
 			place,
 		);

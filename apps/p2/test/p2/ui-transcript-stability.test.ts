@@ -16,7 +16,7 @@ import { Sessions, SessionTransfer } from "../../plugins/sessions/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { bigSessionEntries } from "../fixtures/big-session.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture, until } from "./helpers.ts";
 import { type ProbeReport, RENDER_PROBE } from "./render-probe.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
@@ -238,7 +238,7 @@ describe("transcript stability", { skip: !browserTests }, () => {
 				await browser.evaluate(RESET);
 				await chat.send({ text: prompt, requestId: prompt }, BACKGROUND_CONTEXT);
 				// The person's message is the anchor: following the bottom, it only ever moves up.
-				const message = `[...document.querySelectorAll('.user .bubble')].findLast((bubble) => bubble.textContent.trim().endsWith(${JSON.stringify(prompt)}))?.closest('[data-row]')?.dataset.row`;
+				const message = `[...document.querySelectorAll('.user .bubble')].findLast((bubble) => bubble.textContent.trim().endsWith(${jsString(prompt)}))?.closest('[data-row]')?.dataset.row`;
 				await browser.wait(message);
 				await browser.evaluate(`window.__probe.watch(${message})`);
 				await until(chat.view, answered(`Echo: ${prompt}`), 60_000);

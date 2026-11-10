@@ -19,10 +19,10 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, poll, startFixture, until } from "./helpers.ts";
 
 const setInput = (selector: string, value: string) =>
-	`(() => { const input=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
+	`(() => { const input=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(input,${jsString(value)});input.dispatchEvent(new Event('input',{bubbles:true})); })()`;
 
 describe("drawer and new-session parity", { skip: !browserTests }, () => {
 	let fixture: Fixture;
@@ -71,7 +71,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.evaluate(setInput("input[aria-label=Directory]", fixture.workspace));
 		await browser.evaluate(`document.querySelector('input[aria-label=Directory]').form.requestSubmit()`);
 		await browser.wait(
-			`document.querySelector('.directory-use:not(:disabled)')?.textContent.trim()===${JSON.stringify(`Use ${fixture.workspace}`)}`,
+			`document.querySelector('.directory-use:not(:disabled)')?.textContent.trim()===${jsString(`Use ${fixture.workspace}`)}`,
 		);
 		await browser.click(".directory-use");
 		await browser.wait(`!document.querySelector('[role=dialog]')`);

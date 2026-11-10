@@ -10,10 +10,10 @@ import { Chat } from "../../plugins/chat/contract.ts";
 import { Search } from "../../plugins/search/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, poll, startFixture, until } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
-	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
+	`(()=>{const e=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${jsString(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 describe("search, viewers, artifacts and cost parity", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, id: string;
 	before(async () => {

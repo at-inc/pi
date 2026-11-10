@@ -8,10 +8,10 @@ import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture } from "./helpers.ts";
+import { type Fixture, holdIn, jsString, startFixture } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
-	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
+	`(()=>{const e=document.querySelector(${jsString(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${jsString(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
 describe("workspace and terminal structural parity", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, id: string;
 	before(async () => {

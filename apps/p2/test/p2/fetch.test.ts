@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createSecureServer } from "node:http2";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
+import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { gzipSync } from "node:zlib";
 import { configureFetch } from "../../src/runtime/fetch.ts";
 
@@ -33,11 +34,10 @@ test("configureFetch installs an HTTP/1.1 fetch that decodes compressed response
 	});
 	server.listen(0, "127.0.0.1");
 	await once(server, "listening");
-	const previousTls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-	process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+	const previousCertificates = getCACertificates();
+	setDefaultCACertificates([...previousCertificates, cert]);
 	t.after(async () => {
-		if (previousTls === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-		else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousTls;
+		setDefaultCACertificates(previousCertificates);
 		server.close();
 		await once(server, "close");
 	});

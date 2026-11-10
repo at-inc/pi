@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { createModels } from "@at-inc/pi-ai/models";
 import { fauxProvider } from "@at-inc/pi-ai/providers/faux";
+import { binaryCodec, type Message } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, follow } from "@p2/app/v1";
 import { WebSocket } from "ws";
 import { Envs } from "../../plugins/envs/contract.ts";
@@ -16,7 +17,7 @@ import { Catalog } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import type { ServerResourceOptions } from "../../src/runtime/server.ts";
 import { browserTests } from "./browser.ts";
-import { type Fixture, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, jsString, poll, startFixture, until } from "./helpers.ts";
 
 const termux = process.env.PREFIX !== undefined;
 const chromium =
@@ -65,7 +66,7 @@ describe("sheet parity", { skip: !browserTests }, () => {
 	};
 	const wait = (expression: string) => poll(() => evaluate<boolean>(`Boolean(${expression})`), 30_000, expression);
 	const click = async (text: string) => {
-		const selector = `[...document.querySelectorAll('[role=dialog] button')].find(e => e.textContent.trim() === ${JSON.stringify(text)})`;
+		const selector = `[...document.querySelectorAll('[role=dialog] button')].find(e => e.textContent.trim() === ${jsString(text)})`;
 		await wait(selector);
 		await evaluate(`${selector}.click()`);
 	};
@@ -73,7 +74,7 @@ describe("sheet parity", { skip: !browserTests }, () => {
 	const openSettings = async (label: string) => {
 		await wait(`document.querySelector('.drawer-foot .settings-open')`);
 		await evaluate(`document.querySelector('.drawer-foot .settings-open').click()`);
-		const item = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${JSON.stringify(label)})`;
+		const item = `[...document.querySelectorAll('.settings-nav-item')].find((e) => e.textContent === ${jsString(label)})`;
 		await wait(item);
 		await evaluate(`${item}.click()`);
 	};
@@ -124,6 +125,34 @@ describe("sheet parity", { skip: !browserTests }, () => {
 			else request?.resolve(message.result);
 		});
 		await call("Page.enable");
+		const delayed = [
+			{ kind: "state", holds: [] },
+			{ kind: "result", call: 0 },
+			{ kind: "error", call: 0, error: { kind: "plugin", code: "test", message: "test" } },
+		] satisfies Message[];
+		const delayedKinds = delayed.flatMap((message) => [
+			binaryCodec.encode(message)[0],
+			binaryCodec.encode({ ...message, origin: 1 })[0],
+		]);
+		await call("Page.addScriptToEvaluateOnNewDocument", {
+			source: `(() => {
+				const Native = WebSocket;
+				let paused = false;
+				const queued = [];
+				window.pauseLoginReplies = () => { paused = true; };
+				window.flushLoginReplies = () => { paused = false; for (const deliver of queued.splice(0)) deliver(); };
+				window.WebSocket = class extends Native {
+					constructor(...args) {
+						super(...args);
+						this.addEventListener('message', (event) => {
+							if (!paused || ![${delayedKinds.join(",")}].includes(new Uint8Array(event.data)[0])) return;
+							event.stopImmediatePropagation();
+							queued.push(() => this.dispatchEvent(new MessageEvent('message', { data: event.data })));
+						});
+					}
+				};
+			})()`,
+		});
 		await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 		// The local owner's session, as a sign-in link opened on the host gives it.
 		const [name, value] = fixture.owner.cookie.split("=", 2) as [string, string];
@@ -180,6 +209,89 @@ describe("sheet parity", { skip: !browserTests }, () => {
 			await evaluate(`document.querySelector('[role=dialog] button[aria-label=Close]').click()`);
 			await until(login.login, (state) => state === null);
 		} finally {
+			stop();
+			login.release();
+		}
+	});
+
+	it("Back and Close cancel a login whose start response has not reached the page", async () => {
+		const login = fixture.browser().hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
+		const stop = follow(login.login, () => {});
+		try {
+			for (const leave of ["back", "close", "back-close"]) {
+				await openProviders();
+				await evaluate("window.pauseLoginReplies()");
+				await click("Fixture key");
+				await until(login.login, (state) => state?.status === "working" && state.prompt !== null);
+				assert.equal(await evaluate("document.querySelector('#login-value') === null"), true);
+				await evaluate(
+					leave === "close"
+						? "document.querySelector('[role=dialog] button[aria-label=Close]').click()"
+						: "history.back()",
+				);
+				await wait("!document.querySelector('.login-flow')");
+				if (leave === "back-close")
+					await evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()");
+				await evaluate("window.flushLoginReplies()");
+				await until(login.login, (state) => state === null);
+				if (leave === "back")
+					await evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()");
+				await wait("!document.querySelector('[role=dialog]')");
+				await until(fixture.server.host.references(ProviderLogin), (references) => references.length === 1);
+			}
+		} finally {
+			await evaluate("window.flushLoginReplies()");
+			stop();
+			login.release();
+		}
+	});
+
+	it("a late start response cannot cancel a replacement attempt", async () => {
+		const login = fixture.browser().hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
+		const stop = follow(login.login, () => {});
+		try {
+			await openProviders();
+			await evaluate("window.pauseLoginReplies()");
+			await click("Fixture key");
+			const first = await until(login.login, (state) => state?.status === "working" && state.prompt !== null);
+			assert(first);
+			await login.cancel({ attemptId: first.attemptId }, BACKGROUND_CONTEXT);
+			await login.dismiss({ attemptId: first.attemptId }, BACKGROUND_CONTEXT);
+			const replacement = await login.start({ providerId: "faux", authType: "api_key" }, BACKGROUND_CONTEXT);
+			await evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()");
+			await wait("!document.querySelector('.login-flow')");
+			await evaluate("window.flushLoginReplies()");
+			await until(fixture.server.host.references(ProviderLogin), (references) => references.length === 1);
+			assert.equal(login.login.value?.attemptId, replacement.attemptId);
+			assert.equal(login.login.value?.status, "working");
+			await login.cancel(replacement, BACKGROUND_CONTEXT);
+			await login.dismiss(replacement, BACKGROUND_CONTEXT);
+		} finally {
+			await evaluate("window.flushLoginReplies()");
+			stop();
+			login.release();
+		}
+	});
+
+	it("a failed pending start releases its holds without cancelling the active attempt", async () => {
+		const login = fixture.browser().hold(ProviderLogin, {}, BACKGROUND_CONTEXT);
+		const stop = follow(login.login, () => {});
+		try {
+			await openProviders();
+			await evaluate("window.pauseLoginReplies()");
+			const active = await login.start({ providerId: "faux", authType: "api_key" }, BACKGROUND_CONTEXT);
+			await click("Fixture key");
+			await evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()");
+			await wait("!document.querySelector('.login-flow')");
+			await evaluate("window.flushLoginReplies()");
+			await wait("document.querySelector('.toast')?.textContent.includes('already in progress')");
+			await until(fixture.server.host.references(ProviderLogin), (references) => references.length === 1);
+			assert.equal(login.login.value?.attemptId, active.attemptId);
+			assert.equal(login.login.value?.status, "working");
+			await login.cancel(active, BACKGROUND_CONTEXT);
+			await login.dismiss(active, BACKGROUND_CONTEXT);
+		} finally {
+			await evaluate("window.flushLoginReplies()");
 			stop();
 			login.release();
 		}
