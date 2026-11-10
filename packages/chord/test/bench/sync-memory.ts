@@ -112,10 +112,11 @@ async function connect(url: string): Promise<Inspector> {
 	let id = 0;
 	const pending = new Map<number, (value: never) => void>();
 	ws.on("message", (raw) => {
-		const message = JSON.parse(String(raw)) as { id?: number };
-		const callback = message.id === undefined ? undefined : pending.get(message.id);
+		const message = JSON.parse(String(raw)) as { id?: unknown };
+		if (typeof message.id !== "number") return;
+		const callback = pending.get(message.id);
 		callback?.(message as never);
-		pending.delete(message.id ?? -1);
+		pending.delete(message.id);
 	});
 	const inspector: Inspector = {
 		call: (method) =>
