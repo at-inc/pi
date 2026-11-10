@@ -101,7 +101,9 @@ try {
 /** What a step's answer must offer (Miniflare's own `Response` type, not the DOM one). */
 type StepResponse = { readonly ok: boolean; json(): Promise<unknown>; text(): Promise<string> };
 
-type Inspector = { call(method: string): Promise<{ result?: { usedSize?: number } }>; close(): void };
+type InspectorResponse = { result?: { usedSize?: number } };
+
+type Inspector = { call(method: string): Promise<InspectorResponse>; close(): void };
 
 async function connect(url: string): Promise<Inspector> {
 	const ws = new WebSocket(url);
@@ -110,19 +112,19 @@ async function connect(url: string): Promise<Inspector> {
 		ws.once("error", reject);
 	});
 	let id = 0;
-	const pending = new Map<number, (value: never) => void>();
+	const pending = new Map<number, { resolve(value: InspectorResponse): void }>();
 	ws.on("message", (raw) => {
-		const message = JSON.parse(String(raw)) as { id?: unknown };
+		const message = JSON.parse(String(raw)) as InspectorResponse & { id?: unknown };
 		if (typeof message.id !== "number") return;
-		const callback = pending.get(message.id);
-		callback?.(message as never);
+		const request = pending.get(message.id);
 		pending.delete(message.id);
+		request?.resolve(message);
 	});
 	const inspector: Inspector = {
 		call: (method) =>
 			new Promise((resolve) => {
 				const n = ++id;
-				pending.set(n, resolve as (value: never) => void);
+				pending.set(n, { resolve });
 				ws.send(JSON.stringify({ id: n, method }));
 			}),
 		close: () => ws.close(),
