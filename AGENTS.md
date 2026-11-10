@@ -91,7 +91,7 @@ If rebase conflicts occur:
 
 ## Issues and PRs
 
-See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
+See `CONTRIBUTING.md` for contribution guidelines and the quality bar. This fork does not require contributor pre-approval.
 
 When reviewing PRs:
 

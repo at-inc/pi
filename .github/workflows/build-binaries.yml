@@ -22,8 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Keep the public GitHub Release publication last. Binary assets are staged in
-  # a draft release first; cleanup removes the draft if later publishing fails.
+  # Verify binary assets in a draft before publishing the GitHub Release.
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -219,134 +218,6 @@ jobs:
             diff -u <(printf '%s\n' "${expected_asset_names}") <(printf '%s\n' "${actual_asset_names}") || true
             exit 1
           fi
-
-  # The pi-env daemon for every remote system @earendil-works/pi-env supports; the npm package ships them all.
-  env-daemons:
-    uses: ./.github/workflows/env-daemons.yml
-    permissions:
-      contents: read
-    with:
-      ref: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
-
-  publish-npm:
-    if: github.repository == 'earendil-works/pi'
-    runs-on: ubuntu-latest
-    needs: [stage-github-release, env-daemons]
-    environment: npm-publish
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-      SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.SOURCE_REF }}
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-          cache: npm
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -s $(which fdfind) /usr/local/bin/fd
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Download pi-env daemons
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: pi-env-*
-          path: packages/env/bin
-
-      - name: Check pi-env daemons
-        run: |
-          set -euo pipefail
-          for name in linux-x64 linux-arm64 android-arm64 android-x64 darwin-arm64 darwin-x64; do
-            test -s "packages/env/bin/pi-env-${name}/pi-env"
-          done
-          for name in windows-x64 windows-arm64; do
-            test -s "packages/env/bin/pi-env-${name}/pi-env.exe"
-          done
-          chmod +x packages/env/bin/*/pi-env*
-          ls -lR packages/env/bin
-
-      - name: Build
-        run: npm run build
-
-      - name: Check
-        run: npm run check
-
-      - name: Build the pi-env daemon for tests
-        run: npm run build:daemon --workspace packages/env
-
-      - name: Test
-        run: npm test
-
-      - name: Smoke-test packed npm consumer
-        run: npm run check:package-install
-
-      - name: Upgrade npm for trusted publishing
-        run: |
-          npm install -g npm@11.16.0 --ignore-scripts
-          npm --version
-
-      - name: Validate npm tarball publication with provenance
-        run: node scripts/publish.mjs --dry-run
-
-      - name: Publish npm packages
-        run: node scripts/publish.mjs
-
-  announce-pi-dev-release:
-    if: github.repository == 'earendil-works/pi'
-    runs-on: ubuntu-latest
-    needs: publish-npm
-    environment: pi-model-upload
-    concurrency:
-      group: announce-pi-dev-release
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    env:
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-      SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.PI_ARTIFACTS_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.PI_ARTIFACTS_R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-      AWS_EC2_METADATA_DISABLED: 'true'
-      R2_ENDPOINT: https://67c0d357268b0fca6e0b465bb9d01b84.r2.cloudflarestorage.com
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.SOURCE_REF }}
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-
-      - name: Verify AWS CLI
-        run: aws --version
-
-      - name: Announce verified release on pi.dev
-        run: |
-          node scripts/publish-release-announcement.mjs \
-            --version "${RELEASE_TAG#v}" \
-            --bucket pi-artifacts \
-            --endpoint "$R2_ENDPOINT" \
-            --installer-package-json packages/coding-agent/install-lock/package.json \
-            --installer-package-lock packages/coding-agent/install-lock/package-lock.json
 
   publish-github-release:
     runs-on: ubuntu-latest
