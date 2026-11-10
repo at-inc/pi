@@ -13,6 +13,7 @@ import { StringEnum } from "../src/utils/string-enum.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { getLegacyAnthropicModel } from "./fixtures/legacy-anthropic-models.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -498,8 +499,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider (claude-haiku-4-5)", () => {
-		const model = getModel("anthropic", "claude-haiku-4-5");
+	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider (claude-haiku-5-5)", () => {
+		const model = getModel("anthropic", "claude-haiku-5-5");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(model, { thinkingEnabled: true });
@@ -1335,8 +1336,8 @@ describe("Generate E2E Tests", () => {
 	// Tokens are resolved at module level (see oauthTokens above)
 	// =========================================================================
 
-	describe("Anthropic OAuth Provider (claude-sonnet-4-6)", () => {
-		const model = getModel("anthropic", "claude-sonnet-4-6");
+	describe("Anthropic OAuth Provider (claude-sonnet-5-5)", () => {
+		const model = getModel("anthropic", "claude-sonnet-5-5");
 
 		it.skipIf(!anthropicOAuthToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(model, { apiKey: anthropicOAuthToken });
@@ -1364,7 +1365,7 @@ describe("Generate E2E Tests", () => {
 	});
 
 	describe("Anthropic OAuth Provider (claude-opus-4-6 with adaptive thinking)", () => {
-		const model = getModel("anthropic", "claude-opus-4-6");
+		const model = getLegacyAnthropicModel("claude-opus-4-6");
 
 		it.skipIf(!anthropicOAuthToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(model, { apiKey: anthropicOAuthToken });

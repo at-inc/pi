@@ -68,7 +68,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	async function createSession() {
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		let abortSignal: AbortSignal | undefined;
 
 		// Use a stream function that responds to abort
@@ -179,7 +179,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	it("should queue extension-origin steering messages while streaming", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		let abortSignal: AbortSignal | undefined;
 		let sawSteeringMessage = false;
 		let lastInputSource: string | undefined;
@@ -290,7 +290,7 @@ describe("AgentSession concurrent prompt guard", () => {
 
 	it("should allow prompt() after previous completes", async () => {
 		// Create session with a stream that completes immediately
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: {
@@ -334,7 +334,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	it("should wait for queued agent events before emitting tool_call", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		const tool = {
 			name: "dummy",
 			description: "Dummy tool",
@@ -481,7 +481,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	it("should persist message_end events in order with slow extension handlers", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		const tool = {
 			name: "dummy",
 			description: "Dummy tool",

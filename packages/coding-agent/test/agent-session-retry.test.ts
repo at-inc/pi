@@ -67,7 +67,7 @@ describe("AgentSession retry", () => {
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
 		let callCount = 0;
 
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },
@@ -201,7 +201,7 @@ describe("AgentSession retry", () => {
 		};
 		created.session.dispose();
 
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },
@@ -253,7 +253,7 @@ describe("AgentSession retry", () => {
 			},
 		};
 
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = getModel("anthropic", "claude-sonnet-5-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },

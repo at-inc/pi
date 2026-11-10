@@ -22,7 +22,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 		tempDir = join(tmpdir(), `pi-auto-compaction-queue-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const model = { ...getModel("anthropic", "claude-sonnet-5-5")!, contextWindow: 200_000 };
 		const agent = new Agent({
 			streamFn: streamSimple,
 			initialState: {

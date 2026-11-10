@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { getModel, streamSimple } from "../src/compat.ts";
+import { streamSimple } from "../src/compat.ts";
 import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
+import { getLegacyAnthropicModel } from "./fixtures/legacy-anthropic-models.ts";
 
 interface AnthropicTemperaturePayload {
 	temperature?: number;
@@ -67,25 +68,25 @@ async function capturePayload(
 
 describe("Anthropic temperature compatibility", () => {
 	it("omits temperature for Claude Opus 4.7", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-7"), { temperature: 0 });
+		const payload = await capturePayload(getLegacyAnthropicModel("claude-opus-4-7"), { temperature: 0 });
 
 		expect(payload.temperature).toBeUndefined();
 	});
 
 	it("omits temperature for Claude Opus 4.8", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-8"), { temperature: 0 });
+		const payload = await capturePayload(getLegacyAnthropicModel("claude-opus-4-8"), { temperature: 0 });
 
 		expect(payload.temperature).toBeUndefined();
 	});
 
 	it("omits default temperature for Claude Opus 4.7", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-7"), { temperature: 1 });
+		const payload = await capturePayload(getLegacyAnthropicModel("claude-opus-4-7"), { temperature: 1 });
 
 		expect(payload.temperature).toBeUndefined();
 	});
 
 	it("keeps temperature for Claude Opus 4.6", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-6"), {
+		const payload = await capturePayload(getLegacyAnthropicModel("claude-opus-4-6"), {
 			temperature: 0,
 			headers: { "anthropic-version": "2023-06-01" },
 		});
@@ -94,7 +95,7 @@ describe("Anthropic temperature compatibility", () => {
 	});
 
 	it("keeps temperature for Claude Sonnet 4.6", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-4-6"), {
+		const payload = await capturePayload(getLegacyAnthropicModel("claude-sonnet-4-6"), {
 			temperature: 0,
 			headers: { "anthropic-version": "2023-06-01" },
 		});
@@ -105,7 +106,7 @@ describe("Anthropic temperature compatibility", () => {
 	it.each(["claude-opus-4-6", "claude-sonnet-4-6"] as const)(
 		"omits temperature for %s on API version 2026-10-21",
 		async (id) => {
-			const payload = await capturePayload(getModel("anthropic", id), {
+			const payload = await capturePayload(getLegacyAnthropicModel(id), {
 				temperature: 0,
 				headers: { "anthropic-version": "2026-10-21" },
 			});

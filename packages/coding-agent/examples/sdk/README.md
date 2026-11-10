@@ -48,7 +48,7 @@ const modelRuntime = await ModelRuntime.create();
 const { session } = await createAgentSession({ modelRuntime });
 
 // Custom model
-const model = getModel("anthropic", "claude-opus-4-5");
+const model = getModel("anthropic", "claude-opus-5-5");
 const { session } = await createAgentSession({ model, thinkingLevel: "high", modelRuntime });
 
 // Modify prompt

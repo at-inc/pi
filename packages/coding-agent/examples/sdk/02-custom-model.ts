@@ -9,7 +9,7 @@ import { createAgentSession, ModelRuntime } from "@at-inc/pi";
 const modelRuntime = await ModelRuntime.create();
 
 // Option 1: Find a specific built-in model by provider/id
-const opus = modelRuntime.getModel("anthropic", "claude-opus-4-5");
+const opus = modelRuntime.getModel("anthropic", "claude-opus-5-5");
 if (opus) {
 	console.log(`Found model: ${opus.provider}/${opus.id}`);
 }

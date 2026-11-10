@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type AnthropicOptions, stream } from "../src/api/anthropic-messages.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import { getLegacyAnthropicModel } from "./fixtures/legacy-anthropic-models.ts";
 
 interface WireMessage {
 	role: string;
@@ -229,9 +230,9 @@ describe("Anthropic mid-conversation effort", () => {
 	});
 
 	it("generates exact model and transport gates", () => {
-		const direct = getModel("anthropic", "claude-fable-5-1");
+		const direct = getModel("anthropic", "claude-fable-5-2");
 		const openRouter = getModel("openrouter", "anthropic/claude-fable-5.1");
-		const unsupported = getModel("anthropic", "claude-opus-4-8");
+		const unsupported = getLegacyAnthropicModel("claude-opus-4-8");
 		expect(direct.compat?.supportsMidConvoEffort).toBe(true);
 		expect(direct.thinkingLevelMap?.off).toBeNull();
 		expect(openRouter.api).toBe("anthropic-messages");
@@ -240,17 +241,21 @@ describe("Anthropic mid-conversation effort", () => {
 		expect(unsupported.compat?.supportsMidConvoEffort).toBeUndefined();
 		// OpenRouter rejects configuration_update on Opus 5 but accepts it on Fable 5.1.
 		expect(getModel("openrouter", "anthropic/claude-opus-5").compat?.supportsMidConvoEffort).toBeUndefined();
-		expect(getModel("anthropic", "claude-opus-5").compat?.allowedFallbackModels).toBeUndefined();
+		expect(getModel("anthropic", "claude-opus-5-5").compat?.allowedFallbackModels).toBeUndefined();
 	});
 
 	it("supports off only on managed models that accept disabled thinking", () => {
-		for (const id of ["claude-opus-5", "claude-haiku-5-5"] as const) {
-			const model = getModel("anthropic", id);
+		for (const model of [getLegacyAnthropicModel("claude-opus-5"), getModel("anthropic", "claude-haiku-5-5")]) {
 			expect(model.compat?.supportsMidConvoEffort).toBe(true);
 			expect(model.thinkingLevelMap?.off).not.toBeNull();
 		}
-		for (const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"] as const) {
-			expect(getModel("anthropic", id).thinkingLevelMap?.off).toBeNull();
+		for (const model of [
+			getModel("anthropic", "claude-opus-5-5"),
+			getModel("anthropic", "claude-sonnet-5-5"),
+			getModel("anthropic", "claude-fable-5-2"),
+			getLegacyAnthropicModel("claude-fable-5-1"),
+		]) {
+			expect(model.thinkingLevelMap?.off).toBeNull();
 		}
 	});
 });

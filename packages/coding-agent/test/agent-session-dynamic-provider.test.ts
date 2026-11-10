@@ -13,7 +13,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
 function nativeAnthropicProvider(baseUrl: string): Provider {
-	const model = { ...getModel("anthropic", "claude-sonnet-4-5")!, baseUrl };
+	const model = { ...getModel("anthropic", "claude-sonnet-5-5")!, baseUrl };
 	return {
 		id: "anthropic",
 		name: "Native Anthropic",
@@ -70,7 +70,7 @@ describe("AgentSession dynamic provider registration", () => {
 		const { session } = await createAgentSession({
 			cwd: tempDir,
 			agentDir,
-			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			model: getModel("anthropic", "claude-sonnet-5-5")!,
 			settingsManager,
 			sessionManager,
 			modelRuntime,
