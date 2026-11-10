@@ -5,8 +5,9 @@ import {
 	PI_ATTRIBUTION,
 	withClientIdentity,
 } from "@at-inc/pi-ai/utils/identity";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	createTypedMetrics,
 	NOOP_TELEMETRY_CONTEXT,

@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@at-inc/pi-ai";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { SystemEntry } from "../entries.ts";
 import { idFromNumber } from "../ids.ts";
 import type { SessionImpl } from "../session/session.ts";

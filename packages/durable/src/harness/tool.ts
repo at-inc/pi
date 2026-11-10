@@ -1,8 +1,8 @@
 import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@at-inc/pi-ai";
 import { validateToolArguments } from "@at-inc/pi-ai/utils/validation";
-import { type Context, copyJson, type Draft, type JsonRepresentation, type JsonValue } from "@earendil-works/chord";
-import { awaitWithContext } from "@earendil-works/chord/context";
-import { overlap, ownedSlice } from "@earendil-works/chord/delta";
+import { awaitWithContext, type Context } from "@earendil-works/chord/context";
+import { type Draft, overlap, ownedSlice } from "@earendil-works/chord/delta";
+import { copyJson, type JsonRepresentation, type JsonValue } from "@earendil-works/chord/json";
 import {
 	boundOutput,
 	OutputBuffer,

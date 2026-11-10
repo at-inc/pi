@@ -5,7 +5,8 @@
  */
 
 import type { AssistantMessage, Models, ToolCall } from "@at-inc/pi-ai";
-import type { Context, Draft } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { Draft } from "@earendil-works/chord/delta";
 import {
 	type Conversation,
 	type ConversationId,

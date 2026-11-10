@@ -10,7 +10,7 @@ export const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 export function openaiCodexProvider(): Provider<"openai-codex-responses"> {
 	return createProvider({
 		id: "openai-codex",
-		name: "OpenAI Codex (legacy)",
+		name: "OpenAI Codex",
 		baseUrl: OPENAI_CODEX_BASE_URL,
 		auth: {
 			oauth: lazyOAuth({

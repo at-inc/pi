@@ -11,7 +11,9 @@ import type {
 import { isContextOverflow } from "@at-inc/pi-ai/utils/overflow";
 import { isRetryableAssistantError, retryDelayMs } from "@at-inc/pi-ai/utils/retry";
 import { getCurrentTools } from "@at-inc/pi-ai/utils/transcript";
-import { type Context, copyJson, type Draft, type JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { Draft } from "@earendil-works/chord/delta";
+import { copyJson, type JsonValue } from "@earendil-works/chord/json";
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import type { TaskCreationOptions } from "../session/transaction.ts";
@@ -229,7 +231,12 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const entries = planSystemEntries(view, desired, agent.tools, runtime.now());
 			const threshold =
 				compacted === undefined
-					? thresholdCompaction(view, entries, resolved.contextWindow, compactionPolicy(settings, model))
+					? thresholdCompaction(
+							view,
+							entries,
+							resolved.contextWindow,
+							compactionPolicy(settings, model, agent.compaction),
+						)
 					: undefined;
 			if (threshold === "blocking") {
 				// Compact first and prepare again; the transcript is unchanged until the compaction appends.
@@ -800,8 +807,11 @@ async function classify(
 	// The retry and compaction policies govern the next attempt, so they are read now rather than pinned at preparation.
 	const settings = runtime.settings;
 	const overflow = message.stopReason === "error" && isContextOverflow(message);
-	const compaction = compactionPolicy(settings, ref);
-	if (overflow && compacted === undefined && compaction.enabled) {
+	const compaction =
+		overflow && compacted === undefined
+			? compactionPolicy(settings, ref, (await runtime.agent(context)).compaction)
+			: undefined;
+	if (compaction?.enabled === true) {
 		const view = await runtime.context(conversationId, context, { at: cutoff });
 		if (selectCut(view, compaction.keepRecentTokens) !== undefined) {
 			const text = message.errorMessage ?? "Context overflow";

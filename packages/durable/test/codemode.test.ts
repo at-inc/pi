@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@at-inc/pi-ai";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { type CodemodeRun, CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
 	defineTool,

@@ -8,7 +8,7 @@ import {
 	fauxToolCall,
 	type ToolResultMessage,
 } from "@at-inc/pi-ai";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	defineTool,
 	type EntryRecord,

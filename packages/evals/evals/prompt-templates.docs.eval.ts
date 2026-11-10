@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { contentText } from "@earendil-works/pi-ai";
+import { contentText } from "@at-inc/pi-ai";
 import { describeEval, StructuredOutputJudge } from "vitest-evals";
 import { createPiDocumentationEvalHarness } from "../src/harness.ts";
 

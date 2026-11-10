@@ -9,7 +9,7 @@ import type { AssistantMessage, FauxResponseStep } from "@at-inc/pi-ai";
 import { createModels } from "@at-inc/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@at-inc/pi-ai/providers/faux";
 import { openaiProvider } from "@at-inc/pi-ai/providers/openai";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { obj, str } from "@earendil-works/pi-schema";
 import {

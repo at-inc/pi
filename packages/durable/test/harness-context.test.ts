@@ -1,5 +1,5 @@
 import { createModels, type Message } from "@at-inc/pi-ai";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import {
 	type ContextView,
 	createRegistry,

@@ -4,8 +4,8 @@ import {
 	type ToolCall,
 	ToolCallArgumentsStream,
 } from "@at-inc/pi-ai";
-import { copyJson } from "@earendil-works/chord";
 import { type Op, track } from "@earendil-works/chord/delta";
+import { copyJson } from "@earendil-works/chord/json";
 import { describe, expect, it } from "vitest";
 import type { LiveState } from "../src/harness/live.ts";
 import { PartialChanges, type PartialMessage } from "../src/harness/partial-changes.ts";

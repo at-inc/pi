@@ -11,7 +11,7 @@ import {
 	fauxThinking,
 	fauxToolCall,
 } from "@at-inc/pi-ai";
-import type { Draft } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
 import {
 	type Conversation,
