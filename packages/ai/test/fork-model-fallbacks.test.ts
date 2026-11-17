@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getForkChatModelFallbacks } from "../scripts/fork-model-fallbacks.ts";
+import { getForkChatModelFallbacks, getForkOpenAiChatModelFallbacks } from "../scripts/fork-model-fallbacks.ts";
 import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
 import { MODEL_DATA_MANIFEST_FILE, validateGeneratedModelData } from "../scripts/model-data.ts";
 import { stream } from "../src/api/anthropic-messages.ts";
@@ -25,7 +25,7 @@ function fixture(
 	roots.push(root);
 	mkdirSync(join(root, "src/providers"), { recursive: true });
 	writeFileSync(join(root, `src/providers/${provider}.models.ts`), "");
-	const prefix = provider.toUpperCase();
+	const prefix = provider.toUpperCase().replaceAll("-", "_");
 	writeFileSync(
 		join(root, "src/models.generated.ts"),
 		`import { ${prefix}_CLASSIFIER_MODELS, ${prefix}_IMAGE_MODELS, ${prefix}_MODELS } from "./providers/${provider}.models.ts";`,
@@ -241,4 +241,27 @@ describe("fork chat model fallbacks", () => {
 		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
 		expect(Object.values(data["anthropic-messages"])).toEqual([supplied, haiku]);
 	});
+
+	it.each(["openai", "azure", "openai-codex"])(
+		"hydrates missing %s GPT-6.2 models from the catalog definitions",
+		(provider) => {
+			const fetch = vi.fn(() => {
+				throw new Error("Unexpected network request");
+			});
+			vi.stubGlobal("fetch", fetch);
+			const fallbacks = getForkOpenAiChatModelFallbacks(provider);
+			expect(fallbacks.map((model) => model.id)).toEqual(["gpt-6.2-astra", "gpt-6.2-sol"]);
+			const { root, catalogPath, dataPath } = fixture([{ ...fallbacks[0], id: "existing-chat" }], provider);
+			hydrateModelCatalog(root, catalogPath);
+			validateGeneratedModelData(root);
+			const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
+			for (const fallback of fallbacks) {
+				expect(data[fallback.api][`chat:${fallback.id}`]).toEqual(fallback);
+				expect(fallback.thinkingLevelMap?.off).toBeNull();
+			}
+			expect(getForkOpenAiChatModelFallbacks(provider)).toEqual(fallbacks);
+			expect(getForkOpenAiChatModelFallbacks("anthropic")).toEqual([]);
+			expect(fetch).not.toHaveBeenCalled();
+		},
+	);
 });
