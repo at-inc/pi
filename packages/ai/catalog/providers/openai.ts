@@ -14,6 +14,7 @@ import {
 	OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
 	OPENAI_STANDARD_COSTS,
 	OPENAI_TOOL_SEARCH_MODEL_IDS,
+	openAiStandardCost,
 	withOpenAiLongContextPricing,
 } from "../families/openai.ts";
 
@@ -35,6 +36,8 @@ const SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-6-luna",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 ]);
 const LONG_CONTEXT_PRICING_MODEL_IDS = new Set([...SHORT_CONTEXT_CAPPED_MODEL_IDS, "gpt-5.4-pro", "gpt-5.5-pro"]);
 
@@ -54,7 +57,15 @@ const NONE_REASONING_MODEL_IDS = new Set([
 ]);
 // OpenAI documents configuration_update for the GPT-6 family.
 // https://developers.openai.com/api/docs/guides/reasoning
-const MID_CONVO_EFFORT_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"]);
+const MID_CONVO_EFFORT_MODEL_IDS = new Set([
+	"gpt-6-astra",
+	"gpt-6-sol",
+	"gpt-6-luna",
+	"gpt-6.1-sol",
+	"gpt-6.1-terra",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
+]);
 
 // Not listed by models.dev.
 const GPT_5_CHAT_LATEST: Model<"openai-responses"> = {
@@ -69,6 +80,28 @@ const GPT_5_CHAT_LATEST: Model<"openai-responses"> = {
 	contextWindow: 128000,
 	maxTokens: 16384,
 };
+
+// Released 2026-11-17; models.dev does not list them yet. Both have a 1.05M context window and 128K output,
+// capped to the short-context pricing tier like the other GPT-6 models.
+// https://developers.openai.com/api/docs/models/gpt-6.2-astra
+// https://developers.openai.com/api/docs/models/gpt-6.2-sol
+const GPT_6_2_MODELS: Model<"openai-responses">[] = [
+	{ id: "gpt-6.2-astra", name: "GPT-6.2 Astra" },
+	{ id: "gpt-6.2-sol", name: "GPT-6.2 Sol" },
+].map(
+	({ id, name }): Model<"openai-responses"> => ({
+		id,
+		name,
+		api: "openai-responses",
+		baseUrl: BASE_URL,
+		provider: "openai",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: openAiStandardCost(id),
+		contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+		maxTokens: 128000,
+	}),
+);
 
 // OpenAI Decisions API (public beta): gpt-6-luna is its only model. It bills input tokens only,
 // with the same long-context multiplier as chat requests. Only API keys work: Sign in with ChatGPT
@@ -117,7 +150,7 @@ export default defineProvider({
 				include: (source) => !UNSUPPORTED_MODEL_IDS.has(source.id),
 				map: correctUpstream,
 			}),
-			[GPT_5_CHAT_LATEST],
+			[GPT_5_CHAT_LATEST, ...GPT_6_2_MODELS],
 		),
 	classifiers: () => CLASSIFIER_MODELS,
 	finalize: (model) => {
