@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The default model for the `openai`, `azure`, and `openai-codex` providers is now GPT-6.2 Sol (`gpt-6.2-sol`). GitHub Copilot keeps GPT-6.1 Sol until its catalog lists GPT-6.2
+
 ## [1.5.2] - 2026-11-10
 
 ### New Features

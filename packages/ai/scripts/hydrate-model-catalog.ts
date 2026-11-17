@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { ANTHROPIC_CATALOG_MODEL_IDS } from "../catalog/providers/anthropic.ts";
 import { applyClassifierModelMetadata, getStaticClassifierModels } from "./classifier-model-data.ts";
 import { applyForkModelMetadata, type ForkModelData, getForkImageModels } from "./fork-model-data.ts";
-import { getForkChatModelFallbacks } from "./fork-model-fallbacks.ts";
+import { getForkChatModelFallbacks, getForkOpenAiChatModelFallbacks } from "./fork-model-fallbacks.ts";
 import {
 	createModelDataManifest,
 	groupProviderModelData,
@@ -64,6 +64,7 @@ export function hydrateModelCatalog(
 		}
 		for (const model of [
 			...getForkChatModelFallbacks(provider),
+			...getForkOpenAiChatModelFallbacks(provider),
 			...getForkImageModels(provider),
 			...getStaticClassifierModels(provider),
 		]) {

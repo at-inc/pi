@@ -1,5 +1,10 @@
+import { buildCatalog } from "../catalog/build.ts";
 import { applyClaudeFamilyRules, enableClaudeMidConvoEffort } from "../catalog/families/anthropic.ts";
-import type { Model } from "../src/types.ts";
+import azure from "../catalog/providers/azure.ts";
+import deepseek from "../catalog/providers/deepseek.ts";
+import openai from "../catalog/providers/openai.ts";
+import openaiCodex from "../catalog/providers/openai-codex.ts";
+import type { Api, Model } from "../src/types.ts";
 import { applyForkModelMetadata, applyImageInputMetadata } from "./fork-model-data.ts";
 
 export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-messages"> & { type: "chat" })[] {
@@ -70,4 +75,24 @@ export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-m
 	applyForkModelMetadata(model);
 	applyImageInputMetadata(model);
 	return [model, fable];
+}
+
+// pi.dev's published catalog predates GPT-6.2, so hydrated data gets these models from the local catalog definitions.
+const OPENAI_FALLBACK_MODEL_IDS = new Set(["gpt-6.2-astra", "gpt-6.2-sol"]);
+
+export function getForkOpenAiChatModelFallbacks(provider: string): (Model<Api> & { type: "chat" })[] {
+	if (provider !== "openai" && provider !== "azure" && provider !== "openai-codex") return [];
+	const catalog = buildCatalog(
+		[azure, deepseek, openai, openaiCodex],
+		{
+			modelsDev: {},
+			modelsDevDecisions: {},
+			openRouter: { chat: [], images: [], classifiers: [] },
+			aiGateway: { chat: [], classifiers: [] },
+			nvidiaModelIds: new Map(),
+			radius: [],
+		},
+		false,
+	);
+	return catalog[provider].chat.filter((model) => OPENAI_FALLBACK_MODEL_IDS.has(model.id));
 }

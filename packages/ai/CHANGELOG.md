@@ -5,6 +5,7 @@
 ### Added
 
 - Added Claude Fable 5.2 to the Anthropic model catalog with official pricing, a 1M-token context window, 128K output, always-on adaptive thinking, mid-conversation updates, and fast mode.
+- Added GPT-6.2 Astra (`gpt-6.2-astra`, $8/$40 per million input/output tokens) and GPT-6.2 Sol (`gpt-6.2-sol`, $2/$10) to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers until models.dev includes them. Like GPT-6.1 Sol they reject reasoning effort `none`, cap the default context at 272K (the short-context price tier), and support tool search, `additional_tools`, and mid-conversation effort.
 
 ## [1.5.2] - 2026-11-10
 

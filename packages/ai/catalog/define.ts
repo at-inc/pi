@@ -79,10 +79,11 @@ export function withInputLimits(model: ChatModel, limits: ModelInputLimits): voi
 	};
 }
 
-/** Add models only when upstream has not listed them (yet). */
+/** Add copies of models only when upstream has not listed them (yet). */
 export function addMissing(models: ChatModel[], additions: readonly ChatModel[]): ChatModel[] {
+	// Copies keep later build stages from mutating the provider's module-level model constants.
 	for (const addition of additions) {
-		if (!models.some((model) => model.id === addition.id)) models.push(addition);
+		if (!models.some((model) => model.id === addition.id)) models.push(structuredClone(addition));
 	}
 	return models;
 }

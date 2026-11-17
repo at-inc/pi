@@ -96,6 +96,8 @@ describe("getSupportedThinkingLevels", () => {
 		"gpt-6-luna",
 		"gpt-6.1-sol",
 		"gpt-6.1-terra",
+		"gpt-6.2-astra",
+		"gpt-6.2-sol",
 	] as const)("includes xhigh for openai-codex %s models", (modelId) => {
 		const model = getModel("openai-codex", modelId);
 		expect(model).toBeDefined();
@@ -189,6 +191,18 @@ describe("getSupportedThinkingLevels", () => {
 		}
 	});
 
+	// OpenAI's model docs: the API rejects reasoning.effort "none" for GPT-6.2 Astra and Sol.
+	it.each(["gpt-6.2-astra", "gpt-6.2-sol"] as const)("does not support off or minimal for %s", (modelId) => {
+		for (const provider of ["openai", "azure"] as const) {
+			const model = getModel(provider, modelId);
+			expect(model).toBeDefined();
+			expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+		}
+		const codexModel = getModel("openai-codex", modelId);
+		expect(codexModel!.thinkingLevelMap?.off).toBeNull();
+		expect(codexModel!.thinkingLevelMap?.minimal).toBe("low");
+	});
+
 	// GPT-6.1 Terra accepts reasoning.effort "none" but, like GPT-6.1 Sol, rejects "minimal".
 	it("supports off but not minimal for GPT-6.1 Terra", () => {
 		for (const provider of ["openai", "azure", "openai-codex"] as const) {
@@ -205,6 +219,8 @@ describe("getSupportedThinkingLevels", () => {
 		// Codex serves GPT-6.1 Sol with a 500K default context window (#10840)
 		["gpt-6.1-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 500000],
 		["gpt-6.1-terra", { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 }, 500000],
+		["gpt-6.2-astra", { input: 8, output: 40, cacheRead: 0.4, cacheWrite: 10 }, 272000],
+		["gpt-6.2-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 272000],
 	] as const)("includes official metadata for OpenAI and Codex %s", (modelId, cost, codexContextWindow) => {
 		for (const provider of ["openai", "openai-codex"] as const) {
 			const model = getModel(provider, modelId);
@@ -236,6 +252,8 @@ describe("getSupportedThinkingLevels", () => {
 
 	it.each([
 		["gpt-6.1-sol", 500000],
+		["gpt-6.2-astra", 272000],
+		["gpt-6.2-sol", 272000],
 		["gpt-6-astra", 272000],
 		["gpt-6-sol", 272000],
 		["gpt-6-luna", 272000],
