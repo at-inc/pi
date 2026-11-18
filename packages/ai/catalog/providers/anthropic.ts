@@ -10,7 +10,7 @@ import {
 
 const MODELS_55 = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
 
-export const ANTHROPIC_CATALOG_MODEL_IDS = new Set([...MODELS_55, "claude-fable-5-2"]);
+export const ANTHROPIC_CATALOG_MODEL_IDS = new Set([...MODELS_55, "claude-fable-5-2", "claude-mythos-5-2"]);
 
 export default defineProvider({
 	id: "anthropic",

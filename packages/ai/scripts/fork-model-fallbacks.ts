@@ -7,12 +7,17 @@ import openaiCodex from "../catalog/providers/openai-codex.ts";
 import type { Api, Model } from "../src/types.ts";
 import { applyForkModelMetadata, applyImageInputMetadata } from "./fork-model-data.ts";
 
-export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-messages"> & { type: "chat" })[] {
-	if (provider !== "anthropic" && provider !== "openrouter") return [];
-	const fable: Model<"anthropic-messages"> & { type: "chat" } = {
+// Fable 5.2 and Mythos 5.2 are the same model with the same specifications and pricing; only access differs.
+// https://platform.claude.com/docs/en/models/mythos-5-2/overview
+function getClaude52Fallback(
+	provider: string,
+	family: "Fable" | "Mythos",
+): Model<"anthropic-messages"> & { type: "chat" } {
+	const slug = family.toLowerCase();
+	const model: Model<"anthropic-messages"> & { type: "chat" } = {
 		type: "chat",
-		id: provider === "anthropic" ? "claude-fable-5-2" : "anthropic/claude-fable-5.2",
-		name: provider === "anthropic" ? "Claude Fable 5.2" : "Anthropic: Claude Fable 5.2",
+		id: provider === "anthropic" ? `claude-${slug}-5-2` : `anthropic/claude-${slug}-5.2`,
+		name: provider === "anthropic" ? `Claude ${family} 5.2` : `Anthropic: Claude ${family} 5.2`,
 		api: "anthropic-messages",
 		provider,
 		baseUrl: provider === "anthropic" ? "https://api.anthropic.com" : "https://openrouter.ai/api",
@@ -22,20 +27,25 @@ export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-m
 		contextWindow: 1000000,
 		maxTokens: 128000,
 	};
-	applyClaudeFamilyRules(fable);
-	enableClaudeMidConvoEffort(fable);
+	applyClaudeFamilyRules(model);
+	enableClaudeMidConvoEffort(model);
 	if (provider === "anthropic") {
-		fable.compat = {
-			...fable.compat,
+		model.compat = {
+			...model.compat,
 			supportsMidConvoSystemMessages: true,
 			supportsMidConvoToolChanges: true,
 			supportsStrictTools: true,
 		};
-		fable.promptCache = { short: 300, long: 3600 };
+		model.promptCache = { short: 300, long: 3600 };
 	}
-	applyForkModelMetadata(fable);
-	applyImageInputMetadata(fable);
-	if (provider === "openrouter") return [fable];
+	applyForkModelMetadata(model);
+	applyImageInputMetadata(model);
+	return model;
+}
+
+export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-messages"> & { type: "chat" })[] {
+	if (provider === "openrouter") return [getClaude52Fallback(provider, "Fable")];
+	if (provider !== "anthropic") return [];
 	const model: Model<"anthropic-messages"> & { type: "chat" } = {
 		type: "chat",
 		id: "claude-haiku-5-5",
@@ -74,7 +84,7 @@ export function getForkChatModelFallbacks(provider: string): (Model<"anthropic-m
 	};
 	applyForkModelMetadata(model);
 	applyImageInputMetadata(model);
-	return [model, fable];
+	return [model, getClaude52Fallback(provider, "Fable"), getClaude52Fallback(provider, "Mythos")];
 }
 
 // pi.dev's published catalog predates GPT-6.2, so hydrated data gets these models from the local catalog definitions.

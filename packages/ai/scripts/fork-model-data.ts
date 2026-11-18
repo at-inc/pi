@@ -54,7 +54,7 @@ export function applyForkModelMetadata(model: ForkModelData): void {
 	} else if (model.provider === "anthropic" && model.api === "anthropic-messages") {
 		const version = model.id.replace(/-\d{8}$/, "").match(/^claude-opus-(\d+)(?:[.-](\d+))?(?:-|$)/);
 		model.supportsFastMode =
-			isVersionAtLeast(version, 4, 6) || /^claude-fable-5[.-]2(?:-\d{8})?$/.test(model.id);
+			isVersionAtLeast(version, 4, 6) || /^claude-(?:fable|mythos)-5[.-]2(?:-\d{8})?$/.test(model.id);
 	}
 
 	const responseApi =

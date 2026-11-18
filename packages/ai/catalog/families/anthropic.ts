@@ -84,6 +84,8 @@ const TEMPERATURE_UNSUPPORTED = [
 	"haiku-5.5",
 	"fable-5-2",
 	"fable-5.2",
+	"mythos-5-2",
+	"mythos-5.2",
 ];
 const MAX_EFFORT_ONLY = ["opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6"];
 const XHIGH_AND_MAX_EFFORT = [
@@ -102,13 +104,14 @@ const XHIGH_AND_MAX_EFFORT = [
 /**
  * Adaptive thinking effort levels (per Anthropic adaptive thinking docs):
  * "max" is available on all adaptive-thinking Claude models; "xhigh" only on
- * Opus 4.7/4.8/5, Sonnet 5, Haiku 5.5, and Fable 5.
+ * Opus 4.7/4.8/5, Sonnet 5, Haiku 5.5, Fable 5, and Mythos 5.2.
  */
 export function applyClaudeFamilyRules(model: ChatModel): void {
 	if (idIncludesAny(model.id, MAX_EFFORT_ONLY)) mergeThinking(model, { max: "max" });
 	if (idIncludesAny(model.id, XHIGH_AND_MAX_EFFORT)) mergeThinking(model, { xhigh: "xhigh", max: "max" });
-	if (model.id.includes("fable-5")) mergeThinking(model, { off: null, xhigh: "xhigh", max: "max" });
-	if (/^claude-fable-5[.-]2(?:-\d{8})?$/.test(stripPrefix(model.id))) {
+	const isClaude52 = /^claude-(?:fable|mythos)-5[.-]2(?:-\d{8})?$/.test(stripPrefix(model.id));
+	if (model.id.includes("fable-5") || isClaude52) mergeThinking(model, { off: null, xhigh: "xhigh", max: "max" });
+	if (isClaude52) {
 		mergeThinking(model, { minimal: null, low: "low", medium: "medium", high: "high" });
 	}
 	if (model.api !== "anthropic-messages") return;

@@ -253,6 +253,7 @@ describe("Anthropic mid-conversation effort", () => {
 			getModel("anthropic", "claude-opus-5-5"),
 			getModel("anthropic", "claude-sonnet-5-5"),
 			getModel("anthropic", "claude-fable-5-2"),
+			getModel("anthropic", "claude-mythos-5-2"),
 			getLegacyAnthropicModel("claude-fable-5-1"),
 		]) {
 			expect(model.thinkingLevelMap?.off).toBeNull();
@@ -275,7 +276,7 @@ describe("Anthropic mid-conversation effort", () => {
 			getModels("anthropic")
 				.map((model) => model.id)
 				.sort(),
-		).toEqual(["claude-fable-5-2", "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5"]);
+		).toEqual(["claude-fable-5-2", "claude-haiku-5-5", "claude-mythos-5-2", "claude-opus-5-5", "claude-sonnet-5-5"]);
 		expect(getModel("openrouter", "anthropic/claude-fable-5.2").compat?.supportsMidConvoEffort).toBe(true);
 	});
 });

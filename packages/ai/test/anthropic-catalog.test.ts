@@ -5,7 +5,13 @@ import githubCopilot from "../catalog/providers/github-copilot.ts";
 import type { CatalogSources } from "../catalog/sources/index.ts";
 import type { ModelsDevV2Model } from "../catalog/sources/models-dev.ts";
 
-const retainedIds = ["claude-fable-5-2", "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5"];
+const retainedIds = [
+	"claude-fable-5-2",
+	"claude-haiku-5-5",
+	"claude-mythos-5-2",
+	"claude-opus-5-5",
+	"claude-sonnet-5-5",
+];
 const removedIds = [
 	"claude-3-5-sonnet-20241022",
 	"claude-3-haiku-20240307",
@@ -13,6 +19,8 @@ const removedIds = [
 	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-fable-5-1",
+	"claude-mythos-5",
+	"claude-mythos-5-1",
 	"claude-opus-4-5",
 	"claude-opus-4-6",
 	"claude-opus-4-8",
@@ -45,7 +53,7 @@ function sourcesFor(ids: string[]): CatalogSources {
 }
 
 describe("Anthropic catalog selection", () => {
-	it("keeps only the four selected versions without filtering other providers", () => {
+	it("keeps only the selected versions without filtering other providers", () => {
 		const sources = sourcesFor([...retainedIds, ...removedIds]);
 		const catalog = buildCatalog([anthropic, githubCopilot], sources, false);
 		expect(catalog.anthropic.chat.map((model) => model.id).sort()).toEqual(retainedIds);
@@ -55,7 +63,7 @@ describe("Anthropic catalog selection", () => {
 		expect(catalog["github-copilot"].chat.some((model) => model.id === "claude-opus-4-6")).toBe(true);
 	});
 
-	it("retains authored Fable and Haiku entries when upstream omits them", () => {
+	it("retains authored Fable, Mythos, and Haiku entries when upstream omits them", () => {
 		const catalog = buildCatalog(
 			[anthropic],
 			sourcesFor(["claude-opus-5-5", "claude-sonnet-5-5", ...removedIds]),
@@ -63,6 +71,7 @@ describe("Anthropic catalog selection", () => {
 		);
 		expect(catalog.anthropic.chat.map((model) => model.id).sort()).toEqual(retainedIds);
 		expect(catalog.anthropic.chat.find((model) => model.id === "claude-fable-5-2")?.name).toBe("Claude Fable 5.2");
+		expect(catalog.anthropic.chat.find((model) => model.id === "claude-mythos-5-2")?.name).toBe("Claude Mythos 5.2");
 		expect(catalog.anthropic.chat.find((model) => model.id === "claude-haiku-5-5")?.name).toBe("Claude Haiku 5.5");
 	});
 
