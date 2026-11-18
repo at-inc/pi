@@ -64,6 +64,7 @@ describe("fork catalog integration", () => {
 			["openai", "gpt-10", true],
 			["anthropic", "claude-haiku-5-5", false],
 			["anthropic", "claude-fable-5-2", true],
+			["anthropic", "claude-mythos-5-2", true],
 			["anthropic", "claude-opus-5-5", true],
 			["anthropic", "claude-sonnet-5-5", false],
 			["cloudflare-ai-gateway", "gpt-6.1-terra", true],
@@ -120,12 +121,15 @@ describe("fork catalog integration", () => {
 		expect(catalog[provider].chat.filter((model) => model.id === fallback.id)).toEqual([fallback]);
 	});
 
-	it("includes Fable 5.2 with official pricing, limits, and always-on adaptive thinking", () => {
+	it.each([
+		["claude-fable-5-2", "Claude Fable 5.2"],
+		["claude-mythos-5-2", "Claude Mythos 5.2"],
+	])("includes %s with official pricing, limits, and always-on adaptive thinking", (id, name) => {
 		const catalog = buildCatalog(PROVIDERS, sources, false);
-		const matches = catalog.anthropic.chat.filter((model) => model.id === "claude-fable-5-2");
+		const matches = catalog.anthropic.chat.filter((model) => model.id === id);
 		expect(matches).toHaveLength(1);
 		expect(matches[0]).toMatchObject({
-			name: "Claude Fable 5.2",
+			name,
 			api: "anthropic-messages",
 			provider: "anthropic",
 			baseUrl: "https://api.anthropic.com",

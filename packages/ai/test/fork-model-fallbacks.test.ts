@@ -95,7 +95,7 @@ describe("fork chat model fallbacks", () => {
 			throw new Error("Unexpected network request");
 		});
 		vi.stubGlobal("fetch", fetch);
-		const [fallback, fable] = getForkChatModelFallbacks("anthropic");
+		const [fallback, fable, mythos] = getForkChatModelFallbacks("anthropic");
 		const existing = { ...fallback, id: "claude-sonnet-5-5", name: "Existing model", custom: true };
 		const { root, catalogPath, dataPath } = fixture([existing]);
 		hydrateModelCatalog(root, catalogPath);
@@ -108,6 +108,7 @@ describe("fork chat model fallbacks", () => {
 			"chat:claude-sonnet-5-5": existing,
 			"chat:claude-haiku-5-5": fallback,
 			"chat:claude-fable-5-2": fable,
+			"chat:claude-mythos-5-2": mythos,
 		});
 		hydrateModelCatalog(root, catalogPath);
 		expect(readFileSync(dataPath, "utf8")).toBe(first);
@@ -116,7 +117,7 @@ describe("fork chat model fallbacks", () => {
 	});
 
 	it("does not replace a supplied Haiku record or its provider-specific metadata", () => {
-		const [fallback, fable] = getForkChatModelFallbacks("anthropic");
+		const [fallback, fable, mythos] = getForkChatModelFallbacks("anthropic");
 		const supplied = {
 			...fallback,
 			name: "Updated upstream Haiku",
@@ -134,6 +135,7 @@ describe("fork chat model fallbacks", () => {
 		expect(data["anthropic-messages"]).toEqual({
 			"chat:claude-haiku-5-5": supplied,
 			"chat:claude-fable-5-2": fable,
+			"chat:claude-mythos-5-2": mythos,
 		});
 	});
 
@@ -189,11 +191,11 @@ describe("fork chat model fallbacks", () => {
 		validateGeneratedModelData(root);
 		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
 		expect(data["anthropic-messages"][`chat:${supplied.id}`]).toEqual(supplied);
-		expect(Object.keys(data["anthropic-messages"])).toHaveLength(provider === "anthropic" ? 2 : 1);
+		expect(Object.keys(data["anthropic-messages"])).toHaveLength(provider === "anthropic" ? 3 : 1);
 	});
 
 	it("hydrates only the selected Claude versions from an older pinned catalog", () => {
-		const [haiku, fable] = getForkChatModelFallbacks("anthropic");
+		const [haiku, fable, mythos] = getForkChatModelFallbacks("anthropic");
 		const ids = [
 			"claude-sonnet-5-5",
 			"claude-opus-5-5",
@@ -204,6 +206,7 @@ describe("fork chat model fallbacks", () => {
 			"claude-opus-5",
 			"claude-fable-5",
 			"claude-fable-5-1",
+			"claude-mythos-5-1",
 		];
 		const { root, catalogPath, dataPath } = fixture(ids.map((id) => ({ ...haiku, id })));
 		hydrateModelCatalog(root, catalogPath);
@@ -212,10 +215,13 @@ describe("fork chat model fallbacks", () => {
 		expect(Object.keys(data["anthropic-messages"]).sort()).toEqual([
 			"chat:claude-fable-5-2",
 			"chat:claude-haiku-5-5",
+			"chat:claude-mythos-5-2",
 			"chat:claude-opus-5-5",
 			"chat:claude-sonnet-5-5",
 		]);
 		expect(data["anthropic-messages"]["chat:claude-fable-5-2"]).toEqual(fable);
+		expect(data["anthropic-messages"]["chat:claude-mythos-5-2"]).toEqual(mythos);
+		expect(mythos).toEqual({ ...fable, id: "claude-mythos-5-2", name: "Claude Mythos 5.2" });
 		expect(fable).toMatchObject({
 			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
 			contextWindow: 1000000,
@@ -234,12 +240,12 @@ describe("fork chat model fallbacks", () => {
 	});
 
 	it("preserves supplied Fable 5.2 metadata instead of replacing it with the fallback", () => {
-		const [haiku, fable] = getForkChatModelFallbacks("anthropic");
+		const [haiku, fable, mythos] = getForkChatModelFallbacks("anthropic");
 		const supplied = { ...fable, name: "Updated upstream Fable", cost: { ...fable.cost, input: 9 } };
 		const { root, catalogPath, dataPath } = fixture([supplied]);
 		hydrateModelCatalog(root, catalogPath);
 		const data = JSON.parse(readFileSync(dataPath, "utf8")) as Record<string, Record<string, unknown>>;
-		expect(Object.values(data["anthropic-messages"])).toEqual([supplied, haiku]);
+		expect(Object.values(data["anthropic-messages"])).toEqual([supplied, haiku, mythos]);
 	});
 
 	it.each(["openai", "azure", "openai-codex"])(
