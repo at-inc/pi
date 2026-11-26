@@ -100,6 +100,38 @@ function buildSSEPayload({
 }
 
 describe("openai-codex streaming", () => {
+	it("sends the caller's account ID when the token has none and omits the header otherwise", async () => {
+		const sentAccountIds: Array<string | null> = [];
+		const fetchMock = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+			sentAccountIds.push(new Headers(init?.headers).get("chatgpt-account-id"));
+			return new Response("{}", { status: 401 });
+		});
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 0 }] });
+		for (const headers of [{ "chatgpt-account-id": "acc_stored" }, undefined]) {
+			await streamOpenAICodexResponses(model, context, {
+				apiKey: "opaque-token",
+				transport: "sse",
+				headers,
+				maxRetries: 0,
+				fetch: fetchMock as typeof fetch,
+			}).result();
+		}
+
+		expect(sentAccountIds).toEqual(["acc_stored", null]);
+	});
+
 	it("streams SSE responses and forwards raw provider events", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;

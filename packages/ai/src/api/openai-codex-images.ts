@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ImageGenerateParams, ImagesResponse } from "openai/resources/images.js";
 import type { AssistantImages, ImageContent, ImagesFunction } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import { getChatGPTAccountId } from "../utils/chatgpt-account-id.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { getIdentityHeaders } from "../utils/identity.ts";
@@ -30,14 +31,8 @@ export const generateImages: ImagesFunction = async (model, context, options) =>
 	try {
 		const apiKey = options?.apiKey;
 		if (!apiKey) throw new Error(`No API key for provider: ${model.provider}`);
-		let accountId: string | undefined;
-		try {
-			const payload = JSON.parse(atob(apiKey.split(".")[1])) as {
-				"https://api.openai.com/auth"?: { chatgpt_account_id?: string };
-			};
-			accountId = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
-		} catch {}
-		if (!accountId) throw new Error("Failed to extract accountId from token");
+		// Caller headers (the stored OAuth credential) override this below; without either it is omitted.
+		const accountId = getChatGPTAccountId(apiKey);
 
 		const baseUrl = (model.baseUrl?.trim() || "https://chatgpt.com/backend-api")
 			.replace(/\/+$/, "")
@@ -50,7 +45,7 @@ export const generateImages: ImagesFunction = async (model, context, options) =>
 			defaultHeaders: providerHeadersToRecord(
 				{
 					originator: "pi",
-					"chatgpt-account-id": accountId,
+					...(accountId ? { "chatgpt-account-id": accountId } : {}),
 					"x-codex-image-turn-id": uuidv7(),
 				},
 				getIdentityHeaders(model, options?.identity),

@@ -13,6 +13,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
+import { getChatGPTAccountId } from "../../utils/chatgpt-account-id.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
@@ -32,9 +33,8 @@ const DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60;
 const OPENAI_CODEX_BROWSER_LOGIN_METHOD = "browser";
 const OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD = "device_code";
 const SCOPE = "openid profile email offline_access";
-const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
-type OAuthToken = { access: string; refresh: string; expires: number };
+type OAuthToken = { access: string; refresh: string; expires: number; idToken?: string };
 type TokenOperation = "exchange" | "refresh";
 
 function getCallbackHost(): string {
@@ -50,13 +50,6 @@ type DeviceAuthInfo = {
 type DeviceTokenSuccess = {
 	authorizationCode: string;
 	codeVerifier: string;
-};
-
-type JwtPayload = {
-	[JWT_CLAIM_PATH]?: {
-		chatgpt_account_id?: string;
-	};
-	[key: string]: unknown;
 };
 
 function createState(): string {
@@ -96,18 +89,6 @@ function parseAuthorizationInput(input: string): { code?: string; state?: string
 	return { code: value };
 }
 
-function decodeJwt(token: string): JwtPayload | null {
-	try {
-		const parts = token.split(".");
-		if (parts.length !== 3) return null;
-		const payload = parts[1] ?? "";
-		const decoded = atob(payload);
-		return JSON.parse(decoded) as JwtPayload;
-	} catch {
-		return null;
-	}
-}
-
 async function fetchWithLoginCancellation(input: string, init: RequestInit): Promise<Response> {
 	try {
 		return await fetch(input, init);
@@ -130,6 +111,7 @@ async function readTokenResponse(response: Response, operation: TokenOperation):
 		access_token?: string;
 		refresh_token?: string;
 		expires_in?: number;
+		id_token?: string;
 	} | null;
 	if (!json?.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
 		throw new Error(`OpenAI Codex token ${operation} response missing fields: ${JSON.stringify(json)}`);
@@ -139,6 +121,7 @@ async function readTokenResponse(response: Response, operation: TokenOperation):
 		access: json.access_token,
 		refresh: json.refresh_token,
 		expires: Date.now() + json.expires_in * 1000,
+		idToken: json.id_token,
 	};
 }
 
@@ -307,26 +290,20 @@ async function createAuthorizationFlow(
 	return { verifier, state, url: url.toString() };
 }
 
-function getAccountId(accessToken: string): string | null {
-	const payload = decodeJwt(accessToken);
-	const auth = payload?.[JWT_CLAIM_PATH];
-	const accountId = auth?.chatgpt_account_id;
-	return typeof accountId === "string" && accountId.length > 0 ? accountId : null;
-}
-
-function credentialsFromToken(token: OAuthToken): OAuthCredential {
-	const accountId = getAccountId(token.access);
-	if (!accountId) {
-		throw new Error("Failed to extract accountId from token");
-	}
-
+// Codex CLI takes the account ID from the ID token and treats it as optional; not every access token carries it.
+function credentialsFromToken(token: OAuthToken, previousAccountId?: string): OAuthCredential {
+	const accountId = getChatGPTAccountId(token.idToken) ?? getChatGPTAccountId(token.access) ?? previousAccountId;
 	return {
 		type: "oauth",
 		access: token.access,
 		refresh: token.refresh,
 		expires: token.expires,
-		accountId,
+		...(accountId ? { accountId } : {}),
 	};
+}
+
+function getStoredAccountId(credential: OAuthCredential): string | undefined {
+	return typeof credential.accountId === "string" && credential.accountId ? credential.accountId : undefined;
 }
 
 async function exchangeAuthorizationCodeForCredentials(
@@ -402,8 +379,8 @@ async function loginOpenAICodex(
 /**
  * Refresh OpenAI Codex OAuth token
  */
-async function refreshOpenAICodexToken(refreshToken: string, signal: AbortSignal): Promise<OAuthCredential> {
-	return credentialsFromToken(await refreshAccessToken(refreshToken, signal));
+async function refreshOpenAICodexToken(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential> {
+	return credentialsFromToken(await refreshAccessToken(credential.refresh, signal), getStoredAccountId(credential));
 }
 
 export const openaiCodexOAuth: OAuthAuth = {
@@ -430,9 +407,10 @@ export const openaiCodexOAuth: OAuthAuth = {
 		return loginOpenAICodex(interaction, options);
 	},
 
-	refresh: (credential, signal) => refreshOpenAICodexToken(credential.refresh, signal),
+	refresh: refreshOpenAICodexToken,
 
 	async toAuth(credential) {
-		return { apiKey: credential.access };
+		const accountId = getStoredAccountId(credential);
+		return { apiKey: credential.access, ...(accountId ? { headers: { "chatgpt-account-id": accountId } } : {}) };
 	},
 };
