@@ -16,7 +16,7 @@ const EMPTY_SOURCES: CatalogSources = {
 	openRouter: { chat: [], images: [], classifiers: [] },
 	aiGateway: { chat: [], classifiers: [] },
 	nvidiaModelIds: new Map(),
-	radius: [],
+	radius: { chat: [], images: [], classifiers: [] },
 };
 
 // Fable 5.2 and Mythos 5.2 are the same model with the same specifications and pricing; only access differs.

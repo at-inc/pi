@@ -105,7 +105,12 @@ async function cutLogin(world: World) {
 			async (ctx) => {
 				const login = await ctx.get(Login, { workspace, thing });
 				const ids = (now: readonly unknown[]) => now.map((found) => (found as { id: string }).id).sort();
-				return ids(await until(login.catalog!, (now) => done(ids(now)), within("the catalog", ctx)));
+				const shown = await until(
+					login.login,
+					(now) => now !== null && done(ids(now.models)),
+					within("the login's models", ctx),
+				);
+				return ids(shown!.models);
 			},
 			context,
 			{ principal: agent },
@@ -114,7 +119,7 @@ async function cutLogin(world: World) {
 
 describe("the catalog runs", () => {
 	it("run every registered catalog with its own entry; a reload starts it anew", async () => {
-		w = await providersWorld(context, new Set(), [{ name: "cut", facet: cutType() }]);
+		w = await providersWorld(context, [{ name: "cut", facet: cutType() }]);
 		assert.equal((await storedCut(w)).models.length, 2);
 		const before = runs.began;
 		await w.reload("cut", context);
@@ -127,7 +132,7 @@ describe("the catalog runs", () => {
 	});
 
 	it("end with their contribution withdrawn, and start no new one (Opus)", async () => {
-		w = await providersWorld(context, new Set(), [{ name: "cut", facet: cutType() }]);
+		w = await providersWorld(context, [{ name: "cut", facet: cutType() }]);
 		await storedCut(w);
 		const before = runs.began;
 		await w.reload(
@@ -152,14 +157,14 @@ describe("the catalog runs", () => {
 				throw new Error("at once");
 			},
 		};
-		w = await providersWorld(context, new Set(), [{ name: "cut", facet: cutType(() => [throwing, cutCatalog()]) }]);
+		w = await providersWorld(context, [{ name: "cut", facet: cutType(() => [throwing, cutCatalog()]) }]);
 		assert.equal((await storedCut(w)).models.length, 2);
 	});
 });
 
 describe("a login's account", () => {
 	it("is cut over its type's catalog: the stored models laid over the shipped ones, the account's only", async () => {
-		w = await providersWorld(context, new Set(), [{ name: "cut", facet: cutType() }]);
+		w = await providersWorld(context, [{ name: "cut", facet: cutType() }]);
 		await storedCut(w);
 		const catalog = await cutLogin(w);
 		assert.deepEqual(await catalog((ids) => ids.length > 0), ["keep-new", "keep-shipped"]);
@@ -168,7 +173,7 @@ describe("a login's account", () => {
 	it("is cut again when its type stores a new catalog, with no credential written (Astra, Opus)", async () => {
 		const write = Promise.withResolvers<void>();
 		runs.write = write.promise;
-		w = await providersWorld(context, new Set(), [{ name: "cut", facet: cutType() }]);
+		w = await providersWorld(context, [{ name: "cut", facet: cutType() }]);
 		const catalog = await cutLogin(w);
 		assert.deepEqual(await catalog((ids) => ids.length > 0), ["keep-shipped"]);
 		write.resolve();

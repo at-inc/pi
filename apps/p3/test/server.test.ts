@@ -18,7 +18,6 @@ import {
 	defineFacet,
 	type P3Principal,
 	Session,
-	Sessions,
 	SessionWorker,
 	until,
 	WebScripts,
@@ -27,9 +26,9 @@ import {
 	type HttpRequest,
 	LinkOpened,
 	type LinkOpenedHook,
-	PeopleStore,
 	ServerCommands,
 	type ServerRuntime,
+	ThingsStore,
 	type WorkerRunner,
 	WorkerRunners,
 	WorkerRunnerWraps,
@@ -46,7 +45,7 @@ import {
 	startWorker,
 	usedRunner,
 } from "../src/server.ts";
-import { coding } from "./support.ts";
+import { makeSession, TMP } from "./support.ts";
 import { eventually } from "./until.ts";
 
 /** A host with the base's facet and one plugin per entry of `plugins`, each contributing what its facet does. */
@@ -171,17 +170,16 @@ async function server(t: TestContext, facets: Facets = [], plugins: Readonly<Rec
 async function startOne(running: RunningServer): Promise<string> {
 	const host = running.runtime.host;
 	const [owner] = (
-		await host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+		await host.root(async (ctx) => (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx), context)
 	).items;
 	return host.root(
 		async (ctx) => {
-			const sessions = await ctx.get(Sessions, {});
-			const id = await sessions.create(coding("one"), ctx);
+			const id = await makeSession(ctx, "one", TMP);
 			await ctx.get(SessionWorker, { session: id });
 			return id;
 		},
 		context,
-		{ principal: { kind: "person", id: owner!.id, name: owner!.name } },
+		{ principal: { kind: "person", id: owner!.person, name: owner!.name } },
 	);
 }
 
@@ -194,6 +192,8 @@ function passing(inner: WorkerRunner, seen: string[]): WorkerRunner {
 		},
 		stop: (id) => inner.stop(id),
 		retry: (id) => inner.retry(id),
+		remove: (id) => inner.remove(id),
+		stored: () => inner.stored(),
 		state: () => inner.state(),
 		pids: () => inner.pids(),
 		reload: (built, ctx) => {
@@ -378,6 +378,8 @@ describe("the runner the server uses", () => {
 			start: () => Promise.reject(new Error("the second runner was used")),
 			stop: async () => {},
 			retry: () => {},
+			remove: async () => {},
+			stored: async () => [],
 			state: () => ({}),
 			pids: () => [],
 			reload: async () => ({ hosts: [] }),

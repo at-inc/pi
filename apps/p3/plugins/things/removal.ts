@@ -2,9 +2,9 @@
 // (its whole subtree gives nothing from then on: the index finds no way up), and a durable row in `things.removing`
 // keeps the rest due: background commits of one workspace each clear the subtree (links, grants, switches, members,
 // the things linked nowhere else with their delete hooks), the deepest text first is not needed (every workspace below
-// a cut line is gone already). Each cleared workspace, and one a session archived, gets a durable row in
-// `things.gone`, and every kind's `workspaceGone` hook runs for it, again with backoff and at every start, until all
-// succeeded. One routine per store attempt; a removal or a telling never runs twice at once.
+// a cut line is gone already). Each cleared workspace gets a durable row in `things.gone`, and every kind's
+// `workspaceGone` hook runs for it, again with backoff and at every start, until all succeeded. One routine per store
+// attempt; a removal or a telling never runs twice at once.
 
 import {
 	type Ctx,
@@ -28,7 +28,7 @@ export const Removing = defineTable("things.removing", {
 	key: ["workspace"],
 });
 
-/** A workspace gone (removed, or a session archived) whose kinds' `workspaceGone` hooks have not all run yet. */
+/** A workspace gone (removed) whose kinds' `workspaceGone` hooks have not all run yet. */
 export const Gone = defineTable("things.gone", {
 	version: 1,
 	columns: { workspace: str() },
@@ -90,13 +90,12 @@ export class Removal {
 		const ctx =
 			this.#serving ?? (await Promise.race([this.#live.promise, untilAborted(routine).then(() => undefined)]));
 		if (ctx === undefined) return;
+		// Whole tables: the removals and tellings due are few rows, read at the start and when the hooks change.
 		const { removing, gone } = await this.#store.read(async (tx) => {
-			const removing = [];
-			const gone = [];
-			// Whole tables: the removals and tellings due are few rows, read at the start and when the hooks change.
-			for await (const row of tx.rows(this.#store.removing, query(Removing))) removing.push(row);
-			for await (const row of tx.rows(this.#store.gone, query(Gone))) gone.push(row);
-			return { removing, gone };
+			const due = { removing: [] as { workspace: string; pathText: string }[], gone: [] as { workspace: string }[] };
+			for await (const row of tx.rows(this.#store.removing, query(Removing))) due.removing.push(row);
+			for await (const row of tx.rows(this.#store.gone, query(Gone))) due.gone.push(row);
+			return due;
 		}, ctx);
 		for (const { workspace, pathText } of removing)
 			this.#start(`remove ${workspace}`, () => this.#clear(workspace, pathText));

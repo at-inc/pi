@@ -48,7 +48,7 @@ function sourcesFor(ids: string[]): CatalogSources {
 		openRouter: { chat: [], images: [], classifiers: [] },
 		aiGateway: { chat: [], classifiers: [] },
 		nvidiaModelIds: new Map(),
-		radius: [],
+		radius: { chat: [], images: [], classifiers: [] },
 	};
 }
 

@@ -1,21 +1,19 @@
 // The providers plugin on the server (`testPlugin`, beside the things plugin's server facet, the faux login's, the
 // owner's admission and test providers): the owner's sign-in (its questions, its answers, its end, nobody else's), a
 // login made from it by its maker only (never by someone else, never twice; a finished sign-in dropped by a cancel),
-// what is let in and what only agents get (`authorize`, `catalog`: Use by the kind's default grants; no other person,
-// not the owner; a second link's grants decide there), the credential and a provider's error text in no state or
-// error, an OAuth token refreshed once for requests at once, a refused one asking for a sign-in again and refused at
-// once after, an account's own models, and a deleted login's credential gone.
+// what is let in and what only agents get (`authorize`: Use by the kind's default grants; no other person, not the
+// owner; a second link's grants decide there), the credential and a provider's error text in no state or error, an
+// OAuth token refreshed once for requests at once, a refused one asking for a sign-in again and refused at once after,
+// an account's own models, and a deleted login's credential gone.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
 	type Ctx,
-	constant,
 	BACKGROUND_CONTEXT as context,
 	defineFacet,
 	LoginProviders,
-	OwnerAccess,
 	type P3Principal,
 	type Reference,
 	until,
@@ -47,14 +45,6 @@ const oauth = { refreshes: 0 };
 
 /** A text no state, error or log line may show: what a provider's server answered, a token among it. */
 const MARKER = "token-MARKER-0f3a";
-
-/** The `callerKey`s of the owners (the people plugin's answer, stubbed). */
-const owners = new Set<string>();
-
-/** The owner's admission (`OwnerAccess`), answering from `owners`. */
-const ownerStub = defineFacet((host) =>
-	host.serve(OwnerAccess, ({ caller }) => ({ owner: constant(owners.has(caller)) })),
-);
 
 /**
  * A failing test provider (`failing`): its sign-in fails, its request auth fails, both with `MARKER` in their error
@@ -138,7 +128,6 @@ let pi: string;
 
 beforeEach(async () => {
 	oauth.refreshes = 0;
-	owners.clear();
 	t = await testPlugin(
 		fileURLToPath(new URL("../", import.meta.url)),
 		{
@@ -149,7 +138,6 @@ beforeEach(async () => {
 				{ name: "oauth-test", facet: oauthStub },
 				{ name: "failing", facet: failingStub },
 				{ name: "stubborn", facet: stubbornStub },
-				{ name: "@earendil-works/p3-people", facet: ownerStub },
 			],
 		},
 		context,
@@ -167,10 +155,10 @@ async function person(name: string, workspace = pi): Promise<Person> {
 	return { kind: "person", id, name };
 }
 
-/** Makes owner `name` (the people plugin's owner: who may sign in), put into `workspace`; their principal. */
+/** Makes owner `name` (a person with the owner flag: who may sign in), put into `workspace`; their principal. */
 async function owner(name: string, workspace = pi): Promise<Person> {
 	const made = await person(name, workspace);
-	owners.add(`person:${made.id}`);
+	await things.setOwner({ person: made.id, owner: true }, context);
 	return made;
 }
 
@@ -516,19 +504,18 @@ describe("making a login", () => {
 });
 
 describe("who gets the request auth", () => {
-	it("gives the agents Use: authorize and catalog; no other person, not its maker, not the owner", async () => {
+	it("gives the agents Use: authorize; no other person, not its maker, not the owner", async () => {
 		const { workspace, agent } = await session("s1");
 		const ann = await owner("Ann", workspace);
 		const thing = await loginOf(ann, workspace);
 		const auth = await holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx));
 		assert.deepEqual(auth, { auth: { apiKey: keyOf(SCRIPT) }, source: "faux script" });
-		const catalog = await holding(agent, workspace, thing, async (login) => login.catalog!.value);
+		const models = await holding(agent, workspace, thing, async (login) => login.login.value?.models ?? []);
 		assert.deepEqual(
-			catalog.map((model) => (model as { id: string }).id),
+			models.map(({ id }) => id),
 			[FAUX_MODEL],
 		);
 		assert.equal(await holding(ann, workspace, thing, async (login) => login.authorize), undefined);
-		assert.equal(await holding(ann, workspace, thing, async (login) => login.catalog), undefined);
 		// Anyone else here is not let in at all: people see the models through the session's model picker.
 		const bob = await person("Bob", workspace);
 		await refused(
@@ -640,7 +627,12 @@ describe("who gets the request auth", () => {
 		const now = Date.now;
 		Date.now = () => now() + 3 * 60_000;
 		try {
-			const models = await holding(agent, workspace, thing, async (login) => login.catalog!.value.length);
+			const models = await holding(
+				agent,
+				workspace,
+				thing,
+				async (login) => (login.login.value?.models ?? []).length,
+			);
 			assert.ok(models > 0, "the harness has a model to ask with");
 			const auth = await holding(agent, workspace, thing, (login, ctx) => login.authorize!({}, ctx));
 			assert.equal(auth.auth.apiKey, "access-2");
@@ -668,16 +660,16 @@ describe("who gets the request auth", () => {
 		const { workspace, agent } = await session("s1");
 		const credential = { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 3_600_000 };
 		const none = await serverLogin(workspace, "github-copilot", { ...credential, availableModelIds: [] });
-		assert.deepEqual(await holding(agent, workspace, none, async (login) => login.catalog!.value), []);
+		assert.deepEqual(await holding(agent, workspace, none, async (login) => login.login.value?.models ?? []), []);
 		const all = await serverLogin(workspace, "github-copilot", credential);
-		const some = await holding(agent, workspace, all, async (login) => login.catalog!.value.length);
-		const one = (await holding(agent, workspace, all, async (login) => login.catalog!.value))[0] as { id: string };
-		const just = await serverLogin(workspace, "github-copilot", { ...credential, availableModelIds: [one.id] });
+		const some = await holding(agent, workspace, all, async (login) => (login.login.value?.models ?? []).length);
+		const [one] = await holding(agent, workspace, all, async (login) => login.login.value?.models ?? []);
+		const just = await serverLogin(workspace, "github-copilot", { ...credential, availableModelIds: [one!.id] });
 		const ids = await holding(agent, workspace, just, async (login) =>
-			login.catalog!.value.map((model) => (model as { id: string }).id),
+			(login.login.value?.models ?? []).map(({ id }) => id),
 		);
 		assert.ok(some > 1);
-		assert.deepEqual(ids, [one.id]);
+		assert.deepEqual(ids, [one!.id]);
 	});
 });
 

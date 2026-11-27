@@ -10,17 +10,15 @@ meaning from `packages/chord/docs/design.md` §2.
 | Pi | one installation of p3, with one owner | instance |
 | owner | the person who owns the Pi and installs its plugins: a person with the owner flag | admin |
 | person | anyone who signs in, the owner among them (an invite link makes the others) | user, guest |
-| group | persons an app made for one of its roles (coaches, players) | role, team |
-| member | a person or a group in a session, who reads or writes there | share, participant |
-| app | a plugin that owns the page below the top bar, and its sessions; coding is the built-in app | |
-| session | one agent in one folder of one environment, with its members and things, its own worker and store; belongs to exactly one app. The page may say workspace | chat, thread |
-| party | a person or a group | |
-| thing | one record of a kind a plugin brings (a canvas, a notebook, a login, the coding tools), with one id, a name and an owner: a person, a group, the Pi, or nobody. Sessions use things | resource, feature |
-| content | a thing nobody owns: made in a session by a writer or the agent, gone when no session uses it | artifact, document |
-| options | what a thing allows in one session: one whole object per party there (everyone, the agent, a member) | settings |
-| everywhere | an owned thing's switch: every session that follows its owner has it. The page says "in all my sessions" | global, default, shared |
-| follows | a session follows one party, or nobody: it has that party's `everywhere` things, live, while the party writes in it | inherits, template |
-| keep | a writer gives content an owner (themselves, a group of theirs, the Pi for the owner) | save, claim |
+| group | persons put together (a family, a team), managed by its own tick | role, team |
+| workspace | a thing that holds things and people (Pi, a project, Family); Pi is the root | folder, space |
+| session | a session workspace: a leaf with one agent, its own worker and store; its id is its workspace's | chat, thread |
+| party | whom a grant names: everyone here, the agents, a person, a group, one session's agent | |
+| thing | one record of a kind a plugin brings (a canvas, a notebook, a login, the coding tools, a session), with one id and a name, linked in one or more workspaces | resource, feature |
+| kind | a plugin's type of thing (`defineThing`, `defineWorkspace`): its members, ticks, default grants and makers | type |
+| tick | a right on a thing, granted to a party where it is linked (Read, Draw, Bash; the workspace ticks Link, Hide, Configure, Manage people, Manage access; Make) | permission, scope |
+| grant | one row giving (or withholding) one tick to one party on one thing in one workspace | |
+| answer | what a caller gets for a thing in a workspace: its ticks (perhaps none), from the things plugin's index | |
 | conversation | one line of talk in a session; branches and subagents are conversations | |
 | transcript | a conversation's entries, and the plugin and pane that own them | chat |
 | entry | one item in a transcript (a message, a tool call, a marker) | |
@@ -32,19 +30,47 @@ meaning from `packages/chord/docs/design.md` §2.
 | model | a language model | |
 | provider | who offers models (and signs the owner in to them) | |
 | environment | a machine the agent works on: this device, SSH, a sandbox | env, hands |
-| location | where a session works: an environment and a folder | place |
+| location | where a conversation works: a machine and a folder | place |
 | org | a company that manages its members' Pis | company |
 | view | one way to look at a target (a thing of a kind, a person, a group): an entry of the things plugin's `Views`; a kind has 0 to n | pane, panel, app |
-| component | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the session list | view |
-| layout | how an app arranges its views | |
+| component | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the navigator. Its token has no `View` suffix (`PaneLayout`, `Navigator`, `Settings`); `TargetView` is the decided name of the one that draws a target in its view | view |
+| layout | how a view arranges its panes: the layout plugin's pane layout (splits and tabs; chips on a phone) | |
 | slot | a place inside a view where other plugins add parts | |
-| chrome | the page's frame: the top bar (app switcher, person menu, connection) and the chosen app's page | workbench |
+| chrome | the page's frame: the top bar (crumbs, person menu, connection), the navigator beside the main area, and the corner button over a view that takes the whole page | workbench |
 | question | something a person is asked: an ask or an approval | |
 | artifact | something a session made to be shown | |
 | identity provider | how a person proves who they are (Radius, this device) | |
 | invite | a link that lets a person join | |
 | sign-in | one browser or device signed in as someone | session (for logins) |
 | admission | Chord's decision, before an object's factory, whether and at which level a principal gets it | access check |
+
+## Names inside a plugin
+
+One plugin, one name, carried by everything it owns. The worked example is notes (`apps/p3/plugins/notes/`).
+
+| What | Its name | Example |
+| --- | --- | --- |
+| the folder and the package | `plugins/<plugin>/`, `@earendil-works/p3-<plugin>` | `plugins/notes/package.json` |
+| the kind | `<plugin>.<kind>`, lower case; with one kind the two may be the same word | `plugins/notes/kind.ts:61` (`notes.notes`); `canvas.board`, `prompt.instructions` |
+| the kind's constant and its contract | `<Thing>Kind`, `<Thing>` | `plugins/notes/kind.ts:92` |
+| a tick | a verb, lower case, never a member's name; its label's key is `tick<Name>` | `plugins/notes/kind.ts:84` |
+| what a tick gives, as a constant | `<THING>_<TICK>S` | `plugins/notes/kind.ts:54` |
+| the store and its tables | `<plugin>.store`; `<plugin>.<rows>`, `<plugin>.settings` | `plugins/notes/store.ts:38`, `plugins/notes/store.ts:67`, `plugins/notes/store.ts:75` |
+| an index | `by_<what it orders by>` | `plugins/notes/store.ts:71` |
+| another served object | `<plugin>.<what>` | `plugins/prompt/set.ts:15` |
+| the messages namespace and keys | the plugin's name; keys are names (`noNote`), never English | `plugins/notes/messages.ts:8` |
+| a tool | `<plugin>_<verb>`; in a plugin with several kinds the kind's noun (`skills_read`) | `plugins/notes/worker.ts:52` |
+| files | `kind.ts`, `store.ts`, `server.ts`, `worker.ts`, `web.tsx`, `messages.ts`, `<thing>-view.tsx`; a second concept after what it is | `kind-pattern.md`, section 1 |
+| a view's id | the kind's name while it has one view | `plugins/notes/web.tsx:17` |
+| a test hook | `data-<plugin>…` on the view's root (its mode) and on each control | `plugins/notes/notes-view.tsx:48` |
+| a route | `/<plugin>/<what>` | `plugins/terminals/kind.ts:85` |
+| a contributing object | `<plugin>.<what>` | `plugins/terminals/attach.ts:23` |
+| a log or error text | starts with `<plugin>: ` | `plugins/notes/store.ts:178-180` |
+| a test | the `describe` names the mechanism, the `it` the rule; never a review round | `plugins/notes/test/server.test.ts:97` |
+
+Recorded exceptions (decision 120): the kinds `files.browser` and `terminals.pane` keep their names; the coding tools
+keep Durable's tool names `read`, `write`, `edit`, `bash`; a kind with many actions has one tool with a tagged action
+(`terminal`).
 
 Changed on the branch `skeleton` (2026-11-22, `base.md`): lock, layer and sheet are gone with locks; person, group,
 member, thing, options, view and chrome as above.

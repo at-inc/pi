@@ -1,6 +1,6 @@
 // p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface, the registries the base
 // serves, what a runner needs (the worker's control messages, Chord's process locks), and the built-in plugins' server
-// contracts p3 promises (the stores apps manage their sessions and people with, the apps and thing kinds registries).
+// contracts p3 promises (the sessions' store, the things store and `serveThing`, a kind's server side).
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { registerLazyOAuthFlows } from "@at-inc/pi-ai/lazy-oauth";
@@ -36,16 +36,42 @@ export {
 	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
 	processLock,
 } from "@earendil-works/chord/workers/child";
-export * from "../../../plugins/apps/contract.server.ts";
+// A machine's files and commands, for the machine plugins' server facets (this device's host) and Files.
+export type { BinaryReader, ExecutionEnv, Result } from "@earendil-works/pi-durable/env";
+export { FileError } from "@earendil-works/pi-durable/env";
+export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+// pi-env's daemon and its terminals, for the machine types' (this device's). `Connection` is a name of Chord's HTTP
+// surface's too (an HTTP connection's info).
+export { Connection as DaemonConnection, openTerminal, RemoteError } from "@earendil-works/pi-env";
+// YAML, for the prompt plugin's server facet: a skill's front matter, read as pi reads it (its `yaml` pin). A built-in
+// plugin's own npm dependency would have to be installed in its folder; through the API it is the server's one copy.
+export { parse as parseYaml } from "yaml";
 export * from "../../../plugins/environments/contract.server.ts";
-export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
+// The things plugin's store and what a kind's server side needs; the index's handles stay out.
+export {
+	type CreateAnswer,
+	Gives,
+	type Made,
+	OneThing,
+	type ThingHook,
+	ThingRow,
+	ThingsStore,
+	WorkspaceRow,
+} from "../../../plugins/things/contract.server.ts";
+export { serveThing, type ThingCaller, type ThingImplementation } from "../../../plugins/things/serve.ts";
 export * from "./control.ts";
+export { terminalDaemon } from "./terminal-daemon.ts";
 
 /** The server's process values, for plugins: what only the base has. */
 export type ServerRuntime = {
 	/** The Pi's data directory (a real path, private). */
 	readonly dataDir: string;
+	/**
+	 * Where sessions work when they name no folder, outside the data directory: each Pi in `<workRoot>/<Pi's id>`, a
+	 * folder per session there, so Pis on one machine never share one.
+	 */
+	readonly workRoot: string;
 	/** The machine the server runs on: its OS user's name and its host name (what the owner and this device are first named). */
 	readonly machine: { readonly user: string; readonly hostname: string };
 	readonly host: Host<P3Principal>;
@@ -88,6 +114,17 @@ export type WorkerRunner = {
 	stop(id: string): Promise<void>;
 	/** Clears session `id`'s failure: it starts again on its next hold (now, when held). */
 	retry(id: string): void;
+	/**
+	 * Stops session `id`'s worker, if one runs, and deletes what its workers keep here (their directory): the session
+	 * is gone. Resolves once it is deleted; a failure rejects, and the caller tries again. An id that names no session
+	 * (empty, a path) is refused (`invalid`) before anything stops or is deleted.
+	 */
+	remove(id: string): Promise<void>;
+	/**
+	 * The ids of the sessions whose workers keep something here (a directory each, named by a session id): what a sweep
+	 * of sessions gone reads.
+	 */
+	stored(): Promise<readonly string[]>;
 	/** What runs: each session's worker by id, `running` or `failed` with the reason. */
 	state(): Readonly<Record<string, WorkerState>>;
 	/**
@@ -136,8 +173,9 @@ export const WorkerRunnerWraps = defineRegistry<WorkerRunnerWrap, readonly Worke
 );
 
 /**
- * A hook on each `/chord` link the HTTP component accepts: `close` ends the link; the hook returns what to call once
- * the link closed (the sign-in plugin closes the links of a sign-in that ends).
+ * A hook on each `/chord` link the HTTP component accepts, and on each plugin socket whose handler calls it (the
+ * terminals' attach socket): `close` ends the link; the hook returns what to call once the link closed (the sign-in
+ * plugin closes the links of a sign-in that ends).
  */
 export type LinkOpenedHook = (request: HttpRequest, close: () => void) => (() => void) | undefined;
 
