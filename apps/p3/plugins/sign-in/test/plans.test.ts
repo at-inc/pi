@@ -111,7 +111,7 @@ describe("the plans of the sign-ins table's reads", () => {
 				const searched =
 					index === undefined
 						? /^(SEARCH|SCAN) t( |$)/
-						: new RegExp(`USING (COVERING )?INDEX .*${index.replace(/\./g, "\\.")}`);
+						: new RegExp(`USING (COVERING )?INDEX .*${index.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
 				for (const [sql, steps] of statements) {
 					const shown = `${name}: ${sql}: ${steps.join(" | ")}`;
 					assert.ok(
