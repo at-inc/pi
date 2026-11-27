@@ -1,11 +1,23 @@
 import { buildCatalog } from "../catalog/build.ts";
+import type { ProviderContext } from "../catalog/define.ts";
 import { applyClaudeFamilyRules, enableClaudeMidConvoEffort } from "../catalog/families/anthropic.ts";
 import azure from "../catalog/providers/azure.ts";
 import deepseek from "../catalog/providers/deepseek.ts";
 import openai from "../catalog/providers/openai.ts";
 import openaiCodex from "../catalog/providers/openai-codex.ts";
+import type { CatalogSources } from "../catalog/sources/index.ts";
 import type { Api, Model } from "../src/types.ts";
 import { applyForkModelMetadata, applyImageInputMetadata } from "./fork-model-data.ts";
+
+// Fallback models are authored here, so no upstream source backs them.
+const EMPTY_SOURCES: CatalogSources = {
+	modelsDev: {},
+	modelsDevDecisions: {},
+	openRouter: { chat: [], images: [], classifiers: [] },
+	aiGateway: { chat: [], classifiers: [] },
+	nvidiaModelIds: new Map(),
+	radius: [],
+};
 
 // Fable 5.2 and Mythos 5.2 are the same model with the same specifications and pricing; only access differs.
 // https://platform.claude.com/docs/en/models/mythos-5-2/overview
@@ -27,7 +39,15 @@ function getClaude52Fallback(
 		contextWindow: 1000000,
 		maxTokens: 128000,
 	};
-	applyClaudeFamilyRules(model);
+	const context: ProviderContext = {
+		providerId: provider,
+		sources: EMPTY_SOURCES,
+		strict: false,
+		providerModels: () => [],
+		modelsDevSource: () => undefined,
+		recordModelsDevSource: () => {},
+	};
+	applyClaudeFamilyRules(model, context);
 	enableClaudeMidConvoEffort(model);
 	if (provider === "anthropic") {
 		model.compat = {
@@ -92,17 +112,6 @@ const OPENAI_FALLBACK_MODEL_IDS = new Set(["gpt-6.2-astra", "gpt-6.2-sol"]);
 
 export function getForkOpenAiChatModelFallbacks(provider: string): (Model<Api> & { type: "chat" })[] {
 	if (provider !== "openai" && provider !== "azure" && provider !== "openai-codex") return [];
-	const catalog = buildCatalog(
-		[azure, deepseek, openai, openaiCodex],
-		{
-			modelsDev: {},
-			modelsDevDecisions: {},
-			openRouter: { chat: [], images: [], classifiers: [] },
-			aiGateway: { chat: [], classifiers: [] },
-			nvidiaModelIds: new Map(),
-			radius: [],
-		},
-		false,
-	);
+	const catalog = buildCatalog([azure, deepseek, openai, openaiCodex], EMPTY_SOURCES, false);
 	return catalog[provider].chat.filter((model) => OPENAI_FALLBACK_MODEL_IDS.has(model.id));
 }

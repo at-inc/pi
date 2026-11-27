@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { APP, holdIn, jsString, startFixture } from "./helpers.ts";
+import { APP, holdWith, jsString, startFixture } from "./helpers.ts";
 
 let unavailable: string | undefined;
 try {
@@ -37,7 +37,9 @@ async function withTerminal(run: (page: Browser, origin: string) => Promise<void
 	try {
 		const owner = fixture.browser();
 		const id = (
-			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
+			await (
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
+			).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
 		).id;
 		const origin = `http://127.0.0.1:${fixture.server.port}`;
 		browser = await Browser.start();

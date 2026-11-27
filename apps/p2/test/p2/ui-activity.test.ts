@@ -8,11 +8,11 @@ import type { AssistantMessage, ToolCall, ToolResultMessage } from "@at-inc/pi-a
 import { fauxAssistantMessage } from "@at-inc/pi-ai/providers/faux";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
-import { Chat } from "../../plugins/chat/contract.ts";
+import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { Models } from "../../plugins/models/contract.ts";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
 
 const live = (view: ConversationView | null | undefined) => view?.docs["pi.live"] as LiveState | undefined;
 const panel = "document.querySelector('[data-testid=activity-sheet]')";
@@ -32,10 +32,10 @@ describe("activity panel in the app", { skip: !browserTests }, () => {
 		writeFileSync(settings, JSON.stringify({ ...base, detail: 3 }));
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Activity" }, BACKGROUND_CONTEXT)
 		).id;
-		const chat = await holdIn(owner, Chat, { session, conversation: 1 }, "participant");
+		const chat = await holdWith(owner, Chat, { session, conversation: 1 }, ...CHAT_PARTICIPANT);
 		await chat.send({ text: "bash", requestId: "bash" }, BACKGROUND_CONTEXT);
 		await until(chat.view, (view) => !live(view)?.run && JSON.stringify(view).includes("Echo: bash"), 30_000);
 		chat.release();
@@ -185,6 +185,11 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 		fixture = await startFixture({ web: true });
 		browser = await Browser.start();
 		await browser.signIn(fixture.owner);
+		// Every page starts without remembered panels (src/web/session-panels.ts): each view below shows in the Familiar's
+		// session, which would otherwise reopen the block an earlier test left open there.
+		await browser.call("Page.addScriptToEvaluateOnNewDocument", {
+			source: `localStorage.removeItem("p2-session-panels")`,
+		});
 	});
 	after(async () => {
 		await browser?.close();
@@ -348,6 +353,50 @@ describe("a block's steps and active thought", { skip: !browserTests }, () => {
 			await browser.evaluate(`document.querySelector('${step("g")} pre.detail-output').textContent`),
 			"ok g",
 		);
+	});
+
+	it("wraps long lines in details instead of scrolling them sideways", async () => {
+		const long = "word ".repeat(80) + "x".repeat(300);
+		const entries: ConversationView["entries"][number][] = [];
+		respond(
+			entries,
+			[
+				call("b", "bash", { command: `echo ${long}` }),
+				call("r", "read", { path: "src/a.ts" }),
+				call("e", "edit", { path: "src/a.ts", edits: [] }),
+				call("g", "web_fetch", { url: `https://example.com/${long}` }),
+			],
+			"toolUse",
+			{
+				b: { content: [{ type: "text", text: long }] },
+				r: { content: [{ type: "text", text: `1\tconst a = "${long}";` }] },
+				e: {
+					content: [{ type: "text", text: "Edited" }],
+					details: { diff: `-1 const a = 1;\n+1 const a = "${long}";` },
+				},
+			},
+		);
+		await show({ conversation, entries, docs: {} });
+		await browser.click("[data-testid=activity]");
+		await browser.wait("document.querySelectorAll('[data-testid=step]').length===4");
+		for (const id of ["b", "r", "e", "g"])
+			await browser.evaluate(`document.querySelector('${step(id)} > button').click()`);
+		await browser.wait("document.querySelectorAll('[data-testid=step] > .activity-detail').length===4");
+		assert.deepEqual(
+			await browser.evaluate(
+				`[...document.querySelectorAll('[data-testid=activity-sheet] .activity-detail pre')].filter(e=>e.scrollWidth>e.clientWidth).map(e=>e.className)`,
+			),
+			[],
+		);
+		// The read's wrapped line stays beside its gutter.
+		assert.equal(
+			await browser.evaluate(
+				`(() => { const n=document.querySelector('${step("r")} .diff-number').getBoundingClientRect(), code=document.querySelector('${step("r")} .diff-code'), c=code.getBoundingClientRect(); return c.left>n.right && c.height>2*parseFloat(getComputedStyle(code).lineHeight); })()`,
+			),
+			true,
+		);
+		await browser.evaluate("history.back()");
+		await browser.wait(`!${panel}`);
 	});
 
 	it("shows a step's images as thumbnails in its collapsed row: the last four (two on phones), +N, outside its name", async () => {

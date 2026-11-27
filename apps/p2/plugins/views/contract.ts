@@ -1,28 +1,41 @@
 // Views: panes beside the transcript that the person and the agent share (docs/views.md). A view has a kind (a Markdown
-// file, the working tree's changes, or a custom HTML view the agent wrote), its own JSON state and the person's
-// selection in it; annotations (comments, removals, drawings) mark up any view or the transcript. The session's worker
-// owns all of it; the layout of the panes is each device's own (web.tsx).
+// file, the working tree's changes, or a kind a plugin's web facet registers, such as an html or md artifact) and the
+// item it shows, and the person's selection in it; annotations (comments, removals, drawings) mark up any view or the
+// transcript. The session's worker owns all of it; the layout of the panes is each device's own (web.tsx).
 
-import { arr, int, nullable, num, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
-import { type JsonValue, literal, method, param, remote, serverHost, sessionHost, unsafe } from "@p2/app/v1";
+import { arr, nul, nullable, num, obj, oneOf, opt, type Static, str, union, unknown } from "@earendil-works/pi-schema";
+import {
+	type Ctx,
+	grantable,
+	type JsonValue,
+	keyedRegistry,
+	literal,
+	method,
+	param,
+	type RefWith,
+	remote,
+	sessionHost,
+	unsafe,
+} from "@p2/app/v1";
+import type { RoutedSend } from "../chat/contract.ts";
 
 /** A view's ID: a lowercase slug, unique in its session. */
 export const VIEW_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** The transcript's ID where annotations name the view they mark up: it is no view of its own, but takes notes too. */
 export const TRANSCRIPT = "transcript";
-/** The largest state a view keeps, as JSON. */
-export const MAX_VIEW_STATE = 256 * 1024;
-/** The largest custom view's HTML, as UTF-8. */
-export const MAX_VIEW_HTML = 2 * 1024 * 1024;
 /** How many annotations a session keeps at once. */
 export const MAX_ANNOTATIONS = 200;
-/** Where a custom view's HTML versions live in the session's files (path: the view's ID). */
-export const VIEW_SOURCES = "views";
 
 const Id = str({ pattern: VIEW_ID.source });
-/** The kinds of views: a Markdown file of the workspace rendered, the working tree's changes, a custom HTML view. */
-export const ViewKindSchema = oneOf(["markdown", "changes", "custom"] as const);
-export type ViewKind = Static<typeof ViewKindSchema>;
+
+/**
+ * A view's kind: a built-in one or the name a plugin's web facet registered its pane under (`ViewKinds`: `html` and
+ * `md` artifacts, a plugin the agent wrote); a page that has no pane for it says so.
+ */
+export const ViewKindNameSchema = str({ pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" });
+
+/** What a view shows: a Markdown file's path, the path changes are shown below, a plugin's item ID (an artifact's). */
+export const ViewItemSchema = str({ minLength: 1, maxLength: 4096 });
 
 /**
  * What the person selected in a view, as the view describes it: a summary the agent reads with their next message,
@@ -35,18 +48,14 @@ export const SelectionSchema = obj({
 });
 export type Selection = Static<typeof SelectionSchema>;
 
-/** One view of a session. */
+/** One view of a session: what it is (its kind and the item it shows), its title and the person's selection. */
 export const ViewSchema = obj({
 	id: Id,
-	kind: ViewKindSchema,
+	kind: ViewKindNameSchema,
+	/** `markdown`: the file, relative to the workspace; `changes`: only changes below this path; a plugin's item ID. */
+	item: opt(ViewItemSchema),
 	title: str({ minLength: 1, maxLength: 120 }),
-	/** `markdown`: the file, relative to the workspace; `changes`: only changes below this path. */
-	path: opt(str({ maxLength: 4096 })),
-	/** `custom`: the version of its HTML in the session's files (`VIEW_SOURCES`). */
-	source: opt(int({ minimum: 1 })),
 	selection: opt(SelectionSchema),
-	/** The custom view's last script errors in the browser, newest last: what the agent sees when it reads the view. */
-	errors: opt(arr(str({ maxLength: 1000 }), { maxItems: 10 })),
 	/** When the agent last asked to show it: devices bring it to the front (and show it again) when this grows. */
 	focus: num(),
 	created: num(),
@@ -105,130 +114,106 @@ export type Annotation = Static<typeof AnnotationSchema>;
 export const ArrangementSchema = obj({ layout: unsafe<JsonValue>(unknown()), stamp: num() });
 export type Arrangement = Static<typeof ArrangementSchema>;
 
-/** The session's views and annotations: the worker's `p2.views` document. */
-export type ViewsState = { views: View[]; annotations: Annotation[]; arrangement?: Arrangement };
+/**
+ * What the person selected in an item shown in the transcript (an artifact a script showed there): no view holds it,
+ * so the session keeps it by the item's kind and ID, one per item.
+ */
+export const InlineSelectionSchema = obj({
+	kind: ViewKindNameSchema,
+	item: ViewItemSchema,
+	title: str({ minLength: 1, maxLength: 120 }),
+	selection: SelectionSchema,
+});
+export type InlineSelection = Static<typeof InlineSelectionSchema>;
 
-/** What a person opens from the Views sheet: a Markdown file, the changes, or a view of the owner's library. */
-export const OpenSchema = union([
-	obj({
-		kind: literal("markdown"),
-		path: str({ minLength: 1, maxLength: 4096 }),
-		title: opt(str({ maxLength: 120 })),
-	}),
-	obj({ kind: literal("changes"), path: opt(str({ maxLength: 4096 })), title: opt(str({ maxLength: 120 })) }),
-	obj({ saved: str({ pattern: VIEW_ID.source }) }),
-]);
+/** What `selectInline` takes: the item and its selection (`null` clears it). */
+export const SelectInlineSchema = obj({
+	kind: ViewKindNameSchema,
+	item: ViewItemSchema,
+	title: str({ minLength: 1, maxLength: 120 }),
+	selection: nullable(SelectionSchema),
+});
+export type SelectInlineInput = Static<typeof SelectInlineSchema>;
+
+/**
+ * The session's views and annotations: the worker's `p2.views` document. Views of the removed `custom` kind may still
+ * be stored there (no migration): `liveViews` leaves them out.
+ */
+export type ViewsState = {
+	views: View[];
+	annotations: Annotation[];
+	arrangement?: Arrangement;
+	/** Selections in items shown in the transcript (absent in documents written before). */
+	inline?: InlineSelection[];
+};
+
+/** The views of `state` that still exist: every kind but the removed `custom` one. */
+export const liveViews = (state: Readonly<ViewsState>): View[] => state.views.filter((view) => view.kind !== "custom");
+
+/** What a person opens from the Views sheet or the artifacts sheet: a Markdown file, the changes, a plugin's item. */
+export const OpenSchema = obj({
+	kind: ViewKindNameSchema,
+	item: opt(ViewItemSchema),
+	title: opt(str({ minLength: 1, maxLength: 120 })),
+});
+export type OpenInput = Static<typeof OpenSchema>;
 
 /**
  * A session's views and annotations as anyone who may view the session sees them; people who may send there also open,
- * close and select in views, annotate, and drop what their next message would carry.
+ * close and select in views, annotate, and drop what their next message would carry (`VIEWS_EDITING`). 2: a view's
+ * kind may be a plugin's. 3: a view shows an `item` (`path` before); the custom kind, its source and errors, saved
+ * views and `report` are gone. 4: selections in items shown in the transcript (`inline`, `selectInline`). 5: a new
+ * base (grantable members replaced variants; older versions are refused, their pages reload).
  */
 export const Views = remote("p2.views", {
-	version: 1,
+	version: 5,
 	params: { session: param.str() },
 	hostAddress: sessionHost,
-	variants: {
-		reader: {
-			state: {
-				views: arr(ViewSchema),
-				annotations: arr(AnnotationSchema),
-				arrangement: nullable(ArrangementSchema),
-			},
-		},
-		editor: {
-			state: {
-				views: arr(ViewSchema),
-				annotations: arr(AnnotationSchema),
-				arrangement: nullable(ArrangementSchema),
-			},
-			methods: {
-				open: method(OpenSchema, obj({ id: Id })),
-				/** Removes the view, its state and its annotations. */
-				close: method(obj({ id: Id })),
-				/** Sets (or with `null` clears) the person's selection in a view. */
-				select: method(obj({ id: Id, selection: nullable(SelectionSchema) })),
-				annotate: method(AnnotationInputSchema, obj({ id: str() })),
-				/** Removes annotations: these, or every one without `ids`. */
-				unannotate: method(obj({ ids: opt(arr(str(), { maxItems: MAX_ANNOTATIONS })) })),
-				/** Drops what the next message would carry: unsent annotations go, selections count as sent. */
-				discard: method(),
-				/** The custom view's script errors the browser saw (an empty list: none). */
-				report: method(obj({ id: Id, errors: arr(str({ maxLength: 1000 }), { maxItems: 10 }) })),
-			},
-		},
+	state: {
+		views: arr(ViewSchema),
+		annotations: arr(AnnotationSchema),
+		arrangement: nullable(ArrangementSchema),
+		inline: arr(InlineSelectionSchema),
+	},
+	methods: {
+		open: grantable(method(OpenSchema, obj({ id: Id }))),
+		/** Removes the view, its state and its annotations. */
+		close: grantable(method(obj({ id: Id }))),
+		/** Sets (or with `null` clears) the person's selection in a view. */
+		select: grantable(method(obj({ id: Id, selection: nullable(SelectionSchema) }))),
+		/** Sets (or with `null` clears) the person's selection in an item shown in the transcript. */
+		selectInline: grantable(method(SelectInlineSchema, nul())),
+		annotate: grantable(method(AnnotationInputSchema, obj({ id: str() }))),
+		/** Removes annotations: these, or every one without `ids`. */
+		unannotate: grantable(method(obj({ ids: opt(arr(str(), { maxItems: MAX_ANNOTATIONS })) }))),
+		/** Drops what the next message would carry: unsent annotations go, selections count as sent. */
+		discard: grantable(method()),
 	},
 });
 
-/** One view's JSON state (null until something sets it): everyone who may view reads it, people who may send set it. */
-export const ViewState = remote("p2.view-state", {
-	version: 1,
-	params: { session: param.str(), view: param.str() },
-	hostAddress: sessionHost,
-	variants: {
-		reader: { state: { value: unsafe<JsonValue>(unknown()) } },
-		editor: {
-			state: { value: unsafe<JsonValue>(unknown()) },
-			methods: { set: method(obj({ value: unsafe<JsonValue>(unknown()) })) },
-		},
-	},
-});
+/** The editing methods of `Views`, granted together to people who may send in the session. */
+export const VIEWS_EDITING = ["open", "close", "select", "selectInline", "annotate", "unannotate", "discard"] as const;
 
-/** A custom view's HTML for the server's `/view-frame` route (the worker owns the bytes; the route authorizes). */
-export const ViewSource = remote("p2.view-source", {
-	version: 1,
-	params: { session: param.str() },
-	hostAddress: sessionHost,
-	variants: {
-		server: {
-			methods: {
-				read: method(obj({ view: Id, version: int({ minimum: 1 }) }), obj({ title: str(), html: str() })),
-			},
-		},
-	},
-});
-
-/** A view in the owner's library: what opening it in any session starts from. */
-export const SavedViewSchema = obj({
-	name: Id,
-	title: str({ minLength: 1, maxLength: 120 }),
-	description: opt(str({ maxLength: 2000 })),
-	kind: ViewKindSchema,
-	path: opt(str({ maxLength: 4096 })),
-	/** `custom`: its HTML. */
-	html: opt(str()),
-	state: unsafe<JsonValue>(unknown()),
-	saved: num(),
-});
-export type SavedView = Static<typeof SavedViewSchema>;
-/** A saved view without its HTML and state, for lists. */
-export const SavedInfoSchema = obj({
-	name: Id,
-	title: str(),
-	description: opt(str()),
-	kind: ViewKindSchema,
-	saved: num(),
-});
-export type SavedInfo = Static<typeof SavedInfoSchema>;
-
-/**
- * The owner's library of saved views (`<data>/views/<name>.json`, server): the owner lists and removes them; session
- * workers list, read and save them for their agent's `view` tool and for the owner's Views sheet.
- */
-export const SavedViews = remote("p2.saved-views", {
-	version: 1,
-	params: {},
-	hostAddress: serverHost,
-	variants: {
-		owner: { state: { saved: arr(SavedInfoSchema) }, methods: { remove: method(obj({ name: Id })) } },
-		worker: {
-			methods: {
-				list: method(undefined, arr(SavedInfoSchema)),
-				get: method(obj({ name: Id }), nullable(SavedViewSchema)),
-				save: method(SavedViewSchema, SavedInfoSchema),
-			},
-		},
-	},
-});
+/** A reference to a session's views that may edit them. */
+export type ViewsEditor = RefWith<typeof Views, (typeof VIEWS_EDITING)[number]>;
 
 /** The entry kind of a person's message that carried view context (selections, annotations) to the agent. */
 export const VIEW_INPUT = "p2.view-input";
+
+/**
+ * Context another plugin adds to a person's next message, beside the views' selections and annotations (the html
+ * artifacts' new page errors): a text block the model reads, a short note the transcript shows, and what to mark once
+ * the message carried it.
+ */
+export type MessageContext = {
+	readonly text: string;
+	readonly note: string;
+	readonly carried: (ctx: Ctx) => Promise<void>;
+};
+
+/**
+ * Worker registry of message contexts, by plugin: each says what goes with the message being sent (undefined:
+ * nothing), what is new since the last one or what was staged for that message (its `requestId`).
+ */
+export const MessageContexts =
+	keyedRegistry<(input: RoutedSend, ctx: Ctx) => Promise<MessageContext | undefined>>("p2.views-message-contexts");

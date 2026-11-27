@@ -1,26 +1,37 @@
 // A rollup's or a group's list in the main area (`Route.page`): every session, those that fell out of the rollup's
 // window after the others and dimmed but still openable (as a to-do app's logbook), in groups for a rollup of groups;
-// or the archived sessions, each restored on a click. Its search finds sessions and messages within the list only.
+// or the archive: the archived projects (their ⋯ restores or deletes one) and the archived sessions, each restored on a
+// click. Its search finds sessions and messages within the list only.
 import {
 	ErrorToast,
+	inPage,
 	MenuIcon,
 	NavAddIcon,
+	NavFolderIcon,
+	NavMoreIcon,
+	openCommandMenu,
 	openPage,
 	openSidebar,
 	requestReveal,
 	SearchIcon,
 	SideNavigation,
+	Slot,
+	SlotList,
+	useLinkHref,
 	useScrollMemory,
 } from "@p2/app/v1/web";
 import { useEffect, useRef, useState } from "react";
+import type { ArchivedProject } from "../../projects/contract.ts";
 import type { SearchResults } from "../../search/contract.ts";
+import { archivedProjectTarget } from "../project-commands.tsx";
 import { type ListEntry, type ListPageData, type NewTarget, WINDOWS } from "./model.ts";
-import { inPage, pageHref, type RowActions, SessionItem } from "./Row.tsx";
+import { NavRow } from "./NavRow.tsx";
+import { ago, pageRoute, type RowActions, SessionItem } from "./Row.tsx";
 
 /** What the page says under its title: the window, or what the archive holds. */
 function subtitle(data: ListPageData | undefined): string {
 	if (!data) return "";
-	if (data.archived) return "Archived sessions. Open one to restore it.";
+	if (data.archived) return "Archived projects and sessions. Open a session to restore it.";
 	if (!data.window || data.window === "forever" || data.window === "none")
 		return "Every session shows in the sidebar.";
 	const label = WINDOWS.find((each) => each.window === data.window)?.label.toLowerCase();
@@ -107,6 +118,7 @@ export function ListPage({
 	actions,
 	onSearch,
 	onNewIn,
+	archivedProjects = [],
 }: {
 	page: string;
 	data: ListPageData | undefined;
@@ -117,7 +129,10 @@ export function ListPage({
 	onSearch?: (query: string, archived: boolean, sessions: readonly string[]) => Promise<SearchResults>;
 	/** Starts a new session in a group (the owner's). */
 	onNewIn?: (target: NewTarget) => void;
+	/** The archived projects, shown on the archive's page (the owner's). */
+	archivedProjects?: readonly ArchivedProject[];
 }) {
+	const linkHref = useLinkHref();
 	const archived = data?.archived ?? false;
 	const [query, setQuery] = useState(() => storedQuery(page));
 	const body = useRef<HTMLDivElement>(null);
@@ -153,7 +168,9 @@ export function ListPage({
 			<header className="topbar">
 				<button type="button" className="icon-button menu sidebar-open" onClick={openSidebar} aria-label="Sessions">
 					<MenuIcon />
+					<Slot name="menu-badge" />
 				</button>
+				<SlotList prefix="topbar-start" />
 				<div className="title">
 					<h1>{data?.name ?? "Sessions"}</h1>
 					<p className="list-page-subtitle">{subtitle(data)}</p>
@@ -179,6 +196,36 @@ export function ListPage({
 							/>
 						</label>
 					)}
+					{archived && !results && archivedProjects.length > 0 && (
+						<section className="list-group">
+							<h2 className="list-group-label">Projects</h2>
+							<SideNavigation.List>
+								{archivedProjects.map((project) => (
+									<SideNavigation.Item key={project.name}>
+										<NavRow
+											className="group-row archived-project"
+											marker={<NavFolderIcon size={16} />}
+											label={<span className="session-title">{project.name}</span>}
+											details={<span className="item-age">{ago(project.archivedAt, actions.now)}</span>}
+											onActivate={() => openCommandMenu(archivedProjectTarget(project.name))}
+											controls={
+												<button
+													type="button"
+													className="nav-control group-options"
+													aria-label={`${project.name} options`}
+													title="Options"
+													onClick={() => openCommandMenu(archivedProjectTarget(project.name))}
+												>
+													<NavMoreIcon size={16} />
+												</button>
+											}
+										/>
+									</SideNavigation.Item>
+								))}
+							</SideNavigation.List>
+							<h2 className="list-group-label">Sessions</h2>
+						</section>
+					)}
 					{content?.layout === "sessions" && rows(content.entries)}
 					{content?.layout === "groups" &&
 						content.groups.map((group) =>
@@ -188,7 +235,7 @@ export function ListPage({
 										{/* A group's own list: the sidebar's group rows show or hide their sessions instead. */}
 										<a
 											className="list-group-link"
-											href={pageHref(group.key)}
+											href={linkHref(pageRoute(group.key))}
 											onClick={inPage(() => openPage(group.key))}
 										>
 											{group.name}

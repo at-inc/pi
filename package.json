@@ -51,6 +51,7 @@
 		"publish:github": "node scripts/publish-github-packages.mjs",
 		"publish:github:dry": "node scripts/publish-github-packages.mjs --dry-run",
 		"release:local": "node scripts/local-release.mjs",
+		"release:p3:local": "node --disable-warning=ExperimentalWarning apps/p3/scripts/release-local.ts",
 		"pack:packages": "node scripts/pack-packages.mjs",
 		"shrinkwrap:coding-agent": "node scripts/generate-coding-agent-shrinkwrap.mjs",
 		"install-lock:coding-agent": "node scripts/generate-coding-agent-install-lock.mjs",

@@ -164,14 +164,20 @@ const sharesFacet = (use: (owned: Owned<ShareTables>) => void) =>
 				links: constant([]),
 				emails: constant([]),
 				people: constant([]),
+				admissions: constant([]),
+				invites: constant(false),
 				authenticate: refused,
 				authenticateEmail: refused,
+				authenticateAdmission: refused,
 				grant: refused,
 				active: refused,
+				invited: refused,
 				link: refused,
 				share: refused,
 				remove: refused,
 				join: refused,
+				joinAdmission: refused,
+				invite: refused,
 			};
 		}),
 	);
@@ -214,7 +220,7 @@ async function withTables<T extends object>(
 	activate: (ctx: Ctx) => Promise<unknown>,
 	rows: T | undefined,
 ): Promise<T | "kept"> {
-	const store = await openHostStore(serverDir, { outbox: false }, context);
+	const store = await openHostStore(serverDir, {}, context);
 	const errors: unknown[] = [];
 	const host = createHost({ principal: HOST, store, onError: (error) => errors.push(error) });
 	let owned: Owned<T> | undefined;

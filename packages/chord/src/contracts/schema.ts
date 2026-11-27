@@ -1,6 +1,6 @@
 // Schema helpers: Chord's short constructors over pi-schema's builders (plain JSON Schema, typed with the values they
-// accept), and method and keyed member declarations. The helpers keep the shapes contracts were fingerprinted with:
-// literals carry their `type`, `oneOf` is a union of literals, `map` a pattern-property record.
+// accept), and method, keyed member and event member declarations. The helpers keep the shapes contracts were
+// fingerprinted with: literals carry their `type`, `oneOf` is a union of literals, `map` a pattern-property record.
 
 import {
 	arr as arrSchema,
@@ -194,6 +194,31 @@ export class KeyedMember<S extends Schema = Schema, K extends KindShape | undefi
 	}
 }
 
+/** The argument schemas of a `queries` member's named queries, by query name. */
+export type QueryArguments = { readonly [query: string]: Schema };
+
+/**
+ * A `queries` member's declaration (slice 14 §3.1): named queries over one of the object's tables, each with the
+ * schema of its arguments, whose rows are values of `item`; only in `local` contracts.
+ */
+export class QueriesMember<I extends Schema = Schema, A extends QueryArguments = QueryArguments> {
+	readonly item: I;
+	readonly args: A;
+
+	constructor(item: I, args: A) {
+		this.item = item;
+		this.args = args;
+	}
+}
+
+/**
+ * Declares a `queries` member of a `local` contract: the named queries other objects on the host may read, each
+ * with its argument schema (part of the fingerprint). The handle of `self.queries(...)` implements it.
+ */
+export function queries<I extends Schema, const A extends QueryArguments>(item: I, args: A): QueriesMember<I, A> {
+	return new QueriesMember(item, args);
+}
+
 /**
  * Declares a keyed state member of a `local` contract: documents of `schema` by string key, or with `key` (a host kind)
  * by address of that kind (a host-keyed document handle implements it), each watchable.
@@ -206,6 +231,50 @@ export function keyed<S extends Schema, N extends string, P extends Params>(
 export function keyed(schema: Schema, key?: KindShape): KeyedMember {
 	return new KeyedMember(schema, key);
 }
+
+/**
+ * An event member's declaration in a `local` contract's flat members (decision "Events: fire-and-forget members"): the
+ * schema of the JSON values its object emits.
+ */
+export class EventDeclaration<S extends Schema = Schema> {
+	readonly schema: S;
+
+	constructor(schema: S) {
+		this.schema = schema;
+	}
+}
+
+/**
+ * Declares an event member of a `local` contract, as `keyed(schema)` marks a keyed member: JSON values of `schema` the
+ * object emits, delivered once to the references bound to it, never kept (a remote contract lists them under its
+ * `events`).
+ */
+export function event<S extends Schema>(schema: S): EventDeclaration<S> {
+	return new EventDeclaration(schema);
+}
+
+/**
+ * A grantable member's declaration in a `remote` contract (slice 15 §1): a state or event schema, or a method, that a
+ * caller has only if its admission granted it.
+ */
+export class Grantable<M extends Schema | Method = Schema | Method> {
+	readonly member: M;
+
+	constructor(member: M) {
+		this.member = member;
+	}
+}
+
+/**
+ * Marks a member of a `remote` contract as grantable: `grantable(schema)` in `state` and `events`,
+ * `grantable(method(...))` in `methods`. A caller has it only if its admission granted it (`allow({ granted })`).
+ */
+export function grantable<M extends Schema | Method>(member: M): Grantable<M> {
+	return new Grantable(member);
+}
+
+/** A member's declaration without its `grantable(...)` mark. */
+export type Ungranted<T> = T extends Grantable<infer M> ? M : T;
 
 /** Declares a method: `method()`, `method(args)`, `method(args, result)` or `method(undefined, result)`. */
 export function method(): Method<NullSchema, NullSchema>;

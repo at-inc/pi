@@ -5,6 +5,7 @@
 export {
 	type AcceptsTable,
 	type Address,
+	allow,
 	bool as columnBool,
 	broken,
 	ChordError,
@@ -14,8 +15,16 @@ export {
 	defineRegistry,
 	defineState,
 	defineTable,
+	deny,
+	type EventMember,
+	type EventSource,
+	type EventSubscription,
 	eq,
+	event,
 	evolve,
+	evolveTable,
+	type GrantableName,
+	grantable,
 	type HandleOf,
 	host as hostColumn,
 	int as columnInt,
@@ -71,16 +80,20 @@ export * from "../../runtime/composer.ts";
 export * from "../../runtime/contribute.ts";
 export * from "../../runtime/dev-protocol.ts";
 export * from "../../runtime/entries.ts";
+export * from "../../runtime/entry-images.ts";
 export * from "../../runtime/file-index.ts";
 export * from "../../runtime/files.ts";
 export * from "../../runtime/input.ts";
+export * from "../../runtime/link-limits.ts";
 export * from "../../runtime/location.ts";
 export * from "../../runtime/notices.ts";
 export * from "../../runtime/principals.ts";
+export * from "../../runtime/references.ts";
 export * from "../../runtime/refs.ts";
 export * from "../../runtime/schema.ts";
 export * from "../../runtime/schemas.ts";
 export * from "../../runtime/sender.ts";
+export * from "../../runtime/server-name.ts";
 export * from "../../runtime/session-lock.ts";
 export * from "../../runtime/session-worker.ts";
 export * from "../../runtime/shell.ts";
