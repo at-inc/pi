@@ -22,10 +22,11 @@ async function check(t, target, utilities) {
 		"packages/codemode/src/portable.ts": "export {};\n",
 		"packages/codemode/src/cloudflare.ts": "export {};\n",
 		"packages/durable/package.json": JSON.stringify({
-			exports: { ".": "./dist/index.js", "./tools": "./dist/tools.js" },
+			exports: { ".": "./dist/index.js", "./tools": "./dist/tools.js", "./images/fit": "./dist/images/fit.js" },
 		}),
 		"packages/durable/src/index.ts": "export {};\n",
 		"packages/durable/src/tools.ts": "export {};\n",
+		"packages/durable/src/images/fit.ts": "export {};\n",
 		...Object.fromEntries(utilities.map((name) => [`packages/ai/src/utils/${name}.ts`, "export {};\n"])),
 	};
 	for (const [path, content] of Object.entries(files)) {

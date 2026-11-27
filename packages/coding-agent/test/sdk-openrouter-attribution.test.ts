@@ -14,7 +14,6 @@ describe("createAgentSession provider attribution headers", () => {
 	let tempDir: string;
 	let cwd: string;
 	let agentDir: string;
-	let originalTelemetryEnv: string | undefined;
 
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `pi-sdk-attribution-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -22,16 +21,9 @@ describe("createAgentSession provider attribution headers", () => {
 		agentDir = join(tempDir, "agent");
 		mkdirSync(cwd, { recursive: true });
 		mkdirSync(agentDir, { recursive: true });
-		originalTelemetryEnv = process.env.PI_TELEMETRY;
-		delete process.env.PI_TELEMETRY;
 	});
 
 	afterEach(() => {
-		if (originalTelemetryEnv === undefined) {
-			delete process.env.PI_TELEMETRY;
-		} else {
-			process.env.PI_TELEMETRY = originalTelemetryEnv;
-		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -55,17 +47,12 @@ describe("createAgentSession provider attribution headers", () => {
 	async function captureHeaders(
 		model: Model<Api>,
 		options: {
-			telemetryEnabled?: boolean;
 			providerHeaders?: Record<string, string>;
 			requestHeaders?: ProviderHeaders;
 			sessionId?: string;
 		} = {},
 	): Promise<Headers> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
-		if (options.telemetryEnabled === false) {
-			settingsManager.setEnableInstallTelemetry(false);
-		}
-
 		const authStorage = AuthStorage.inMemory({
 			[model.provider]: { type: "api_key", key: "test-api-key" },
 		});
@@ -121,16 +108,6 @@ describe("createAgentSession provider attribution headers", () => {
 		expect(headers.get("X-OpenRouter-Categories")).toBe("cli-agent");
 	});
 
-	it("does not add attribution headers when telemetry is disabled", async () => {
-		const headers = await captureHeaders(createModel("openrouter", "https://openrouter.ai/api/v1"), {
-			telemetryEnabled: false,
-		});
-
-		expect(headers.get("HTTP-Referer")).toBeNull();
-		expect(headers.get("X-OpenRouter-Title")).toBeNull();
-		expect(headers.get("X-OpenRouter-Categories")).toBeNull();
-	});
-
 	it("adds attribution headers for custom providers routed through OpenRouter", async () => {
 		const headers = await captureHeaders(createModel("custom-openrouter", "https://openrouter.ai/api/v1"));
 
@@ -142,7 +119,7 @@ describe("createAgentSession provider attribution headers", () => {
 	it("preserves legacy OpenRouter base URL substring attribution matching", () => {
 		const headers = getAttributionHeaders(
 			createModel("custom-openrouter", "not-a-url-openrouter.ai"),
-			getClientIdentity(SettingsManager.create(cwd, agentDir)),
+			getClientIdentity(),
 		);
 
 		expect(headers["HTTP-Referer"]).toBe("https://pi.dev");
@@ -176,14 +153,6 @@ describe("createAgentSession provider attribution headers", () => {
 		const headers = await captureHeaders(createModel("nvidia", "https://example.test/v1"));
 
 		expect(headers.get("X-BILLING-INVOKE-ORIGIN")).toBe("Pi");
-	});
-
-	it("does not add NVIDIA NIM attribution headers when telemetry is disabled", async () => {
-		const headers = await captureHeaders(createModel("nvidia", "https://integrate.api.nvidia.com/v1"), {
-			telemetryEnabled: false,
-		});
-
-		expect(headers.get("X-BILLING-INVOKE-ORIGIN")).toBeNull();
 	});
 
 	it("lets provider and request headers override NVIDIA NIM defaults", async () => {

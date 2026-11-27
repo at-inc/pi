@@ -70,10 +70,10 @@ describe("generated OpenAI compatibility provider selection", () => {
 			["cloudflare-workers-ai", { supportsStore: false, supportsLongCacheRetention: false }],
 			["cloudflare-ai-gateway", { maxTokensField: "max_tokens", supportsLongCacheRetention: false }],
 			["nvidia", { maxTokensField: "max_tokens", supportsLongCacheRetention: false }],
-			["ant-ling", { thinkingFormat: "ant-ling", supportsLongCacheRetention: false }],
-			["cerebras", { supportsStore: false, supportsDeveloperRole: false }],
+			["ant-ling", { thinkingFormat: "deepseek", supportsLongCacheRetention: false }],
+			["cerebras", { supportsStore: false }],
 			["deepseek", { thinkingFormat: "deepseek", requiresReasoningContentOnAssistantMessages: true }],
-			["opencode", { supportsStore: false, supportsDeveloperRole: false }],
+			["opencode", { supportsStore: false }],
 		];
 		for (const [id, expected] of cases) {
 			const definition = PROVIDERS.find((provider) => provider.id === id);

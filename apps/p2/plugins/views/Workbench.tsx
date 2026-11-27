@@ -2,9 +2,10 @@
 // wide screens areas sit side by side with tabs; a tab drags to another area's tabs or edge, splitters resize. On phones
 // one pane shows at a time, picked from a strip of tabs. Panes are rendered as siblings in a fixed order and only
 // positioned, so rearranging never remounts them (a moved frame would reload, the chat would lose its place).
-import { BACKGROUND_CONTEXT, liveIn } from "@p2/app/v1";
+import { BACKGROUND_CONTEXT, liveWith } from "@p2/app/v1";
 import {
 	CloseIcon,
+	reportClientError,
 	useComposerState,
 	useObject,
 	useReadable,
@@ -14,6 +15,7 @@ import {
 	useWide,
 } from "@p2/app/v1/web";
 import {
+	Component,
 	type CSSProperties,
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
@@ -23,7 +25,7 @@ import {
 	useState,
 } from "react";
 import { AnnotationLayer, InkLayer, useNoteHighlights } from "./annotate.tsx";
-import { type Annotation, type View, Views } from "./contract.ts";
+import { type Annotation, VIEWS_EDITING, type View, Views } from "./contract.ts";
 import { ViewKinds } from "./kinds.ts";
 import { activate, adopt, arrange, CHAT, move, type Rect, reconcile, resize, viewsIn, type Zone } from "./layout.ts";
 import { hide, setLayout, useAnnotateMode, useLayout } from "./layout-store.ts";
@@ -40,7 +42,7 @@ export function Workbench({ children }: { children?: ReactNode }) {
 	const session = useRoute().session;
 	const views = useObject(Views, session ? { session } : undefined);
 	useStatus(views);
-	const editor = liveIn(views, "editor");
+	const editor = liveWith(views, ...VIEWS_EDITING);
 	const list = useReadable(views?.views);
 	const annotations = useReadable(views?.annotations) ?? [];
 	const layout = useLayout(session ?? "");
@@ -282,26 +284,35 @@ export function Workbench({ children }: { children?: ReactNode }) {
 				viewList.map((view) => {
 					const pane = panes.get(view.id);
 					if (!pane) return null;
-					const Kind = kinds.get(view.kind);
+					const Kind = kinds.get(view.kind)?.Pane;
 					return (
 						<div
 							key={view.id}
 							className={`views-pane kind-${view.kind}`}
 							data-view-pane={view.id}
+							data-view-kind={view.kind}
+							data-view-title={view.title}
+							{...(view.item === undefined ? {} : { "data-view-item": view.item })}
 							{...paneAttributes(pane)}
 						>
 							{Kind ? (
-								<Kind
-									session={session}
-									view={view}
-									editable={editor !== undefined}
-									annotations={notesOf(annotations, view.id)}
-									select={(selection) =>
-										void editor?.select({ id: view.id, selection }, BACKGROUND_CONTEXT).catch(fail)
-									}
-								/>
+								<PaneBoundary key={`${view.kind}:${kindsVersion(Kind)}`}>
+									<Kind
+										session={session}
+										{...(view.item === undefined ? {} : { item: view.item })}
+										inline={false}
+										view={view}
+										editable={editor !== undefined}
+										annotations={notesOf(annotations, view.id)}
+										select={(selection) =>
+											void editor?.select({ id: view.id, selection }, BACKGROUND_CONTEXT).catch(fail)
+										}
+									/>
+								</PaneBoundary>
 							) : (
-								<div className="empty-note">This page cannot show {view.kind} views.</div>
+								<div className="empty-note">
+									Unknown view kind "{view.kind}": no plugin of this page shows it (yet).
+								</div>
 							)}
 							<InkLayer annotations={notesOf(annotations, view.id)} />
 						</div>
@@ -349,3 +360,39 @@ const titleOf = (id: string, views: ReadonlyMap<string, View>) => (id === CHAT ?
 
 const notesOf = (annotations: readonly Annotation[], view: string) =>
 	annotations.filter((annotation) => annotation.view === view);
+
+/**
+ * Keeps a pane's failure in its pane: a plugin's component that throws (an agent-written one, say) shows its error
+ * instead of taking the page down. A new component for the kind (its plugin reloaded) starts it afresh.
+ */
+class PaneBoundary extends Component<{ children: ReactNode }, { error?: string }> {
+	override state: { error?: string } = {};
+
+	static getDerivedStateFromError(error: unknown): { error: string } {
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
+
+	override componentDidCatch(error: unknown): void {
+		reportClientError(error, "view pane");
+	}
+
+	override render() {
+		return this.state.error === undefined ? (
+			this.props.children
+		) : (
+			<div className="empty-note">This view failed: {this.state.error}</div>
+		);
+	}
+}
+
+/** A number per pane component: a reloaded plugin's new component remounts its panes' boundaries. */
+const kindNumbers = new WeakMap<object, number>();
+let kindsSeen = 0;
+
+function kindsVersion(kind: object): number {
+	const known = kindNumbers.get(kind);
+	if (known !== undefined) return known;
+	const number = ++kindsSeen;
+	kindNumbers.set(kind, number);
+	return number;
+}

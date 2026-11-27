@@ -10,10 +10,10 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { WebSocket } from "ws";
-import { Sessions } from "../../plugins/sessions/contract.ts";
+import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Sharing } from "../../plugins/sharing/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, http, poll, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, http, poll, startFixture, until } from "./helpers.ts";
 
 const NO_CORS = { "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script" };
 const NAVIGATE = { "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" };
@@ -50,7 +50,7 @@ describe("foreign browser requests", () => {
 		const owner = fixture.browser();
 		session = (
 			await (
-				await holdIn(owner, Sessions, {}, "owner")
+				await holdWith(owner, Sessions, {}, ...SESSIONS_OWNER)
 			).create({ cwd: fixture.workspace, title: "Mine" }, BACKGROUND_CONTEXT)
 		).id;
 		device = fixture.owner.cookie;
@@ -144,8 +144,8 @@ describe("foreign browser requests", () => {
 					const out = {};
 					const settle = (name, promise) => promise.then(() => (out[name] = "read"), () => (out[name] = "blocked"));
 					await settle("fetch", fetch(${JSON.stringify(`${p2}/owner/check`)}, { credentials: "include" }).then((r) => r.text()));
-					await settle("module", import(${JSON.stringify(`${p2}/__p2_web`)}));
-					await settle("source", fetch(${JSON.stringify(`${p2}/__p2_web`)}, { credentials: "include" }).then((r) => r.text()));
+					await settle("module", import(${JSON.stringify(`${p2}/__p2_tui`)}));
+					await settle("source", fetch(${JSON.stringify(`${p2}/__p2_tui`)}, { credentials: "include" }).then((r) => r.text()));
 					await fetch(${JSON.stringify(`${p2}/owner/logout-all`)}, { method: "POST", credentials: "include", mode: "no-cors" }).catch(() => {});
 					await fetch(${JSON.stringify(`${p2}/owner-token`)}, { credentials: "include", mode: "no-cors" }).catch(() => {});
 					out.socket = await new Promise((resolve) => {
@@ -206,7 +206,7 @@ describe("foreign browser requests", () => {
 				});
 				// The page's requests to p2: each carried the owner's cookie (SameSite does not separate ports), and p2
 				// authenticated none of them.
-				const paths = ["/owner/check", "/__p2_web", "/owner/logout-all", "/owner-token"];
+				const paths = ["/owner/check", "/__p2_tui", "/owner/logout-all", "/owner-token"];
 				for (const path of paths) {
 					const requests = [...seen.values()].filter((entry) => entry.url === `${p2}${path}`);
 					// (A module import sends no cookie cross-origin; the credentialed fetch of the same URL does.)

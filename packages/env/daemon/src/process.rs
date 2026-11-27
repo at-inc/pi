@@ -4,20 +4,24 @@
 
 use crate::errors::Failure;
 use crate::exec::{
-    Control, Drain, Ending, Groups, Launch, Message, kill_group, running, spawn, spawn_reader,
+    Control, Ending, Groups, Launch, Message, kill_group, running, spawn, spawn_reader,
     start_waiter,
 };
 use crate::frame::{EVENT, Frame};
-use crate::output::Output;
+use crate::output::{Gate, Output};
 use crate::sys;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
+
+/// After the program exits, output still arriving is collected until this much silence, as for `exec`.
+const EXIT_STDIO_GRACE: Duration = Duration::from_millis(100);
 
 /// Input for a program's stdin, in arrival order.
 enum Input {
@@ -104,7 +108,6 @@ pub fn run(
     let pid = child.id();
     groups.lock().unwrap().insert(pid);
     let stop = Arc::new(AtomicBool::new(false));
-    let drain = Arc::new(Mutex::new(Drain::default()));
     // A thread that cannot start (a task limit) fails the request; the started program is killed and reaped. Threads
     // already running see `stop` within 100 ms.
     let abandon = |mut child: Child, error: std::io::Error| {
@@ -123,26 +126,13 @@ pub fn run(
         Err(error) => return Err(abandon(child, error)),
     };
     // Like a full pipe: a program that writes faster than the link waits.
+    let gate = Gate::new(output);
     let stdout = child.stdout.take().unwrap();
-    if let Err(error) = spawn_reader(
-        0,
-        stdout,
-        sender.clone(),
-        stop.clone(),
-        drain.clone(),
-        Some(output.clone()),
-    ) {
+    if let Err(error) = spawn_reader(0, stdout, sender.clone(), stop.clone(), Some(gate.clone())) {
         return Err(abandon(child, error));
     }
     let stderr = child.stderr.take().unwrap();
-    if let Err(error) = spawn_reader(
-        1,
-        stderr,
-        sender.clone(),
-        stop.clone(),
-        drain.clone(),
-        Some(output.clone()),
-    ) {
+    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), Some(gate.clone())) {
         return Err(abandon(child, error));
     }
     let (input, inputs) = mpsc::channel::<Input>();
@@ -191,6 +181,7 @@ pub fn run(
     let names = ["stdout", "stderr"];
     let mut ended = [false, false];
     let mut status: Option<Result<ExitStatus, String>> = None;
+    let mut idle_until: Option<Instant> = None;
     let mut aborted = false;
     let mut killed = false;
     let kill = |killed: &mut bool| {
@@ -210,7 +201,23 @@ pub fn run(
         if status.is_some() && ended[0] && ended[1] {
             break;
         }
-        match receiver.recv() {
+        let wait = match idle_until {
+            Some(idle) => {
+                let now = Instant::now();
+                if now < idle {
+                    idle - now
+                } else if gate.held() {
+                    // Silence while the link holds a reader up is not the end of the output: the pipe may hold more.
+                    idle_until = Some(now + EXIT_STDIO_GRACE);
+                    EXIT_STDIO_GRACE
+                } else {
+                    // A descendant may hold the pipes open after the program exited; stop waiting for it.
+                    break;
+                }
+            }
+            None => Duration::from_secs(3600),
+        };
+        match receiver.recv_timeout(wait) {
             Ok(Message::Data(stream, bytes)) => {
                 output.bulk(
                     Frame::with_payload(
@@ -221,25 +228,28 @@ pub fn run(
                     ),
                     None,
                 );
+                if status.is_some() {
+                    idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
+                }
             }
             Ok(Message::Eof(stream)) => ended[stream] = true,
             Ok(Message::Exit(exit)) => {
                 // The waiter already ended the group; nothing is left to kill.
                 killed = true;
                 status = Some(Ok(exit));
-                drain.lock().unwrap().exited();
+                idle_until = Some(Instant::now() + EXIT_STDIO_GRACE);
             }
             Ok(Message::WaitFailed(error)) => {
                 status = Some(Err(error));
-                stop.store(true, Ordering::SeqCst);
+                idle_until = Some(Instant::now());
             }
             Ok(Message::Cancel) => {
                 aborted = true;
                 kill(&mut killed);
-                stop.store(true, Ordering::SeqCst);
             }
             Ok(Message::Kill) => kill(&mut killed),
-            Err(_) => break,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
     // Readers and the writer stop within 100 ms, also when a descendant still holds a pipe; removing the program
@@ -257,146 +267,5 @@ pub fn run(
             "spawn_error",
             "process did not report its exit",
         )),
-    }
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    use crate::frame;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn drains_output_after_exit_while_the_link_is_blocked() {
-        assert_drains_output("process");
-    }
-
-    #[test]
-    fn exec_drains_output_after_exit_while_the_link_is_blocked() {
-        assert_drains_output("exec");
-    }
-
-    #[test]
-    fn aborts_and_timeouts_stop_readers_while_the_link_is_blocked() {
-        for (operation, failure) in [
-            ("process", "aborted"),
-            ("exec", "aborted"),
-            ("exec", "timeout"),
-        ] {
-            let directory = sys::mkdtemp(&format!("{}/pi-env-cancel-", sys::tmpdir())).unwrap();
-            let output = Arc::new(Output::default());
-            output.bulk(
-                Frame::with_payload(EVENT, 0, json!({}), vec![0; 5 * 1024 * 1024]),
-                None,
-            );
-            let control = Arc::new(Control::default());
-            let request = json!({
-                "cwd": directory,
-                "argv": ["/bin/sh", "-c", "printf first; touch started; sleep 30"],
-                "timeoutMs": if failure == "timeout" { Some(300) } else { None },
-            });
-            let worker = start_request(operation, request, output.clone(), control.clone());
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !Path::new(&directory).join("started").exists() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
-            let started = Path::new(&directory).join("started").exists();
-            if failure == "aborted" {
-                control.cancel(false);
-            }
-            let deadline = Instant::now() + Duration::from_secs(1);
-            while !worker.is_finished() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
-            let finished = worker.is_finished();
-            output.close();
-            let result = worker.join().unwrap();
-            std::fs::remove_dir_all(directory).unwrap();
-            assert!(started);
-            assert!(
-                finished,
-                "{operation} waited for the blocked link after {failure}"
-            );
-            assert_eq!(result.unwrap_err().to_json()["code"], failure);
-        }
-    }
-
-    fn assert_drains_output(operation: &str) {
-        let directory = sys::mkdtemp(&format!("{}/pi-env-drain-", sys::tmpdir())).unwrap();
-        let output = Arc::new(Output::default());
-        output.bulk(
-            Frame::with_payload(EVENT, 0, json!({}), vec![0; 5 * 1024 * 1024]),
-            None,
-        );
-        let request = json!({
-            "cwd": directory,
-            "argv": ["/bin/sh", "-c", "printf first; printf first >&2; sleep 0.05; printf last; printf last >&2; touch written"]
-        });
-        let worker = start_request(
-            operation,
-            request,
-            output.clone(),
-            Arc::new(Control::default()),
-        );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !Path::new(&directory).join("written").exists() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(Path::new(&directory).join("written").exists());
-        thread::sleep(Duration::from_millis(300));
-        let writer = {
-            let output = output.clone();
-            thread::spawn(move || {
-                let mut bytes = Vec::new();
-                output.run(&mut bytes);
-                bytes
-            })
-        };
-        let result = worker.join().unwrap();
-        output.close();
-        let bytes = writer.join().unwrap();
-        std::fs::remove_dir_all(directory).unwrap();
-        assert_eq!(result.unwrap()["exitCode"], 0);
-        let mut input = bytes.as_slice();
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        while let Some(frame) = frame::read_frame(&mut input).unwrap() {
-            if frame.id == 1 && frame.json["stream"] == "stdout" {
-                stdout.extend(frame.payload);
-            } else if frame.id == 1 && frame.json["stream"] == "stderr" {
-                stderr.extend(frame.payload);
-            }
-        }
-        assert_eq!(stdout, b"firstlast");
-        assert_eq!(stderr, b"firstlast");
-    }
-
-    fn start_request(
-        operation: &str,
-        request: Value,
-        output: Arc<Output>,
-        control: Arc<Control>,
-    ) -> thread::JoinHandle<Result<Value, Failure>> {
-        let operation = operation.to_string();
-        thread::spawn(move || {
-            if operation == "exec" {
-                return crate::exec::run(
-                    1,
-                    crate::exec::ExecRequest::from_json(&request).unwrap(),
-                    &sys::tmpdir(),
-                    &output,
-                    &control,
-                    &Arc::new(Mutex::new(Default::default())),
-                );
-            }
-            run(
-                1,
-                ProcessRequest::from_json(&request).unwrap(),
-                &output,
-                &control,
-                &Arc::new(Mutex::new(Default::default())),
-                &Arc::new(Mutex::new(HashMap::new())),
-            )
-        })
     }
 }

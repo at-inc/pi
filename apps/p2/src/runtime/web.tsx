@@ -1,6 +1,6 @@
 // Browser runtime: the client host in React, slots that plugins fill, object hooks, connection state, navigation.
 
-import type { Contract, Held, ParamsOf } from "@earendil-works/chord";
+import type { Contract, ParamsOf } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
 import {
@@ -31,8 +31,8 @@ import {
 } from "../web/navigation.ts";
 import { type SettingsEmbed, useSettingsEmbed } from "../web/settings-embed.ts";
 import { useSheetSwipe } from "../web/sheet-swipe.ts";
-import { setSidebarCollapsed } from "../web/sidebar.ts";
-import type { Host, VariantOf } from "./chord.ts";
+import { SIDEBAR_DOCKS, setSidebarCollapsed } from "../web/sidebar.ts";
+import type { Host, Ref } from "./chord.ts";
 
 export {
 	conversationRoute,
@@ -45,12 +45,28 @@ export {
 
 import { Access, grantMode } from "./access.ts";
 import type { KeyedRegistry } from "./chord.ts";
+import { ConnectionStore, showsOffline } from "./connection-state.ts";
 import { canonicalJson } from "./json.ts";
-import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
+import { follow, followRegistry, type HeldRef, knownRegistry, liveWith, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
 export { shortPath } from "../web/path-label.ts";
-export { type SettingsSection, SettingsSections, Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
+export {
+	type Command,
+	type CommandAction,
+	type CommandContext,
+	type CommandPage,
+	CommandPages,
+	type CommandSearch,
+	CommandSearches,
+	Commands,
+	type CommandTarget,
+	type SettingsSection,
+	SettingsSections,
+	Slots,
+	ToolActivities,
+	webCoreFacet,
+} from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
 
@@ -245,23 +261,12 @@ function SettingsPage({ title, onBack, className, testId, children, embed }: She
  * loading, and its state reads as `undefined` in `useReadable` until it is live. Chord rebinds it by itself (a dropped
  * link, a restarted worker, a reload). Different params or another host release it and hold anew; an unmount releases
  * it after its type's linger (`UI_LINGER`: a conversation stays held a while, so switching back is instant).
- * `undefined` when `params` is undefined. With `variant`, `undefined` unless the reference is live in that variant (and
- * typed as it).
+ * `undefined` when `params` is undefined.
  */
-export function useObject<C extends Contract>(type: C, params: ParamsOf<C> | undefined): Held<C> | undefined;
-export function useObject<C extends Contract, const V extends VariantOf<C>>(
-	type: C,
-	params: ParamsOf<C> | undefined,
-	options: { readonly variant: V },
-): HeldIn<C, V & string> | undefined;
-export function useObject<C extends Contract>(
-	type: C,
-	params: ParamsOf<C> | undefined,
-	options: { readonly variant?: string } = {},
-): Held<C> | undefined {
+export function useObject<C extends Contract>(type: C, params: ParamsOf<C> | undefined): Ref<C> | undefined {
 	const host = useHost();
 	const key = params === undefined ? undefined : canonicalJson(params);
-	const [state, setState] = useState<{ key: string | undefined; ref: Held<C> | undefined }>({
+	const [state, setState] = useState<{ key: string | undefined; ref: Ref<C> | undefined }>({
 		key: undefined,
 		ref: undefined,
 	});
@@ -276,10 +281,9 @@ export function useObject<C extends Contract>(
 		return () => UI_LINGER.release(ref, type.name);
 	}, [host, type, key]);
 	const ref = state.key === key ? state.ref : undefined;
-	// Re-renders when the reference goes live, fails or ends: `variant` and `liveIn` read its state.
-	const status = useStatus(ref);
-	if (options.variant !== undefined && (ref === undefined || status !== "live" || ref.variant !== options.variant))
-		return undefined;
+	// Re-renders when the reference goes live, fails or ends (a rebind changes what it was granted): `live` and
+	// `liveWith` read its state.
+	useStatus(ref);
 	return ref;
 }
 
@@ -314,7 +318,7 @@ export function useOptimisticCall<T, G>(
 
 /**
  * The value of a watchable (a reference's state member, a derive), re-rendering on change. `undefined` while it cannot
- * be read (its reference is still loading, the member is outside the variant, the reference ended): nothing throws
+ * be read (its reference is still loading, the member is not granted, the reference ended): nothing throws
  * during render.
  */
 export function useReadable<T>(readable: Watchable<T> | NativeWatchable<T> | undefined): T | undefined {
@@ -326,7 +330,7 @@ export function useReadable<T>(readable: Watchable<T> | NativeWatchable<T> | und
 	return useSyncExternalStore(subscribe, read, read);
 }
 
-/** A watchable's value, or `undefined` while it cannot be read (not bound, outside the variant, ended). */
+/** A watchable's value, or `undefined` while it cannot be read (not bound, not granted, ended). */
 export function readValue<T>(readable: Watchable<T> | NativeWatchable<T> | undefined): T | undefined {
 	if (readable === undefined) return undefined;
 	try {
@@ -343,24 +347,37 @@ export function useStatus(ref: HeldRef | undefined): string | undefined {
 
 // ─── connection ───
 
-type ConnectionState = { readonly connected: boolean };
-let connection: ConnectionState = { connected: false };
-const connectionListeners = new Set<() => void>();
+/** The page's link (`setConnected` from `startPage`'s `onConnection`, src/hosts/web/main.tsx). */
+const connection = new ConnectionStore();
 
+/** The page's link opened or closed (Chord's connection loop: `connecting` and `waiting` are closed). */
 export function setConnected(connected: boolean): void {
-	if (connection.connected === connected) return;
-	connection = { connected };
-	for (const listener of connectionListeners) listener();
+	connection.set(connected);
 }
 
+function subscribeConnection(listener: () => void): () => void {
+	return connection.subscribe(listener);
+}
+
+/** Whether the page's link is open now: what may be sent or opened. */
 export function useConnected(): boolean {
-	return useSyncExternalStore(
-		(listener) => {
-			connectionListeners.add(listener);
-			return () => connectionListeners.delete(listener);
-		},
-		() => connection.connected,
-	);
+	return useSyncExternalStore(subscribeConnection, () => connection.state.connected);
+}
+
+/** Whether the page should say it is offline (`showsOffline`): not for a link closed only briefly. */
+export function useOffline(): boolean {
+	const state = useSyncExternalStore(subscribeConnection, () => connection.state);
+	const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine);
+	return showsOffline(state, online);
+}
+
+function subscribeOnline(listener: () => void): () => void {
+	addEventListener("online", listener);
+	addEventListener("offline", listener);
+	return () => {
+		removeEventListener("online", listener);
+		removeEventListener("offline", listener);
+	};
 }
 
 // ─── a guest's share that ended ───
@@ -412,7 +429,7 @@ export function useRoute(): Route {
 	return useSyncExternalStore(nav.subscribe, nav.snapshot, nav.snapshot);
 }
 
-/** Conversation destinations close modal layers and carry open workspace/terminal panels. */
+/** Conversation destinations close modal layers and open with their session's panels (`conversationRoute`). */
 export function navigate(next: Partial<Route>, options: { replace?: boolean } = {}): void {
 	const nav = getNavigation();
 	const destination = next.layers
@@ -431,9 +448,12 @@ export function openPage(page: string): void {
 	void getNavigation().closeThenPush(() => ({ ...HOME, page }));
 }
 
-/** The new-session screen (`NEW_SESSION`). As opening a conversation, it closes the phone drawer and modal layers. */
-export function openNewSession(): void {
-	void getNavigation().closeThenPush(() => NEW_SESSION);
+/**
+ * The new-session screen (`NEW_SESSION`), with `layers` over it (the directory picker). As opening a conversation, it
+ * closes the phone drawer and modal layers.
+ */
+export function openNewSession(layers: readonly Layer[] = []): void {
+	void getNavigation().closeThenPush(() => ({ ...NEW_SESSION, layers: [...layers] }));
 }
 
 /** Named plugin modal: locators are small serialized values, not component state. */
@@ -441,6 +461,22 @@ export function openLayer(layer: Layer, options: { fromDrawer?: boolean } = {}):
 	const nav = getNavigation();
 	if (options.fromDrawer) void nav.closeThenPush((route) => ({ ...route, layers: [layer] }));
 	else void nav.push({ ...nav.route, layers: [...nav.route.layers, layer] });
+}
+
+/**
+ * Opens `layer` over a conversation: on the current route when it shows that conversation (one step), else after
+ * opening it (two steps: Back closes the layer, then returns to where the reader was). For sheets and viewers that
+ * render only on their session's route (the share sheet, the artifact viewer), opened from outside it (the command
+ * menu's target may be a session the reader is not in).
+ */
+export function openLayerIn(session: string, conversation: number, layer: Layer): void {
+	const nav = getNavigation();
+	const { route } = nav;
+	const shown = route.session === session && route.conversation === conversation;
+	// Pushes are queued (`nav.route` is not updated yet): both routes are computed from the current one.
+	const at = shown ? route : conversationRoute(route, session, conversation);
+	if (!shown) void nav.closeThenPush(() => at);
+	void nav.push({ ...at, layers: [...at.layers, layer] });
 }
 
 export function closeLayers(): void {
@@ -454,12 +490,13 @@ export function setDrawer(open: boolean): void {
 
 /** Shows the sessions: the docked sidebar from 900px (expanding it if collapsed), the drawer below. */
 export function openSidebar(): void {
-	if (window.matchMedia("(min-width: 900px)").matches) setSidebarCollapsed(false);
+	if (window.matchMedia(SIDEBAR_DOCKS).matches) setSidebarCollapsed(false);
 	else setDrawer(true);
 }
 
+/** Whether the phone drawer is open: its layer is on the route, also under a sheet or the menu opened over it. */
 export function useDrawer(): boolean {
-	return useRoute().layers.at(-1)?.kind === "drawer";
+	return useRoute().layers.some((layer) => layer.kind === "drawer");
 }
 
 /** The top layer when it is the sheet (or viewer) `name`, with its locator; undefined otherwise. */
@@ -495,7 +532,7 @@ export function useOwner(): boolean {
 	const access = useObject(Access, {});
 	const live = useStatus(access) === "live" && access !== undefined;
 	ownerKnown ??= storedOwner();
-	const owner = live ? access.variant === "owner" : ownerKnown;
+	const owner = live ? !access.granted.has("grant") : ownerKnown;
 	useEffect(() => {
 		if (!live || owner === ownerKnown) return;
 		ownerKnown = owner;
@@ -514,7 +551,7 @@ export function useOwner(): boolean {
  */
 export function useCanWrite(session: string | undefined): boolean {
 	const owner = useOwner();
-	const grant = useReadable(liveIn(useObject(Access, {}), "guest")?.grant);
+	const grant = useReadable(liveWith(useObject(Access, {}), "grant")?.grant);
 	return owner || grantMode(grant, session) === "full";
 }
 

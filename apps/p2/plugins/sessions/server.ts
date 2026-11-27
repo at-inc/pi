@@ -17,6 +17,7 @@ import {
 	defineState,
 	deriveTyped,
 	forbidden,
+	grantBy,
 	isGuest,
 	isOwner,
 	isWorker,
@@ -30,6 +31,7 @@ import {
 	type SessionInit,
 	serveKeyed,
 	type Tx,
+	ungranted,
 	until,
 	WorkerBoundary,
 	withAbortSignal,
@@ -54,6 +56,8 @@ import {
 	MAX_TITLE,
 	type Operation,
 	OperationSchema,
+	SESSIONS_OWNER,
+	SESSIONS_WORKER,
 	type Session,
 	SessionArchived,
 	SessionCopied,
@@ -67,7 +71,12 @@ import { copySessionDirectory, removeSessionCopy } from "./copy.ts";
 import { serveLocks } from "./locks.ts";
 import { serveSidebarSettings } from "./sidebar-settings.ts";
 
-/** A row as `Sessions` v4 and `Catalog` v3 consumers read it: a null branch label is the session title. */
+/** A row as `Catalog` v4 consumers read it: branches without their `parent`. */
+function sessionV5(row: Session) {
+	return { ...row, branches: row.branches.map(({ conversation, label }) => ({ conversation, label })) };
+}
+
+/** A row as `Catalog` v3 consumers read it: a null branch label is the session title, no `parent`. */
 function sessionV4(row: Session) {
 	return {
 		...row,
@@ -75,7 +84,7 @@ function sessionV4(row: Session) {
 	};
 }
 
-/** A row as `Sessions` v3 and `Catalog` v2 consumers read it: before `/tree`, without `main` and `branches`. */
+/** A row as `Catalog` v2 consumers read it: before `/tree`, without `main` and `branches`. */
 function sessionV3({ main: _main, branches: _branches, ...row }: Session) {
 	return row;
 }
@@ -99,42 +108,14 @@ const CATALOG_ACCEPTS: AcceptsTable<typeof Catalog> = {
 			update: { args: (old) => old, result: sessionV4 },
 		},
 	},
-};
-
-/** Older arguments of `create`, `clone` and `fork` are a subset of the current ones (no chosen IDs). */
-const SAME_ARGS = { args: <T>(old: T) => old };
-
-/**
- * Older `Sessions` consumers (a page or TUI loaded before a deploy, a worker not restarted yet) read rows mapped
- * back; v4's `treeSelf` labels are text, which the current version takes as it is. None of them sees `operations`.
- */
-const SESSIONS_ACCEPTS: AcceptsTable<typeof Sessions> = {
-	3: {
-		state: {
-			owner: { sessions: (rows) => rows.map(sessionV3) },
-			guest: { sessions: (rows) => rows.map(sessionV3) },
-			worker: { session: (row) => (row === null ? null : sessionV3(row)) },
-		},
-		methods: {
-			create: { ...SAME_ARGS, result: sessionV3 },
-			clone: { ...SAME_ARGS, result: sessionV3 },
-			fork: { ...SAME_ARGS, result: sessionV3 },
-		},
-	},
 	4: {
-		state: {
-			owner: { sessions: (rows) => rows.map(sessionV4) },
-			guest: { sessions: (rows) => rows.map(sessionV4) },
-			worker: { session: (row) => (row === null ? null : sessionV4(row)) },
-		},
+		state: { sessions: (rows) => rows.map(sessionV5) },
 		methods: {
-			create: { ...SAME_ARGS, result: sessionV4 },
-			clone: { ...SAME_ARGS, result: sessionV4 },
-			fork: { ...SAME_ARGS, result: sessionV4 },
-			treeSelf: SAME_ARGS,
+			get: { result: sessionV5 },
+			create: { result: sessionV5 },
+			update: { args: (old) => old, result: sessionV5 },
 		},
 	},
-	5: { methods: { create: SAME_ARGS, clone: SAME_ARGS, fork: SAME_ARGS } },
 };
 
 const cleanTitle = (title: string): string => title.replace(/\s+/g, " ").trim();
@@ -726,7 +707,7 @@ export default defineFacet((host) => {
 
 	host.serve(
 		Sessions,
-		(_params, principal, self) => {
+		(_params, principal, _admitted, self) => {
 			const catalog = self.get(Catalog, {});
 			if (isWorker(principal)) {
 				const id = principal.session;
@@ -736,28 +717,26 @@ export default defineFacet((host) => {
 					Object.hasOwn(byId, id) ? (byId[id] ?? null) : null,
 				);
 				return {
-					variant: "worker",
-					members: {
-						session: sessionView,
-						renameSelf: async ({ title }, ctx) => {
-							const previous = (await catalog.get({ id }, ctx)).title;
-							await catalog.update({ id, title: cleanTitle(title) }, ctx);
-							return { previous };
-						},
-						// Either field alone updates the entry; the other keeps its value (Pi Mobile's configure).
-						configureSelf: async ({ model, thinkingLevel }, ctx) => {
-							await catalog.update(
-								{ id, ...(model ? { model } : {}), ...(thinkingLevel ? { thinkingLevel } : {}) },
-								ctx,
-							);
-							return null;
-						},
-						treeSelf: async ({ main, branches }, ctx) => {
-							const current = await catalog.get({ id }, ctx);
-							if (current.main !== main || JSON.stringify(current.branches) !== JSON.stringify(branches))
-								await catalog.update({ id, main, branches }, ctx);
-							return null;
-						},
+					...ungranted(SESSIONS_OWNER),
+					session: () => sessionView,
+					renameSelf: async ({ title }, ctx) => {
+						const previous = (await catalog.get({ id }, ctx)).title;
+						await catalog.update({ id, title: cleanTitle(title) }, ctx);
+						return { previous };
+					},
+					// Either field alone updates the entry; the other keeps its value (Pi Mobile's configure).
+					configureSelf: async ({ model, thinkingLevel }, ctx) => {
+						await catalog.update(
+							{ id, ...(model ? { model } : {}), ...(thinkingLevel ? { thinkingLevel } : {}) },
+							ctx,
+						);
+						return null;
+					},
+					treeSelf: async ({ main, branches }, ctx) => {
+						const current = await catalog.get({ id }, ctx);
+						if (current.main !== main || JSON.stringify(current.branches) !== JSON.stringify(branches))
+							await catalog.update({ id, main, branches }, ctx);
+						return null;
 					},
 				};
 			}
@@ -766,7 +745,7 @@ export default defineFacet((host) => {
 				const sessionsView = deriveTyped(self, [catalog.sessions], ([sessions]) =>
 					sessions.filter((s) => Object.hasOwn(shared, s.id) && s.archivedAt === null),
 				);
-				return { variant: "guest", members: { sessions: sessionsView } };
+				return { ...ungranted(SESSIONS_OWNER), ...ungranted(SESSIONS_WORKER), sessions: () => sessionsView };
 			}
 			if (!isOwner(principal)) throw forbidden("sessions are owner-only");
 			const lifecycle = self.get(SessionOperations, {});
@@ -781,34 +760,41 @@ export default defineFacet((host) => {
 				([sessions]) => sessions.find((session) => session.archivedAt === null)?.env ?? null,
 			);
 			return {
-				variant: "owner",
-				members: {
-					sessions: catalog.sessions,
-					defaultCwd,
-					defaultEnv,
-					operations: lifecycle.operations,
-					create: (args, ctx) => lifecycle.create(args, ctx),
-					relocate: (target, ctx) => lifecycle.relocate(target, ctx),
-					clone: ({ id, copy }, ctx) => lifecycle.clone({ id, copy: copy ?? randomUUID() }, ctx),
-					fork: ({ copy, ...from }, ctx) => lifecycle.fork({ ...from, copy: copy ?? randomUUID() }, ctx),
-					rename: async ({ id, title }, ctx) => {
-						const clean = cleanTitle(title);
-						if (!clean || clean.length > MAX_TITLE)
-							throw new Error(`The title must be 1–${MAX_TITLE} characters`);
-						await catalog.update({ id, title: clean }, ctx);
-						return null;
-					},
-					pin: async ({ id, pinned }, ctx) => {
-						await catalog.update({ id, pinned }, ctx);
-						return null;
-					},
-					archive: (args, ctx) => lifecycle.archive(args, ctx),
-					restore: (args, ctx) => lifecycle.restore(args, ctx),
-					dismissOperation: (args, ctx) => lifecycle.dismiss(args, ctx),
+				...ungranted(SESSIONS_WORKER),
+				sessions: () => catalog.sessions,
+				defaultCwd: () => defaultCwd,
+				defaultEnv: () => defaultEnv,
+				operations: () => lifecycle.operations,
+				create: (args, ctx) => lifecycle.create(args, ctx),
+				relocate: (target, ctx) => lifecycle.relocate(target, ctx),
+				clone: ({ id, copy }, ctx) => lifecycle.clone({ id, copy: copy ?? randomUUID() }, ctx),
+				fork: ({ copy, ...from }, ctx) => lifecycle.fork({ ...from, copy: copy ?? randomUUID() }, ctx),
+				rename: async ({ id, title }, ctx) => {
+					const clean = cleanTitle(title);
+					if (!clean || clean.length > MAX_TITLE) throw new Error(`The title must be 1–${MAX_TITLE} characters`);
+					await catalog.update({ id, title: clean }, ctx);
+					return null;
 				},
+				pin: async ({ id, pinned }, ctx) => {
+					await catalog.update({ id, pinned }, ctx);
+					return null;
+				},
+				archive: (args, ctx) => lifecycle.archive(args, ctx),
+				restore: (args, ctx) => lifecycle.restore(args, ctx),
+				dismissOperation: (args, ctx) => lifecycle.dismiss(args, ctx),
 			};
 		},
-		{ accepts: SESSIONS_ACCEPTS },
+		{
+			admit: grantBy((principal) =>
+				isOwner(principal)
+					? SESSIONS_OWNER
+					: isGuest(principal)
+						? ["sessions"]
+						: isWorker(principal)
+							? SESSIONS_WORKER
+							: [],
+			),
+		},
 	);
 });
 

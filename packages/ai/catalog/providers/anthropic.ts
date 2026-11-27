@@ -2,10 +2,10 @@ import { getForkChatModelFallbacks } from "../../scripts/fork-model-fallbacks.ts
 import type { Model } from "../../src/types.ts";
 import { addMissing, defineProvider, mergeCompat, mergeThinking, modelsDevModels, withInputLimits } from "../define.ts";
 import {
-	claude55ThinkingLevels,
+	CLAUDE_55_THINKING_LEVELS,
 	enableClaudeMidConvoEffort,
+	supportsClaudeMidConvoChanges,
 	supportsClaudeMidConvoEffort,
-	supportsClaudeMidConvoSystemMessages,
 } from "../families/anthropic.ts";
 
 const MODELS_55 = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
@@ -21,7 +21,7 @@ export default defineProvider({
 				baseUrl: "https://api.anthropic.com",
 				include: (model) => ANTHROPIC_CATALOG_MODEL_IDS.has(model.id),
 				map: (model) => {
-					if (MODELS_55.has(model.id)) mergeThinking(model, claude55ThinkingLevels(model.id));
+					if (MODELS_55.has(model.id)) mergeThinking(model, CLAUDE_55_THINKING_LEVELS);
 					return model;
 				},
 			}),
@@ -31,13 +31,13 @@ export default defineProvider({
 		if (model.api !== "anthropic-messages") return;
 		const messagesModel = model as Model<"anthropic-messages">;
 		if (supportsClaudeMidConvoEffort(model.id)) enableClaudeMidConvoEffort(messagesModel);
-		if (supportsClaudeMidConvoSystemMessages(model.id)) {
+		if (supportsClaudeMidConvoChanges(model.id)) {
 			mergeCompat(messagesModel, { supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true });
 		}
 		mergeCompat(messagesModel, { supportsStrictTools: true });
 		// Ephemeral entries have a hard five-minute lifetime; `ttl: "1h"` extends
-		// it to one hour. Only direct Anthropic is annotated so cache warming does
-		// not assume equivalent behavior through proxies.
+		// it to one hour. Proxies are annotated only after their lifetimes were
+		// checked (github-copilot), so cache warming does not assume them.
 		// https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 		model.promptCache = { short: 300, long: 3600 };
 		withInputLimits(model, {

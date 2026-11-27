@@ -60,7 +60,7 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 			throw new Error(`No API key for provider: ${model.provider}`);
 		}
 		const client = createClient(model, apiKey, options?.headers, options?.fetch, options?.identity);
-		let params = buildParams(model, context);
+		let params = buildParams(model, context, options);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
 			params = nextParams as typeof params;
@@ -79,6 +79,7 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 				maxRetries: options?.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs,
 				signal: options?.signal,
+				onErrorResponse: (errorResponse) => options?.onResponse?.(errorResponse, model),
 			},
 		);
 		await options?.onResponse?.({ status: rawResponse.status, headers: headersToRecord(rawResponse.headers) }, model);
@@ -135,9 +136,17 @@ function createClient(
 
 type OpenRouterImagesCreateParams = Omit<ChatCompletionCreateParamsNonStreaming, "modalities"> & {
 	modalities: Array<"image" | "text">;
+	image_config?: {
+		aspect_ratio?: string;
+		image_size?: string;
+	};
 };
 
-function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenRouterImagesCreateParams {
+function buildParams(
+	model: ImageModel<ImageApi>,
+	context: ImagesContext,
+	options?: ImagesOptions,
+): OpenRouterImagesCreateParams {
 	const content: ChatCompletionContentPart[] = context.input.map((item): ChatCompletionContentPart => {
 		if (item.type === "text") {
 			return {
@@ -153,6 +162,11 @@ function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenR
 		} satisfies ChatCompletionContentPartImage;
 	});
 
+	const imageConfig = {
+		...(options?.aspectRatio ? { aspect_ratio: options.aspectRatio } : {}),
+		...(options?.size ? { image_size: options.size } : {}),
+	};
+
 	return {
 		model: model.id,
 		messages: [
@@ -163,6 +177,7 @@ function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenR
 		],
 		stream: false,
 		modalities: model.output.includes("text") ? ["image", "text"] : ["image"],
+		...(Object.keys(imageConfig).length > 0 ? { image_config: imageConfig } : {}),
 	};
 }
 

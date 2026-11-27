@@ -11,7 +11,9 @@ import {
 import {
 	enableOpenAiGrammarTools,
 	enableOpenAiMidConvoSystemMessages,
+	OPENAI_DECISIONS_COST,
 	OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+	OPENAI_MID_CONVO_EFFORT_MODEL_IDS,
 	OPENAI_STANDARD_COSTS,
 	OPENAI_TOOL_SEARCH_MODEL_IDS,
 	openAiStandardCost,
@@ -55,32 +57,6 @@ const NONE_REASONING_MODEL_IDS = new Set([
 	"gpt-6-sol",
 	"gpt-6-luna",
 ]);
-// OpenAI documents configuration_update for the GPT-6 family.
-// https://developers.openai.com/api/docs/guides/reasoning
-const MID_CONVO_EFFORT_MODEL_IDS = new Set([
-	"gpt-6-astra",
-	"gpt-6-sol",
-	"gpt-6-luna",
-	"gpt-6.1-sol",
-	"gpt-6.1-terra",
-	"gpt-6.2-astra",
-	"gpt-6.2-sol",
-]);
-
-// Not listed by models.dev.
-const GPT_5_CHAT_LATEST: Model<"openai-responses"> = {
-	id: "gpt-5-chat-latest",
-	name: "GPT-5 Chat Latest",
-	api: "openai-responses",
-	baseUrl: BASE_URL,
-	provider: "openai",
-	reasoning: false,
-	input: ["text", "image"],
-	cost: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
-	contextWindow: 128000,
-	maxTokens: 16384,
-};
-
 // Released 2026-11-17; models.dev does not list them yet. Both have a 1.05M context window and 128K output,
 // capped to the short-context pricing tier like the other GPT-6 models.
 // https://developers.openai.com/api/docs/models/gpt-6.2-astra
@@ -103,9 +79,8 @@ const GPT_6_2_MODELS: Model<"openai-responses">[] = [
 	}),
 );
 
-// OpenAI Decisions API (public beta): gpt-6-luna is its only model. It bills input tokens only,
-// with the same long-context multiplier as chat requests. Only API keys work: Sign in with ChatGPT
-// tokens are rejected on /v1/decisions, and the Codex backend has no Decisions route.
+// OpenAI Decisions API (public beta): gpt-6-luna is its only model. Only API keys work: Sign in with
+// ChatGPT tokens are rejected on /v1/decisions, and the Codex backend has no Decisions route.
 // The endpoint rejects inputs above 922K tokens (the model's documented maximum input), but
 // requests running longer than about five seconds, currently above roughly 600K input tokens,
 // fail with a gateway timeout.
@@ -119,7 +94,7 @@ const CLASSIFIER_MODELS: ClassifierModel<"openai-decisions">[] = [
 		provider: "openai",
 		baseUrl: BASE_URL,
 		input: ["text", "image"],
-		cost: withOpenAiLongContextPricing({ input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0 }),
+		cost: OPENAI_DECISIONS_COST,
 		contextWindow: 922000,
 	},
 ];
@@ -140,6 +115,8 @@ function correctUpstream(model: ChatModel): ChatModel {
 
 export default defineProvider({
 	id: "openai",
+	// No skipDeprecated: models.dev marks models deprecated once OpenAI announces their shutdown,
+	// and they keep working until then. Shut down models leave models.dev's list.
 	models: (ctx) =>
 		addMissing(
 			modelsDevModels(ctx, "openai", {
@@ -150,7 +127,7 @@ export default defineProvider({
 				include: (source) => !UNSUPPORTED_MODEL_IDS.has(source.id),
 				map: correctUpstream,
 			}),
-			[GPT_5_CHAT_LATEST, ...GPT_6_2_MODELS],
+			GPT_6_2_MODELS,
 		),
 	classifiers: () => CLASSIFIER_MODELS,
 	finalize: (model) => {
@@ -168,7 +145,14 @@ export default defineProvider({
 		// those models accept `prompt_cache_options`; older models reject the parameter.
 		// https://developers.openai.com/api/docs/guides/prompt-caching
 		if (model.cost.cacheWrite > 0) mergeCompat(responsesModel, { supportsExplicitPromptCacheMode: true });
-		if (MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) mergeCompat(responsesModel, { supportsMidConvoEffort: true });
+		// No `promptCache`, so pi does not warm OpenAI prompt caches. Before GPT-5.6, caching is best
+		// effort with no fixed lifetime and no write charge: a refresh has no expiry to time and little
+		// to save. From GPT-5.6, entries live 30 minutes (12 hours with `ttl: "12h"`, at twice the write
+		// price). That outlasts pi's 30-minute idle warming window, and every real request renews the
+		// entry, so warming does not look worth it. Decided from the documented lifetimes, not measured.
+		if (OPENAI_MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) {
+			mergeCompat(responsesModel, { supportsMidConvoEffort: true });
+		}
 		withInputLimits(model, { maxRequestBytes: 512 * 1024 * 1024, images: { maxPerRequest: 1500 } });
 	},
 });

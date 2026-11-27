@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { getModel } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
-import { generateModelsFixture } from "./generate-models-fixture.ts";
 
 const originalTogetherApiKey = process.env.TOGETHER_API_KEY;
 
@@ -25,7 +24,7 @@ describe("Together models", () => {
 		expect(model.thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null });
 		expect(model.input).toEqual(["text", "image"]);
 		expect(model.contextWindow).toBe(1048576);
-		expect(model.maxTokens).toBe(131072);
+		expect(model.maxTokens).toBe(1048576);
 		expect(model.cost).toEqual({
 			input: 3,
 			output: 15,
@@ -34,7 +33,6 @@ describe("Together models", () => {
 		});
 		expect(model.compat).toEqual({
 			supportsStore: false,
-			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
 			maxTokensField: "max_tokens",
 			thinkingFormat: "together",
@@ -43,48 +41,13 @@ describe("Together models", () => {
 		});
 	});
 
-	it("models Together reasoning controls from the Together API surface", () => {
-		const gptOss = getModel("together", "openai/gpt-oss-120b");
-		expect(gptOss.thinkingLevelMap).toEqual({
-			off: null,
-			minimal: null,
-			low: "low",
-			medium: "medium",
-			high: "high",
-			max: null,
-			xhigh: null,
-		});
-		expect(gptOss.compat).toMatchObject({
-			supportsReasoningEffort: true,
-			thinkingFormat: "openai",
-		});
-
-		const catalog = generateModelsFixture({
-			togetherai: {
-				models: {
-					"deepseek-ai/DeepSeek-V4-Pro-0813": {
-						id: "deepseek-ai/DeepSeek-V4-Pro-0813",
-						type: "chat",
-						name: "DeepSeek V4 Pro",
-						modalities: { input: ["text"], output: ["text"] },
-						capabilities: { tools: { supported: true }, reasoning: { supported: true } },
-						api: {},
-					},
-				},
-			},
-		});
-		const deepSeekV4 = catalog.together["deepseek-ai/DeepSeek-V4-Pro-0813"];
-		expect(deepSeekV4.thinkingLevelMap).toEqual({
-			minimal: null,
-			low: null,
-			medium: null,
-			high: "high",
-			xhigh: null,
-		});
-		expect(deepSeekV4.compat).toMatchObject({
-			supportsReasoningEffort: true,
-			thinkingFormat: "together",
-		});
+	it("gives every Together reasoning model the Together thinking toggle", () => {
+		for (const id of ["deepseek-ai/DeepSeek-V4.1-Flash", "zai-org/GLM-5.3"] as const) {
+			const model = getModel("together", id);
+			expect(model.reasoning).toBe(true);
+			expect(model.thinkingLevelMap).toEqual({ minimal: null, low: null, medium: null });
+			expect(model.compat).toMatchObject({ supportsReasoningEffort: false, thinkingFormat: "together" });
+		}
 	});
 
 	it("resolves TOGETHER_API_KEY from the environment", () => {

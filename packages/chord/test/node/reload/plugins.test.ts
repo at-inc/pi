@@ -15,17 +15,13 @@ const Counter = remote("reload.counter", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
-	variants: {
-		main: {
-			state: { label: str(), count: int() },
-			methods: {
-				add: method(int(), str()),
-				slow: method(str(), str()),
-				slowAdd: method(str(), str()),
-				code: method(undefined, str()),
-				visits: method(undefined, int()),
-			},
-		},
+	state: { label: str(), count: int() },
+	methods: {
+		add: method(int(), str()),
+		slow: method(str(), str()),
+		slowAdd: method(str(), str()),
+		code: method(undefined, str()),
+		visits: method(undefined, int()),
 	},
 });
 
