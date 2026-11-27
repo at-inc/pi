@@ -9,7 +9,7 @@ import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionTree } from "../../plugins/tree/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 
 const idle = (view: { docs: Record<string, unknown> } | null | undefined) =>
 	!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run;
@@ -101,11 +101,11 @@ describe("the tree panel", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelectorAll('[data-testid=tree-panel] .tree-toc a').length === 9`);
 		const choose = (text: string) =>
 			browser.evaluate(
-				`[...document.querySelectorAll('[data-testid=tree-panel] .tree-toc a')].find((link) => link.querySelector('.tree-text').textContent === ${JSON.stringify(text)}).click()`,
+				`[...document.querySelectorAll('[data-testid=tree-panel] .tree-toc a')].find((link) => link.querySelector('.tree-text').textContent === ${jsString(text)}).click()`,
 			);
 		const marked = (text: string) =>
 			browser.wait(
-				`document.querySelector('[data-testid=tree-panel] a[data-active] .tree-text')?.textContent === ${JSON.stringify(text)} && document.querySelector('.messages')?.textContent.includes('Echo: ${text}')`,
+				`document.querySelector('[data-testid=tree-panel] a[data-active] .tree-text')?.textContent === ${jsString(text)} && document.querySelector('.messages')?.textContent.includes('Echo: ${text}')`,
 			);
 		const settled = () => new Promise((resolve) => setTimeout(resolve, 600));
 		// Another branch's turn in the middle: the session switches to conversation 1, the turn is centred and marked.

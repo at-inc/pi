@@ -383,7 +383,7 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 			);
 		const tap = async (scope: string, session: string) => {
 			await browser.evaluate(`document.activeElement?.blur()`);
-			const { x, y } = await point(`document.querySelector(${JSON.stringify(row(scope, session))})`);
+			const { x, y } = await point(`document.querySelector(${jsString(row(scope, session))})`);
 			await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
 			await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 			await arrive(session);
@@ -416,11 +416,11 @@ describe("Pi Mobile audit fixes in the browser", { skip: !browserTests }, () => 
 				`document.querySelector('.command-menu .command-crumb')?.textContent === 'Folders' && ${selected}`,
 			);
 			await enter();
-			await browser.wait(`document.querySelector(${JSON.stringify(row(".list-page", second.id))})`);
+			await browser.wait(`document.querySelector(${jsString(row(".list-page", second.id))})`);
 			await click(".list-page", second.id);
 			await browser.wait(focused);
 			// Enter on a focused row: the keyboard's click.
-			await browser.evaluate(`document.querySelector(${JSON.stringify(row(".drawer", first.id))}).focus()`);
+			await browser.evaluate(`document.querySelector(${jsString(row(".drawer", first.id))}).focus()`);
 			await enter();
 			await arrive(first.id);
 			await browser.wait(focused);

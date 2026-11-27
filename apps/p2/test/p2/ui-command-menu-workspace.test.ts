@@ -16,7 +16,7 @@ import { localSystem, terminalDaemon } from "../../plugins/terminals/daemon.ts";
 import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { APP, type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { APP, type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 
 /** Whether the menu is open or closed, as expressions. */
 const OPEN = `Boolean(document.querySelector('.command-menu'))`;
@@ -85,13 +85,13 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 		await browser.call("Emulation.setUserAgentOverride", { userAgent, platform: "MacIntel" });
 		await browser.open(`${base}${path}`);
 		await browser.evaluate(`localStorage.removeItem('p2-command-recents-v1')`);
-		await browser.wait(`document.querySelector(${JSON.stringify(ready)}) && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector(${jsString(ready)}) && !document.querySelector('.offline')`);
 	};
 
 	/** Opens a session's page and waits for its title in the top bar. */
 	const openSession = async (id: string, title: string) => {
 		await load(`/s/${id}`);
-		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${JSON.stringify(title)}`);
+		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${jsString(title)}`);
 	};
 
 	/** Presses `key` (a name of KEYS) with the given modifiers, as a real keyboard would. */
@@ -115,7 +115,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 	const run = async (query: string, title: string) => {
 		await type(query);
 		await browser
-			.wait(`${SELECTED}===${JSON.stringify(title)}`)
+			.wait(`${SELECTED}===${jsString(title)}`)
 			.catch(async () => assert.fail(`"${title}" not highlighted: ${await browser.evaluate(TITLES)}`));
 		await press("Enter");
 	};
@@ -130,12 +130,10 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 
 	/** Opens the location picker's browser row of the folder `name`. */
 	const pickFolder = async (name: string) => {
-		const row = `[...document.querySelectorAll('.location-browse .location-link')].find((e) => e.textContent.trim() === ${JSON.stringify(name)})`;
+		const row = `[...document.querySelectorAll('.location-browse .location-link')].find((e) => e.textContent.trim() === ${jsString(name)})`;
 		await browser.wait(row);
 		await browser.evaluate(`${row}.click()`);
-		await browser.wait(
-			`document.querySelector('.location-use')?.textContent.endsWith(${JSON.stringify(`/${name}`)})`,
-		);
+		await browser.wait(`document.querySelector('.location-use')?.textContent.endsWith(${jsString(`/${name}`)})`);
 	};
 
 	describe("workspace", () => {
@@ -250,7 +248,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			await run("change working", "Change working directory…");
 			await browser.wait(`${CLOSED} && ${SHEET}==='Location'`);
 			await browser.wait(
-				`document.querySelector('.location-use')?.textContent.endsWith(${JSON.stringify(`/${basename(fixture.workspace)}`)})`,
+				`document.querySelector('.location-use')?.textContent.endsWith(${jsString(`/${basename(fixture.workspace)}`)})`,
 			);
 			await pickFolder("moved-here");
 			await browser.click(".location-use");
@@ -275,7 +273,7 @@ describe("command menu: workspace, terminal and folders", { skip: !browserTests 
 			// The picker starts where the screen says the session starts (the latest session's directory).
 			const shown = await browser.evaluate<string>(`document.querySelector('.cwd-pick span').textContent`);
 			await browser.wait(
-				`document.querySelector('.location-use')?.textContent.endsWith(${JSON.stringify(`/${shown.split("/").at(-1)}`)})`,
+				`document.querySelector('.location-use')?.textContent.endsWith(${jsString(`/${shown.split("/").at(-1)}`)})`,
 			);
 			await browser.evaluate(`history.back()`);
 			await browser.wait(`!document.querySelector('.sheet-head')`);

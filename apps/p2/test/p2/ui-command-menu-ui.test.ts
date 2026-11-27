@@ -14,7 +14,7 @@ import { Sharing } from "../../plugins/sharing/contract.ts";
 import { VIEWS_EDITING, Views } from "../../plugins/views/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 
 const OPEN = `Boolean(document.querySelector('.command-menu'))`;
 const CLOSED = `!document.querySelector('.command-menu')`;
@@ -28,7 +28,7 @@ const GROUPS = `[...document.querySelectorAll('.command-menu .command-group')].f
 const RECENTS = "p2-command-recents-v1";
 /** Whether the view titled `title` is the shown tab of its area. */
 const front = (title: string) =>
-	`[...document.querySelectorAll('.views-tab.on')].some((e) => e.textContent === ${JSON.stringify(title)})`;
+	`[...document.querySelectorAll('.views-tab.on')].some((e) => e.textContent === ${jsString(title)})`;
 
 const KEYS: Record<string, { code: string; keyCode: number }> = {
 	Enter: { code: "Enter", keyCode: 13 },
@@ -67,11 +67,11 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 		await browser.call("Emulation.setUserAgentOverride", { userAgent, platform: "MacIntel" });
 		await browser.open(`${base}/s/${id}`);
 		await browser.evaluate(
-			`(() => { for (const key of [${JSON.stringify(RECENTS)}, 'pi-theme', 'pi-sidebar-collapsed']) localStorage.removeItem(key); })()`,
+			`(() => { for (const key of [${jsString(RECENTS)}, 'pi-theme', 'pi-sidebar-collapsed']) localStorage.removeItem(key); })()`,
 		);
 		await browser.open(`${base}/s/${id}`);
 		await browser.wait(`document.querySelector('${COMPOSER}') && !document.querySelector('.offline')`);
-		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${JSON.stringify(title)}`);
+		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${jsString(title)}`);
 	};
 
 	const press = async (key: string, modifiers: { meta?: boolean } = {}) => {
@@ -94,7 +94,7 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 	const run = async (query: string, title: string) => {
 		await type(query);
 		await browser
-			.wait(`${SELECTED}===${JSON.stringify(title)}`)
+			.wait(`${SELECTED}===${jsString(title)}`)
 			.catch(async () =>
 				assert.fail(`"${title}" not highlighted: ${JSON.stringify(await browser.evaluate(GROUPS))}`),
 			);
@@ -290,9 +290,9 @@ describe("command menu: app and views commands", { skip: !browserTests }, () => 
 			const other = await create("Other row");
 			await openSession(open, "Open with views");
 			const row = `.sidebar-section[data-key=other] .nav-row:has(> a.session-main[href="/s/${other}"])`;
-			await browser.wait(`document.querySelector(${JSON.stringify(row)})`);
+			await browser.wait(`document.querySelector(${jsString(row)})`);
 			const point = await browser.evaluate<{ x: number; y: number }>(
-				`(() => { const r = document.querySelector(${JSON.stringify(row)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+				`(() => { const r = document.querySelector(${jsString(row)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
 			);
 			await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
 			await openMenu();

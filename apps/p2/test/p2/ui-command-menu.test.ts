@@ -24,7 +24,7 @@ import { connectTerminalHost } from "../../plugins/terminals/detached.ts";
 import { encodeFrame } from "../../plugins/terminals/protocol.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER, composerText } from "./browser.ts";
-import { APP, type Fixture, holdWith, poll, startFixture, until } from "./helpers.ts";
+import { APP, type Fixture, holdWith, jsString, poll, startFixture, until } from "./helpers.ts";
 
 type Platform = "mac" | "other";
 
@@ -168,14 +168,14 @@ describe("command menu", { skip: !browserTests }, () => {
 			platform: platform === "mac" ? "MacIntel" : "Linux x86_64",
 		});
 		await browser.open(`${base}${path}`);
-		await browser.evaluate(`localStorage.removeItem(${JSON.stringify(RECENTS)})`);
-		await browser.wait(`document.querySelector(${JSON.stringify(ready)}) && !document.querySelector('.offline')`);
+		await browser.evaluate(`localStorage.removeItem(${jsString(RECENTS)})`);
+		await browser.wait(`document.querySelector(${jsString(ready)}) && !document.querySelector('.offline')`);
 	};
 
 	/** Opens a session's page and waits for its title in the top bar. */
 	const openSession = async (id: string, title: string, platform: Platform = "mac") => {
 		await load(`/s/${id}`, platform);
-		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${JSON.stringify(title)}`);
+		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${jsString(title)}`);
 	};
 
 	/** Presses `key` (a name of KEYS or a letter) with the given modifiers, as a real keyboard would. */
@@ -208,7 +208,7 @@ describe("command menu", { skip: !browserTests }, () => {
 	const run = async (query: string, title: string) => {
 		await type(query);
 		await browser
-			.wait(`${SELECTED}===${JSON.stringify(title)}`)
+			.wait(`${SELECTED}===${jsString(title)}`)
 			.catch(async () => assert.fail(`"${title}" not highlighted: ${JSON.stringify(await menu())}`));
 		await press("Enter");
 	};
@@ -309,10 +309,10 @@ describe("command menu", { skip: !browserTests }, () => {
 						// The second page load restores the session's terminal panel (its route says so at once, before its
 						// rows render): the button only opens it when it is not shown, as a click would hide it.
 						const button = ".topbar button[aria-label=Terminal]";
-						await browser.wait(`document.querySelector(${JSON.stringify(button)})`);
+						await browser.wait(`document.querySelector(${jsString(button)})`);
 						if (
 							(await browser.evaluate<string | null>(
-								`document.querySelector(${JSON.stringify(button)}).getAttribute('aria-pressed')`,
+								`document.querySelector(${jsString(button)}).getAttribute('aria-pressed')`,
 							)) !== "true"
 						)
 							await browser.click(button);
@@ -443,7 +443,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			const third = `document.querySelectorAll('.command-menu [role=option]')[2]`;
 			const title = await browser.evaluate<string>(`${third}.querySelector('.command-title').textContent`);
 			await hover(third);
-			await browser.wait(`${SELECTED}===${JSON.stringify(title)}`);
+			await browser.wait(`${SELECTED}===${jsString(title)}`);
 			await press("Escape");
 			await browser.wait(CLOSED);
 		});
@@ -540,12 +540,10 @@ describe("command menu", { skip: !browserTests }, () => {
 			const search = 'input[aria-label="Search sessions and messages"]';
 			// The Archive's list page, in the page: its link is below this file's many sessions.
 			const archive = ".sidebar-section[data-key=archive] a.group-label";
-			await browser.evaluate(
-				`document.querySelector(${JSON.stringify(archive)}).scrollIntoView({ block: 'center' })`,
-			);
+			await browser.evaluate(`document.querySelector(${jsString(archive)}).scrollIntoView({ block: 'center' })`);
 			await browser.click(archive);
-			await browser.wait(`document.querySelector(${JSON.stringify(search)})`);
-			await browser.evaluate(`document.querySelector(${JSON.stringify(search)}).focus()`);
+			await browser.wait(`document.querySelector(${jsString(search)})`);
+			await browser.evaluate(`document.querySelector(${jsString(search)}).focus()`);
 			await openMenu();
 			await run("quokka", "Quokka notes");
 			await browser.wait(`${CLOSED} && location.pathname==='/s/${to}'`);
@@ -589,7 +587,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await browser.wait(CLOSED);
 			await browser.wait(`document.querySelector('.topbar h1')?.textContent==='After rename'`);
 			await browser.wait(
-				`document.querySelector(${JSON.stringify(`${sidebarRow(id)} .session-title`)})?.textContent==='After rename'`,
+				`document.querySelector(${jsString(`${sidebarRow(id)} .session-title`)})?.textContent==='After rename'`,
 			);
 			await until(sessions.sessions, (rows) => rows?.find((row) => row.id === id)?.title === "After rename");
 		});
@@ -636,7 +634,7 @@ describe("command menu", { skip: !browserTests }, () => {
 			await openMenu();
 			await run("archive", "Archive session");
 			await browser.wait(`${CLOSED} && location.pathname==='/new'`);
-			await browser.wait(`!document.querySelector(${JSON.stringify(sidebarRow(id))})`);
+			await browser.wait(`!document.querySelector(${jsString(sidebarRow(id))})`);
 			await until(sessions.sessions, (rows) => Boolean(rows?.find((row) => row.id === id)?.archivedAt));
 			// An archived session does not open (its page gives way to the new-session screen): its row in the Archive's list
 			// is the target, and offers Restore, not Archive.
@@ -655,15 +653,15 @@ describe("command menu", { skip: !browserTests }, () => {
 			await run("restore", "Restore session");
 			await browser.wait(`${CLOSED} && location.pathname.startsWith('/s/${id}')`);
 			await until(sessions.sessions, (rows) => rows?.find((row) => row.id === id)?.archivedAt === null);
-			await browser.wait(`document.querySelector(${JSON.stringify(sidebarRow(id))})`);
+			await browser.wait(`document.querySelector(${jsString(sidebarRow(id))})`);
 		});
 
 		it("targets the sidebar row under the mouse", async () => {
 			const open = await create("Open one");
 			const hovered = await create("Hovered one");
 			await openSession(open, "Open one");
-			await browser.wait(`document.querySelector(${JSON.stringify(sidebarRow(hovered))})`);
-			await hover(`document.querySelector(${JSON.stringify(sidebarRow(hovered))})`);
+			await browser.wait(`document.querySelector(${jsString(sidebarRow(hovered))})`);
+			await hover(`document.querySelector(${jsString(sidebarRow(hovered))})`);
 			await openMenu();
 			assert.equal((await menu())?.chip, "Session · Hovered one");
 			// Its commands act on that row's session, not on the open one.
@@ -691,7 +689,7 @@ describe("command menu", { skip: !browserTests }, () => {
 				until(status.statuses, (states) => states?.[session]?.busy.toSorted().join() === conversations.join());
 			await busy([]);
 			const sub = await holdWith(owner, Chat, { session, conversation: helper.conversationId }, ...CHAT_PARTICIPANT);
-			const sessionItem = `document.querySelector(${JSON.stringify(sidebarRow(session))})`;
+			const sessionItem = `document.querySelector(${jsString(sidebarRow(session))})`;
 			const helperItem = `[...document.querySelectorAll('.session-row[data-session="${session}"] .conversation-row')].find((e) => e.querySelector('.session-title')?.textContent === 'helper')`;
 			/** Long-presses the item `expression` evaluates to and waits for the menu on `chip`, its rows settled. */
 			const longPress = async (expression: string, chip: string) => {
@@ -706,13 +704,13 @@ describe("command menu", { skip: !browserTests }, () => {
 				await new Promise((resolve) => setTimeout(resolve, 700));
 				await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 				await browser.wait(
-					`document.querySelector('.command-menu .command-chip')?.textContent===${JSON.stringify(chip)}`,
+					`document.querySelector('.command-menu .command-chip')?.textContent===${jsString(chip)}`,
 				);
 				await browser.wait(COUNTED);
 			};
 			/** Taps the open menu's row `title` once it shows. */
 			const choose = async (title: string) => {
-				const option = `[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-title')?.textContent === ${JSON.stringify(title)})`;
+				const option = `[...document.querySelectorAll('.command-menu [role=option]')].find((o) => o.querySelector('.command-title')?.textContent === ${jsString(title)})`;
 				await browser.wait(option);
 				await browser.evaluate(`${option}.click()`);
 				await browser.wait(CLOSED);

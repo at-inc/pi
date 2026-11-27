@@ -323,7 +323,7 @@ const TW={
 };
 const TNAMES=[["transcript","Transcript"],["changes","Changes"],["md","views.md"],["sketch","Checklist"]];
 function bx(s){return s.replace(/[─│┌┐└┘▸›…−]/g,c=>`<span class="bx">${c}</span>`)}
-function vis(s){return s.replace(/<[^>]+>/g,"").replace(/&gt;/g,">").replace(/&lt;/g,"<").replace(/&amp;/g,"&")}
+function vis(s){const d=document.createElement("template");d.innerHTML=s;return d.content.textContent}
 function padTo(s,w){const n=vis(s).length;return n>=w?s:s+" ".repeat(w-n)}
 function boxPane(title,lines,w,focus){const top=(focus?"<span class=\"k\">":"")+"┌─ "+title+" "+"─".repeat(Math.max(0,w-5-vis(title).length))+"┐"+(focus?"</span>":"");
  const body=lines.map(l=>"│ "+padTo(l,w-3)+"│");const bot="└"+"─".repeat(w-2)+"┘";return [top,...body,bot]}
@@ -349,7 +349,7 @@ window.addEventListener("hashchange",show);show();
 $("#owntog").addEventListener("change",e=>document.body.classList.toggle("own",e.target.checked));
 document.querySelectorAll("[data-glyph]").forEach(g=>drawPrev(g.dataset.glyph));
 function drawPrev(id){const g=document.querySelector(`[data-glyph="${id}"]`);if(!g)return;document.querySelectorAll(`[data-prev="${id}"]`).forEach(c=>{const x=c.getContext("2d");x.clearRect(0,0,8,8);x.fillStyle="#ecebe8";[...g.children].forEach((p,i)=>{if(p.classList.contains("on"))x.fillRect(i%8,Math.floor(i/8),1,1)})})}
-function toast(win,text,undoAct){const old=win.querySelector(".toast");if(old)old.remove();const t=document.createElement("div");t.className="toast";t.innerHTML=`<span>${text}</span>${undoAct?`<button class="b" data-act="${undoAct}">Undo</button>`:""}<button class="b" data-act="dismiss" style="border:0;color:var(--muted)">✕</button>`;(win.querySelector(".body")||win).appendChild(t);}
+function toast(win,text,undoAct){const old=win.querySelector(".toast");if(old)old.remove();const t=document.createElement("div");t.className="toast";const m=document.createElement("span");m.textContent=text;t.append(m);if(undoAct){const u=document.createElement("button");u.className="b";u.dataset.act=undoAct;u.textContent="Undo";t.append(u)}t.insertAdjacentHTML("beforeend",`<button class="b" data-act="dismiss" style="border:0;color:var(--muted)">✕</button>`);(win.querySelector(".body")||win).appendChild(t);}
 
 /* ---------- interactions ---------- */
 document.addEventListener("click",e=>{
@@ -378,7 +378,7 @@ document.addEventListener("click",e=>{
    const src=document.querySelector('[data-glyph="a"]'),dst=document.querySelector('[data-glyph="b"]');[...src.children].forEach((p,i)=>dst.children[i].classList.toggle("on",p.classList.contains("on")));drawPrev("b");
    el.outerHTML=`<div class="muted" style="font-size:12px">Promoted to plugin <code>glyph-editor</code>: built and loaded by the plugin loader. Install for all sessions? <button class="btn" style="padding:1px 8px">Install</button></div>`;break}
  case "ibq":{if(e.target.closest("button"))return;el.parentElement.querySelectorAll(".q").forEach(q=>q.classList.toggle("on",q===el));const s=el.dataset.s;const t=$("#sess6 .ptitle");if(t)t.textContent="Transcript · "+s;break}
- case "ans":{const q=el.closest(".q");q.style.opacity=".4";q.querySelector(".t").insertAdjacentHTML("beforeend",` <span class="badge pl">answered: ${el.textContent}</span>`);q.querySelectorAll("button").forEach(b=>b.disabled=true);break}
+ case "ans":{const q=el.closest(".q");q.style.opacity=".4";const b=document.createElement("span");b.className="badge pl";b.textContent="answered: "+el.textContent;q.querySelector(".t").append(" ",b);q.querySelectorAll("button").forEach(b=>b.disabled=true);break}
  case "allow":case "allow1":case "deny":{const ok=a!=="deny";$("#apprbtns").innerHTML=`<span class="badge ${ok?"pl":""}" style="${ok?"":"color:var(--bad);border-color:rgba(240,122,114,.5)"}">${ok?(a==="allow1"?"Allowed for this session":"Allowed"):"Denied"} by you · 14:03</span><button class="btn" data-act="reappr" style="padding:1px 8px">Change</button>`;break}
  case "reappr":{$("#apprbtns").innerHTML=`<button class="btn ok" data-act="allow">Allow</button><button class="btn" data-act="allow1">Allow for this session</button><button class="btn bad" data-act="deny">Deny</button>`;break}
  case "rmchip":{el.closest("[data-chip]").remove();break}

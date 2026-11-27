@@ -16,7 +16,7 @@ import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { SessionStatus } from "../../plugins/status/contract.ts";
 import { type Child, Subagents } from "../../plugins/subagents/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 import { type BaselineOffset, baselineOffsets } from "./sidebar-baselines.ts";
 
 /** What a subagent's item shows: its details' text, its status mark (`dots`, `failed: <label>`, none), its tooltip. */
@@ -85,7 +85,7 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 	});
 
 	const row = (name: string) =>
-		`[...document.querySelectorAll('.sidebar-section[data-key=other] .nav-row:has(> .subagent-row)')].find(e=>e.querySelector('.session-title').textContent===${JSON.stringify(name)})`;
+		`[...document.querySelectorAll('.sidebar-section[data-key=other] .nav-row:has(> .subagent-row)')].find(e=>e.querySelector('.session-title').textContent===${jsString(name)})`;
 	const shown = (name: string) =>
 		browser.evaluate<Shown>(
 			`(() => { const e = ${row(name)}; const m = e.querySelector('.nav-marker > *'); return { details: e.querySelector('.nav-details')?.textContent ?? '', status: !m ? '' : m.classList.contains('pi-dots') ? 'dots' : m.classList.contains('failed-dot') ? 'failed: ' + m.getAttribute('aria-label') : m.className, tooltip: e.querySelector('.subagent-row').title }; })()`,
@@ -168,10 +168,10 @@ describe("subagent rows in the sidebar", { skip: !browserTests }, () => {
 		const item = `${row("failing")}.closest('.session-row')`;
 		const check = async (where: string) => {
 			await browser.wait(
-				`${item}.querySelector('.session-header .session-title').textContent === ${JSON.stringify(title)}`,
+				`${item}.querySelector('.session-header .session-title').textContent === ${jsString(title)}`,
 			);
 			for (const dir of ["ltr", "rtl"]) {
-				await browser.evaluate(`document.documentElement.dir=${JSON.stringify(dir)}`);
+				await browser.evaluate(`document.documentElement.dir=${jsString(dir)}`);
 				const offsets = await browser.evaluate<BaselineOffset[]>(
 					baselineOffsets(
 						`[${item}.querySelector('.session-header'), ...${item}.querySelectorAll('.conversation-row')]`,

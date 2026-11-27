@@ -21,7 +21,7 @@ import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import type { Step } from "../../../test/plugins/faux-login/contract.ts";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
-import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
+import { BROWSER_SKIP, Browser, DESKTOP, jsString, PHONE } from "./browser.ts";
 
 /** The checkout's built-in plugins, which the test copies and edits. */
 const BUILT_IN = fileURLToPath(new URL("../../", import.meta.url));
@@ -66,7 +66,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	/** Clicks the first element `selector` matches once it exists, scrolled into the middle of its scroller first. */
 	async function press(selector: string): Promise<void> {
-		const at = JSON.stringify(selector);
+		const at = jsString(selector);
 		await browser.wait(`document.querySelector(${at}) !== null`);
 		await browser.evaluate(`document.querySelector(${at}).scrollIntoView({ block: "center" })`);
 		await browser.click(selector);
@@ -211,7 +211,6 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await edit("coding/open-session.tsx", (source) =>
 			source
-				.replace("	PaneLayoutView,", "	PaneLayoutView,")
 				.replace(
 					'from "../sessions/contract.web.tsx";',
 					'from "../sessions/contract.web.tsx";\nimport { ProbeView } from "../sessions/contract.web.tsx";',
@@ -378,7 +377,7 @@ function appServer(id: string, title: string, chrome: "bar" | "button"): string 
 	return [
 		'import { defineFacet } from "@earendil-works/p3/v1";',
 		'import { Apps } from "@earendil-works/p3/v1/server";',
-		`export default defineFacet((_host, self) => self.contribute(Apps, ${JSON.stringify({ id, title, chrome })}));`,
+		`export default defineFacet((_host, self) => self.contribute(Apps, { id: ${jsString(id)}, title: ${jsString(title)}, chrome: ${jsString(chrome)} }));`,
 	].join("\n");
 }
 
@@ -388,6 +387,6 @@ function appPage(id: string, body: string): string {
 		'import { defineFacet } from "@earendil-works/p3/v1";',
 		'import { AppPages } from "@earendil-works/p3/v1/web";',
 		`function Page() { return <main>${body}</main>; }`,
-		`export default defineFacet((_host, self) => self.contribute(AppPages, { app: ${JSON.stringify(id)}, Page }));`,
+		`export default defineFacet((_host, self) => self.contribute(AppPages, { app: ${jsString(id)}, Page }));`,
 	].join("\n");
 }

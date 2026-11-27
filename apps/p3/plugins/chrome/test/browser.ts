@@ -30,6 +30,14 @@ export const PHONE: Viewport = { width: 390, height: 844, phone: true };
 /** The desktop's viewport. */
 export const DESKTOP: Viewport = { width: 1280, height: 900, phone: false };
 
+/** Encodes a string as a JavaScript literal, including inside an HTML script element. */
+export function jsString(value: string): string {
+	return JSON.stringify(value).replace(
+		/[<>&\u2028\u2029]/g,
+		(character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+	);
+}
+
 /** One headless Chromium with one page. */
 export class Browser {
 	readonly #child: ChildProcess;
@@ -198,12 +206,12 @@ export class Browser {
 
 	/** The text of the first element `selector` matches (`""` when none). */
 	text(selector: string): Promise<string> {
-		return this.evaluate(`document.querySelector(${JSON.stringify(selector)})?.textContent ?? ""`);
+		return this.evaluate(`document.querySelector(${jsString(selector)})?.textContent ?? ""`);
 	}
 
 	/** Clicks the first element `selector` matches at its centre, as a mouse would, once it is visible and on top. */
 	async click(selector: string): Promise<void> {
-		const at = JSON.stringify(selector);
+		const at = jsString(selector);
 		await this.wait(
 			`(() => { const e = document.querySelector(${at}); if (e === null || e.disabled) return false;` +
 				" const r = e.getBoundingClientRect(); if (r.width === 0 || r.height === 0) return false;" +
@@ -221,7 +229,7 @@ export class Browser {
 	/** The box of the first element `selector` matches, in the viewport's pixels. */
 	box(selector: string): Promise<{ x: number; y: number; width: number; height: number }> {
 		return this.evaluate(
-			`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`,
+			`(() => { const r = document.querySelector(${jsString(selector)}).getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`,
 		);
 	}
 
@@ -283,7 +291,7 @@ export class Browser {
 	 * or inside it, and it is fully opaque) and is on top: the element at its centre is it or inside it.
 	 */
 	async settled(selector: string): Promise<void> {
-		const at = JSON.stringify(selector);
+		const at = jsString(selector);
 		// One wait for all three: an element still under something fading out (a dialog's backdrop) is not settled; one
 		// that stays under something fails the wait, naming it.
 		await this.wait(

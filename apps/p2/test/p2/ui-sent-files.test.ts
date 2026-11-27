@@ -12,7 +12,7 @@ import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { SESSIONS_OWNER, Sessions, type SessionsOwner } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 
 /** A grey RGB PNG of `width` × `height` pixels. */
 function png(width: number, height: number): Buffer {
@@ -48,7 +48,7 @@ function crc32(bytes: Buffer): number {
 }
 
 const card = (name: string) =>
-	`[...document.querySelectorAll('.file-card')].find((e)=>e.querySelector('.file-card-text strong')?.textContent===${JSON.stringify(name)})`;
+	`[...document.querySelectorAll('.file-card')].find((e)=>e.querySelector('.file-card-text strong')?.textContent===${jsString(name)})`;
 const rect = (expression: string) =>
 	`(() => { const r=(${expression}).getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`;
 

@@ -20,10 +20,10 @@ export const browserTests =
 /** The composer's editor (plugins/chat/draft-editor.tsx), a contenteditable element. */
 export const COMPOSER = ".composer .draft-editor";
 /** An expression: the composer's text as shown (file pills as their labels, caret slots left out). */
-export const composerText = `document.querySelector(${JSON.stringify(COMPOSER)}).textContent.replaceAll('\u200B','')`;
+export const composerText = `document.querySelector(${jsString(COMPOSER)}).textContent.replaceAll('\u200B','')`;
 /** An expression that replaces the composer's text with `text`, as typing would (an `input` event), the caret at its end. */
 export const setComposer = (text: string): string =>
-	`(()=>{const e=document.querySelector(${JSON.stringify(COMPOSER)});e.focus();e.textContent=${JSON.stringify(text)};const s=getSelection();s.selectAllChildren(e);s.collapseToEnd();e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()`;
+	`(()=>{const e=document.querySelector(${jsString(COMPOSER)});e.focus();e.textContent=${jsString(text)};const s=getSelection();s.selectAllChildren(e);s.collapseToEnd();e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()`;
 
 export class Browser {
 	readonly process: ChildProcess;

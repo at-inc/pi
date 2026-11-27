@@ -145,7 +145,7 @@ describe("the build's guards", () => {
 		] as const) {
 			assert.throws(
 				() => checkLean(bundle([...imports], [...inputs]), "worker.js"),
-				new RegExp(`worker\\.js holds the server's .*${named.replace(/[.]/g, "\\.")}`),
+				new RegExp(`worker\\.js holds the server's .*${named.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
 			);
 		}
 		assert.throws(() => checkLean(bundle([], []), "supervisor.js"), /no output supervisor\.js/);

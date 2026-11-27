@@ -10,13 +10,13 @@ import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { fileReferences } from "../../src/runtime/references.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 
 const EDITOR = ".composer .draft-editor";
 /** The draft as the composer keeps it (it persists it for the tab). */
 const DRAFT = `JSON.parse(sessionStorage.getItem('p2-draft') ?? '{"text":""}').text`;
 /** Pastes PNGs named `names` into the editor (a 1x1 image each). */
-const PASTE = `window.pastePng=(names)=>{const png=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='),c=>c.charCodeAt(0));const d=new DataTransfer();for(const name of names)d.items.add(new File([png],name,{type:'image/png'}));document.querySelector(${JSON.stringify(EDITOR)}).dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:d}))}`;
+const PASTE = `window.pastePng=(names)=>{const png=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='),c=>c.charCodeAt(0));const d=new DataTransfer();for(const name of names)d.items.add(new File([png],name,{type:'image/png'}));document.querySelector(${jsString(EDITOR)}).dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:d}))}`;
 
 describe("draft editor", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser, id: string;
@@ -56,9 +56,9 @@ describe("draft editor", { skip: !browserTests }, () => {
 	it("places pills at the caret, moves and removes them, undoes every step, and sends each file in place", async () => {
 		await browser.metrics(1280, 900);
 		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
-		await browser.wait(`document.querySelector(${JSON.stringify(EDITOR)}) && !document.querySelector('.offline')`);
+		await browser.wait(`document.querySelector(${jsString(EDITOR)}) && !document.querySelector('.offline')`);
 		await browser.evaluate(PASTE);
-		await browser.evaluate(`document.querySelector(${JSON.stringify(EDITOR)}).focus()`);
+		await browser.evaluate(`document.querySelector(${jsString(EDITOR)}).focus()`);
 
 		await type("compare ");
 		await browser.evaluate(`pastePng(['a.png'])`);
@@ -84,7 +84,7 @@ describe("draft editor", { skip: !browserTests }, () => {
 		await redo();
 		await browser.wait(`document.querySelectorAll('.draft-pill').length === 2`);
 		await redo();
-		await browser.wait(`${DRAFT} === ${JSON.stringify(full)}`);
+		await browser.wait(`${DRAFT} === ${jsString(full)}`);
 
 		// Backspace removes the pill before the caret as one piece; undo brings it back.
 		await key("Backspace", "Backspace");
@@ -95,12 +95,12 @@ describe("draft editor", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelectorAll('.draft-pill').length === 2`);
 		assert.deepEqual(await names(), ["a.png", "b.png"]);
 		await undo();
-		await browser.wait(`${DRAFT} === ${JSON.stringify(full)}`);
+		await browser.wait(`${DRAFT} === ${jsString(full)}`);
 
 		// Dragging the second pill to the start of the text moves its file there; the words stay.
 		const from = await center(pill(1));
 		const box = await browser.evaluate<{ x: number; y: number }>(
-			`(()=>{const r=document.querySelector(${JSON.stringify(EDITOR)}).getBoundingClientRect();return {x:r.left+1,y:r.top+8}})()`,
+			`(()=>{const r=document.querySelector(${jsString(EDITOR)}).getBoundingClientRect();return {x:r.left+1,y:r.top+8}})()`,
 		);
 		await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", ...from, button: "left", clickCount: 1 });
 		for (let step = 1; step <= 5; step++)
@@ -120,7 +120,7 @@ describe("draft editor", { skip: !browserTests }, () => {
 			0,
 		);
 		await undo();
-		await browser.wait(`${DRAFT} === ${JSON.stringify(full)}`);
+		await browser.wait(`${DRAFT} === ${jsString(full)}`);
 
 		// A press without moving opens the pill's menu: Earlier swaps it with the one before.
 		await browser.click(`.draft-pill:nth-of-type(2)`);
@@ -129,19 +129,19 @@ describe("draft editor", { skip: !browserTests }, () => {
 		await browser.wait(`${DRAFT}.startsWith('compare ![b.png]')`);
 		assert.deepEqual(await names(), ["b.png", "a.png"]);
 		await browser.evaluate(
-			`document.querySelector('.draft-pill-menu') && document.querySelector(${JSON.stringify(EDITOR)}).dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+			`document.querySelector('.draft-pill-menu') && document.querySelector(${jsString(EDITOR)}).dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
 		);
 		await browser.wait(`!document.querySelector('.draft-pill-menu')`);
 
 		// Focus given back from code returns the caret where it was; a click puts it where it lands.
-		const caret = `(()=>{const e=document.querySelector(${JSON.stringify(EDITOR)});const r=getSelection().getRangeAt(0);const p=document.createRange();p.setStart(e,0);p.setEnd(r.startContainer,r.startOffset);return p.toString().replaceAll('\\u200B','').length})()`;
-		await browser.evaluate(`document.querySelector(${JSON.stringify(EDITOR)}).blur()`);
-		await browser.evaluate(`document.querySelector(${JSON.stringify(EDITOR)}).focus()`);
+		const caret = `(()=>{const e=document.querySelector(${jsString(EDITOR)});const r=getSelection().getRangeAt(0);const p=document.createRange();p.setStart(e,0);p.setEnd(r.startContainer,r.startOffset);return p.toString().replaceAll('\\u200B','').length})()`;
+		await browser.evaluate(`document.querySelector(${jsString(EDITOR)}).blur()`);
+		await browser.evaluate(`document.querySelector(${jsString(EDITOR)}).focus()`);
 		const kept = await browser.evaluate<number>(caret);
 		assert(kept > 0, "the caret is not sent to the start");
-		await browser.evaluate(`document.querySelector(${JSON.stringify(EDITOR)}).blur()`);
+		await browser.evaluate(`document.querySelector(${jsString(EDITOR)}).blur()`);
 		const start = await browser.evaluate<{ x: number; y: number }>(
-			`(()=>{const r=document.createRange();r.setStart(document.querySelector(${JSON.stringify(EDITOR)}).firstChild,1);const b=r.getClientRects()[0];return {x:b.left,y:b.top+b.height/2}})()`,
+			`(()=>{const r=document.createRange();r.setStart(document.querySelector(${jsString(EDITOR)}).firstChild,1);const b=r.getClientRects()[0];return {x:b.left,y:b.top+b.height/2}})()`,
 		);
 		await browser.clickPoint(start.x, start.y);
 		assert.equal(await browser.evaluate<number>(caret), 1);

@@ -18,7 +18,7 @@ import { SessionStatus } from "../../plugins/status/contract.ts";
 import { Subagents } from "../../plugins/subagents/contract.ts";
 import type { Host } from "../../src/runtime/chord.ts";
 import { Browser, browserTests, COMPOSER } from "./browser.ts";
-import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 
 /** What the open menu shows, or null while it is closed. */
 type MenuState = {
@@ -100,13 +100,13 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 		await page.metrics(1280, 800);
 		await page.call("Emulation.setUserAgentOverride", { userAgent, platform: "MacIntel" });
 		await page.open(`${base}${path}`);
-		await page.evaluate(`localStorage.removeItem(${JSON.stringify(RECENTS)})`);
-		await page.wait(`document.querySelector(${JSON.stringify(ready)}) && !document.querySelector('.offline')`);
+		await page.evaluate(`localStorage.removeItem(${jsString(RECENTS)})`);
+		await page.wait(`document.querySelector(${jsString(ready)}) && !document.querySelector('.offline')`);
 	};
 
 	const openSession = async (id: string, title: string) => {
 		await load(`/s/${id}`);
-		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${JSON.stringify(title)}`);
+		await browser.wait(`document.querySelector('.topbar h1')?.textContent===${jsString(title)}`);
 	};
 
 	const press = async (key: string, modifiers: { meta?: boolean } = {}, page = browser) => {
@@ -130,13 +130,13 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 	const run = async (query: string, title: string) => {
 		await type(query);
 		await browser
-			.wait(`${SELECTED}===${JSON.stringify(title)}`)
+			.wait(`${SELECTED}===${jsString(title)}`)
 			.catch(async () => assert.fail(`"${title}" not highlighted: ${JSON.stringify(await menu())}`));
 		await press("Enter");
 	};
 
 	/** Waits until the open menu lists `title` (rows behind a `Shown` wrapper appear once their state arrived). */
-	const listed = (title: string) => browser.wait(`${TITLES}.includes(${JSON.stringify(title)})`);
+	const listed = (title: string) => browser.wait(`${TITLES}.includes(${jsString(title)})`);
 
 	const titles = () => browser.evaluate<string[]>(TITLES);
 
@@ -160,11 +160,11 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 		await guest.open(`${base}${new URL(url).pathname}`);
 		await guest.wait(`document.querySelector('#join #name') && document.querySelector('#join button')`);
 		await guest.evaluate(
-			`(() => { const input = document.querySelector('#name'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(name)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+			`(() => { const input = document.querySelector('#name'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${jsString(name)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
 		);
 		await guest.click("#join button");
 		await guest.wait(
-			`document.querySelector('nav[aria-label="Shared session"]')?.textContent.includes(${JSON.stringify(`Joined as ${name}`)})`,
+			`document.querySelector('nav[aria-label="Shared session"]')?.textContent.includes(${jsString(`Joined as ${name}`)})`,
 		);
 		return guest;
 	};
@@ -419,9 +419,7 @@ describe("command menu: sharing and artifacts", { skip: !browserTests }, () => {
 		const menuOn = async (guest: Browser, item: string, chip: string) => {
 			await hover(item, guest);
 			await openMenu(guest);
-			await guest.wait(
-				`document.querySelector('.command-menu .command-chip')?.textContent === ${JSON.stringify(chip)}`,
-			);
+			await guest.wait(`document.querySelector('.command-menu .command-chip')?.textContent === ${jsString(chip)}`);
 			return guest.evaluate<string[]>(TITLES);
 		};
 		try {

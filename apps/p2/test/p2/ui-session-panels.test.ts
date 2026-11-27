@@ -9,7 +9,7 @@ import { Artifacts } from "../../plugins/artifacts/contract.ts";
 import { CHAT_PARTICIPANT, Chat } from "../../plugins/chat/contract.ts";
 import { SESSIONS_OWNER, Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdWith, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdWith, jsString, startFixture, until } from "./helpers.ts";
 
 describe("panels per session", { skip: !browserTests }, () => {
 	let fixture: Fixture, browser: Browser;
@@ -37,7 +37,7 @@ describe("panels per session", { skip: !browserTests }, () => {
 
 	const url = (title: string) => `http://127.0.0.1:${fixture.server.port}/s/${ids[title]}`;
 	const row = (title: string) =>
-		`[...document.querySelectorAll('.drawer .session-main')].find((e) => e.querySelector('.session-title')?.textContent === ${JSON.stringify(title)})`;
+		`[...document.querySelectorAll('.drawer .session-main')].find((e) => e.querySelector('.session-title')?.textContent === ${jsString(title)})`;
 	const shown = {
 		workspace: `Boolean(document.querySelector('.workspace'))`,
 		terminal: `Boolean(document.querySelector('.terminal-panel'))`,
@@ -46,7 +46,7 @@ describe("panels per session", { skip: !browserTests }, () => {
 	/** Which panels show once `title` is open. */
 	async function panels(title: string): Promise<string[]> {
 		await browser.wait(
-			`location.pathname === '/s/${ids[title]}' && document.querySelector('.topbar h1')?.textContent === ${JSON.stringify(title)} && !document.querySelector('.offline')`,
+			`location.pathname === '/s/${ids[title]}' && document.querySelector('.topbar h1')?.textContent === ${jsString(title)} && !document.querySelector('.offline')`,
 		);
 		// Panels render with the route; give the held objects a moment to render their content.
 		await new Promise((resolve) => setTimeout(resolve, 300));
