@@ -23,6 +23,10 @@ is the owner's or root's and not writable by every user without the sticky bit; 
 that parent is checked, no ancestor above it: ERNDL-1059). Every Pi but the default takes a free port at its first start and keeps it
 (`pi.json`). `--port <n>` names the port for one start.
 
+A session that names no folder works in `~/p3-work/<Pi's id>/<session id>`, outside the data directory (Files never
+shows the data directory); each Pi on the machine has its own folder there: p3 writes there too, not only in its data
+directory.
+
 Pis on one machine keep their own sessions, sign-ins and cookie, but a browser does not keep them apart: it sends the
 cookies of every Pi on `127.0.0.1` to every port there (cookies are scoped by host, not port), so any server on this
 machine the browser visits sees every Pi's sign-in cookie (ERNDL-706 redesigns the sign-in).
@@ -62,6 +66,8 @@ changed plugin.
   the tests' probe plugin (`test/plugins/probe/`); a plugin's own tests, unit and end to end, sit in its `test/` folder.
 
 From this directory, with Node 26.3.1 or newer: `npm run check`, `npm test`; `node --conditions=source
---disable-warning=ExperimentalWarning src/bin.ts server --dir <path>` runs the server from source. A local
+--disable-warning=ExperimentalWarning src/bin.ts server --dir <path>` runs the server from source. This device's
+terminals run in pi-env's daemon, built from the checkout with Rust (https://rustup.rs): `npm run build:daemon` (`npm
+test` runs it first; run it before a server from source, and after pulling a change of `packages/env/daemon`). A local
 release (p3 built, packed and installed outside the repository as it would ship, then tested): from the repository root,
 `npm run release:p3:local -- --out /tmp/p3-release --force [--bench]`; the command is then `/tmp/p3-release/p3`.

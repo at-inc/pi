@@ -50,7 +50,7 @@ const sources: CatalogSources = {
 	openRouter: { chat: [], images: [], classifiers: [] },
 	aiGateway: { chat: [], classifiers: [] },
 	nvidiaModelIds: new Map(),
-	radius: [],
+	radius: { chat: [], images: [], classifiers: [] },
 };
 
 describe("fork catalog integration", () => {

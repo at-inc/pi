@@ -1,9 +1,32 @@
 // The things plugin's contract data every kind imports: the typed values its tables hold (who wrote something, whom a
 // grant names, what a switch is about, who manages a group), the one function per value that makes its key column,
 // and who calls a thing's object, as its admission hands the factory. A thing's own contract comes from `defineThing`
-// (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`).
+// (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`). And a group's object
+// (`Group`): its members and the calls its own tick gives; `MyAnswer`, a caller's answer for admissions off the server
+// (a session's objects on its worker, the route to a worker); who the caller is (`Me`) and the admission of the
+// owners' objects (`admitOwner`, from `OwnerAccess`).
 
-import { lit, obj, type Static, str, union } from "@earendil-works/p3/v1";
+import {
+	type Admission,
+	type AdmitSelf,
+	allow,
+	arr,
+	bool,
+	callerKey,
+	deny,
+	grantable,
+	lit,
+	method,
+	nul,
+	obj,
+	type P3Principal,
+	remote,
+	Server,
+	type Static,
+	str,
+	union,
+	type Watchable,
+} from "@earendil-works/p3/v1";
 
 /** The prefix of the reserved tick names (item 113): a kind's own tick names cannot start with it. */
 export const RESERVED = "@";
@@ -99,6 +122,21 @@ export const Caller = union([
 /** Who calls a thing's object (see `Caller`). */
 export type Caller = Static<typeof Caller>;
 
+/**
+ * The caller key (`callerKey` of its principal: `person:<id>`, `worker:<session>`, `server`) of `caller`, what
+ * `Gives` and `ThingsStore.answerOf` take; `callerOfKey` is its inverse.
+ */
+export function callerKeyOf(caller: Caller): string {
+	switch (caller.kind) {
+		case "person":
+			return `person:${caller.person}`;
+		case "agent":
+			return `worker:${caller.session}`;
+		case "server":
+			return "server";
+	}
+}
+
 /** The admission data of every thing's object besides `granted`: who calls. */
 export const ThingAdmission = obj({ caller: Caller });
 
@@ -169,4 +207,89 @@ export function managedByKey(by: ManagedBy): string {
 		default:
 			return sourceKey(by);
 	}
+}
+
+/**
+ * A group as anyone it is present for holds it (1141 §7, decision 68): its info and members for all of them (its
+ * members, its managers, the owners, and whoever it is present for where they are present); its calls only with the
+ * group's own tick (a manager: a person named, or a person in a group named) or the owner flag, and only on a group
+ * people manage (a share's, a provider's, a plugin's or a workspace's group is changed by its manager alone). A member
+ * a person adds must be one the picker offers them (present where they are present; the owner: anyone).
+ */
+export const Group = remote("things.group", {
+	version: 1,
+	params: { group: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: {
+		info: obj({ group: str(), name: str(), outside: bool(), managedBy: ManagedBy }),
+		/** The members, a page at a time (`more`): a provider's company group may be large. */
+		members: obj({ rows: arr(obj({ person: str(), name: str(), source: Source })), moreAfter: bool() }),
+		managers: arr(Party),
+	},
+	methods: {
+		/** The next page of `members`. */
+		more: method(),
+		addMember: grantable(method(obj({ person: str() }))),
+		/** Takes the person out of the group: every row but a provider's and a share's (theirs to rewrite). */
+		removeMember: grantable(method(obj({ person: str() }))),
+		rename: grantable(method(obj({ name: str({ min: 1, max: 200 }) }))),
+		setManagers: grantable(method(obj({ parties: arr(Party) }))),
+		/** Removes the group (`ThingsStore.removeGroup`); the call ends with the object, denied once the group is gone. */
+		remove: grantable(method()),
+	},
+});
+
+/**
+ * Caller `caller`'s (a `callerKey`) answer for `thing` in `workspace`, live: the thing's kind and the ticks they have
+ * there (`null`: given nothing, so not let in). For admissions off the server (a session's objects on its worker, the route to a worker),
+ * which cannot read the index. Asked by the server about anyone, by a session's worker about anyone in its own
+ * session's workspace (its admissions ask as the worker), and by anyone else about themselves only.
+ */
+export const MyAnswer = remote("things.answer", {
+	version: 1,
+	params: { workspace: str(), thing: str(), caller: str() },
+	hostAddress: () => Server(),
+	state: { answer: union([obj({ kind: str(), ticks: arr(str()) }), nul()]) },
+});
+
+/** Who the caller is: a person (`owner`: whether they have the owner flag, read live), or a session's agent. */
+export const Me = remote("things.me", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	state: {
+		me: union([
+			obj({ kind: lit("person"), id: str(), name: str(), owner: bool() }),
+			obj({ kind: lit("agent"), session: str() }),
+		]),
+	},
+});
+
+/**
+ * Whether a caller (`callerKey`) is an owner: a person with the owner flag (several may have it), read live. Asked by
+ * the server and workers about anyone (an admission on a worker asks for its object's caller), by anyone else about
+ * themselves only.
+ */
+export const OwnerAccess = remote("things.owner-access", {
+	version: 1,
+	params: { caller: str() },
+	hostAddress: () => Server(),
+	state: { owner: bool() },
+});
+
+/** The admission value of the owners' objects: none (an owner is admitted, anyone else denied). */
+export const OwnerAdmission = obj({});
+
+/**
+ * The admission of an object for the owners only (`admission: OwnerAdmission`), on the server or a worker: allowed
+ * while the caller has the owner flag (`OwnerAccess`, live), denied for anyone else.
+ */
+export function admitOwner(
+	_params: unknown,
+	principal: P3Principal,
+	self: AdmitSelf,
+): Watchable<Admission<Record<string, never>>> {
+	const answer = self.get(OwnerAccess, { caller: callerKey(principal) });
+	return self.derive([answer.owner], ([owner]) => (owner ? allow({}) : deny("the owner's only")));
 }
