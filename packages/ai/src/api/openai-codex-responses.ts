@@ -21,6 +21,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import { getChatGPTAccountId } from "../utils/chatgpt-account-id.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -56,7 +57,6 @@ import { buildBaseOptions } from "./simple-options.ts";
 // ============================================================================
 
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
-const JWT_CLAIM_PATH = "https://api.openai.com/auth" as const;
 const DEFAULT_MAX_RETRIES = 0;
 const BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
@@ -281,7 +281,6 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const accountId = extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				getDeclaredTools(normalizedContext.messages),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -296,19 +295,13 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const websocketRequestId = codexSessionId || uuidv7();
 			// Codex expects an originator on every request; it is not attribution.
 			const identityHeaders = { originator: "pi", ...getIdentityHeaders(model, options?.identity) };
-			const sseHeaders = buildSSEHeaders(
-				identityHeaders,
-				model.headers,
-				options?.headers,
-				accountId,
-				apiKey,
-				codexSessionId,
-			);
+			const sseHeaders = buildSSEHeaders(identityHeaders, model.headers, options?.headers, apiKey, codexSessionId);
+			// Keys cached WebSocket connections; empty when neither the caller nor the token names an account.
+			const accountId = sseHeaders.get("chatgpt-account-id") ?? "";
 			const websocketHeaders = buildWebSocketHeaders(
 				identityHeaders,
 				model.headers,
 				options?.headers,
-				accountId,
 				apiKey,
 				websocketRequestId,
 			);
@@ -1680,24 +1673,10 @@ async function parseErrorResponse(
 // Auth & Headers
 // ============================================================================
 
-function extractAccountId(token: string): string {
-	try {
-		const parts = token.split(".");
-		if (parts.length !== 3) throw new Error("Invalid token");
-		const payload = JSON.parse(atob(parts[1]));
-		const accountId = payload?.[JWT_CLAIM_PATH]?.chatgpt_account_id;
-		if (!accountId) throw new Error("No account ID in token");
-		return accountId;
-	} catch {
-		throw new Error("Failed to extract accountId from token");
-	}
-}
-
 function buildBaseCodexHeaders(
 	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
-	accountId: string,
 	token: string,
 ): Headers {
 	// Defaults first so model and caller headers can override them, matching the other providers.
@@ -1713,7 +1692,12 @@ function buildBaseCodexHeaders(
 		}
 	}
 	headers.set("Authorization", `Bearer ${token}`);
-	headers.set("chatgpt-account-id", accountId);
+	// A caller-provided account ID (the stored OAuth credential) wins: not every access token carries the claim.
+	// Without either, the header is omitted, as Codex CLI does.
+	if (!headers.get("chatgpt-account-id")) {
+		const accountId = getChatGPTAccountId(token);
+		if (accountId) headers.set("chatgpt-account-id", accountId);
+	}
 	return headers;
 }
 
@@ -1721,11 +1705,10 @@ function buildSSEHeaders(
 	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
-	accountId: string,
 	token: string,
 	sessionId?: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, token);
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
@@ -1742,11 +1725,10 @@ function buildWebSocketHeaders(
 	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
-	accountId: string,
 	token: string,
 	requestId: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, token);
 	headers.delete("accept");
 	headers.delete("content-type");
 	headers.delete("OpenAI-Beta");

@@ -556,4 +556,36 @@ describe("OpenAI Codex OAuth", () => {
 			blocker.close();
 		}
 	});
+
+	it("resolves the account ID from the ID token and keeps the stored one when tokens carry none", async () => {
+		// A non-ASCII claim puts "-" or "_" into the base64url payload, which plain atob rejects.
+		const idPayload = Buffer.from(
+			JSON.stringify({
+				name: "\uD3C9\uC815\uD3C9\uC815",
+				"https://api.openai.com/auth": { chatgpt_account_id: "acct-id-token" },
+			}),
+		).toString("base64url");
+		expect(idPayload).toMatch(/[-_]/);
+		const tokenResponses = [
+			{ access_token: "opaque-access", refresh_token: "refresh-2", expires_in: 3600, id_token: `h.${idPayload}.s` },
+			{ access_token: "opaque-access-2", refresh_token: "refresh-3", expires_in: 3600 },
+		];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse(tokenResponses.shift())),
+		);
+
+		const first = await openaiCodexOAuth.refresh(
+			{ type: "oauth", access: "old", refresh: "refresh-1", expires: 0 },
+			neverAbortedSignal,
+		);
+		expect(first.accountId).toBe("acct-id-token");
+		await expect(openaiCodexOAuth.toAuth(first)).resolves.toEqual({
+			apiKey: "opaque-access",
+			headers: { "chatgpt-account-id": "acct-id-token" },
+		});
+
+		const second = await openaiCodexOAuth.refresh(first, neverAbortedSignal);
+		expect(second.accountId).toBe("acct-id-token");
+	});
 });

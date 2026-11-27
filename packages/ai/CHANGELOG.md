@@ -8,6 +8,10 @@
 - Added Claude Mythos 5.2 (`claude-mythos-5-2`) to the Anthropic model catalog. It shares Fable 5.2's pricing ($8/$40 per million input/output tokens), 1M-token context window, 128K output, always-on adaptive thinking, mid-conversation updates, and fast mode; Anthropic only serves it to organizations in its verification programs.
 - Added GPT-6.2 Astra (`gpt-6.2-astra`, $8/$40 per million input/output tokens) and GPT-6.2 Sol (`gpt-6.2-sol`, $2/$10) to the OpenAI, Azure OpenAI Responses, and OpenAI Codex providers until models.dev includes them. Like GPT-6.1 Sol they reject reasoning effort `none`, cap the default context at 272K (the short-context price tier), and support tool search, `additional_tools`, and mid-conversation effort.
 
+### Fixed
+
+- Fixed ChatGPT subscription sign-in and requests failing with `Failed to extract accountId from token`. Token payloads are now decoded as base64url, the account ID is read from the ID token first and stored on the credential, and a token without the claim no longer fails sign-in, refresh, or requests: the stored account ID is sent as the `chatgpt-account-id` header, and the header is omitted when no account is known.
+
 ## [1.5.2] - 2026-11-10
 
 ### Fixed
